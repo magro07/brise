@@ -29,6 +29,7 @@ src-tauri/src/
   decision.rs            DecisionProvider: Task-Modell für Brises Entscheidungen (heute Mistral)
   config.rs              config.toml lesen/schreiben (toml_edit, mit Backup), Dateien, Bilder
   credentials.rs         Mistral-Key prüfen/speichern (Schlüsselbund wie Vibe, sonst .env)
+  accounts.rs            weitere Schlüssel mit Namen, Account je Projekt/Session, Reserve bei Limit
   installer.rs           lädt uv und installiert Vibe in Brises Datenordner
   embeddings.rs          Projektindex + semantische Suche, MCP-Server-Modus
   models.rs              Mistral-Modellkatalog, Modelle in config.toml, Startprüfung
@@ -64,6 +65,15 @@ eingefügtem Vibe-Key bzw. API-Key. Der Key wird gegen `GET /v1/models` geprüft
 dort gespeichert, wo Vibe ihn selbst ablegt: im Schlüsselbund unter Dienst
 `ai.mistral.vibe`, Konto `MISTRAL_API_KEY`, ersatzweise in `$VIBE_HOME/.env`.
 
+Weitere Schlüssel (Firma, Kunde, Pay-as-you-go) trägt man unter *Einstellungen →
+Konto → Accounts* mit Namen ein. Sie liegen nur im Schlüsselbund (Konto
+`BRISE_KEY_<id>`), `accounts.json` im Datenordner enthält nur Namen und
+Zuordnungen. Für jeden benutzten Account startet Brise einen eigenen `vibe-acp`.
+Eine Session bleibt bei ihrem Account, damit der Prompt-Cache erhalten bleibt.
+Bei einem Limit kann sie auf einen Pay-as-you-go-Schlüssel als Reserve wechseln.
+Mehrere eigene Abo-Accounts sind laut Mistrals Bedingungen nicht erlaubt, deshalb
+rotiert Brise nicht zwischen ihnen. Hintergrund: `docs/adr/0002-mehrere-schluessel.md`.
+
 ## Mehrere Agenten (Backends)
 
 Brise kann neben Mistral Vibe weitere ACP-Agenten nutzen. Jede Session gehört einem
@@ -93,8 +103,8 @@ Agenten; welcher, steht als Badge an Session und Tab, sobald mehr als einer im S
   „… installieren und nutzen“ an. Ist ein anderer Agent Standard, braucht Brise beim
   Start kein Vibe.
 - **Entscheidungen:** Einstufen, Denkstufe, Vorschläge und Commit-Nachrichten laufen
-  über `DecisionProvider` (heute Mistral Small). Weitere Anbieter (z. B. „Cortex AI“)
-  kommen als zweite Implementierung in `decision.rs` dazu.
+  über Mistral Small oder – mit Einstellungen → Cortecs & Datenschutz – über
+  Cortecs-Decision-Modelle ohne Datenspeicherung.
 
 ## Entwickeln
 

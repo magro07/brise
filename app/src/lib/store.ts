@@ -18,6 +18,7 @@ import {
 } from "./acp";
 import { load, save } from "./persist";
 import { cortecs } from "./cortecs";
+import { promptWithReserve } from "./accounts";
 import type { Suggestion } from "./acp";
 import { budgetModel, reportTurn } from "../components/usage/usage";
 
@@ -1322,7 +1323,11 @@ export const useStore = create<State & Actions>((set, get) => {
 
       let turnUsage: PromptResult["usage"];
       try {
-        const res = await api.prompt(sid, blocks);
+        const res = await promptWithReserve({ id: sid, cwd: get().sessions[sid]?.cwd ?? project }, blocks, {
+          search: get().prefs.agentSearch,
+          rea: get().prefs.rea,
+          notice: (text, tone) => pushItem(sid, { type: "notice", id: uid(), text, tone }),
+        });
         turnUsage = res.usage;
         pushItem(sid, {
           type: "turn",

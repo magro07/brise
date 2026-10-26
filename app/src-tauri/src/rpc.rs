@@ -96,6 +96,16 @@ pub fn spawn(
     args: &[String],
     trace: Option<&Path>,
 ) -> Result<(Connection, mpsc::UnboundedReceiver<Incoming>, Child)> {
+    spawn_with_env(program, args, &[], trace)
+}
+
+/// Wie `spawn`, mit zusätzlichen Umgebungsvariablen für den Agenten.
+pub fn spawn_with_env(
+    program: &std::ffi::OsStr,
+    args: &[String],
+    env: &[(String, String)],
+    trace: Option<&Path>,
+) -> Result<(Connection, mpsc::UnboundedReceiver<Incoming>, Child)> {
     let tracer = match trace {
         Some(path) => Some(Tracer(Arc::new(Mutex::new(
             File::create(path).with_context(|| format!("Trace-Datei {path:?}"))?,
@@ -117,6 +127,7 @@ pub fn spawn(
         command.env("CORTECS_API_KEY", key);
     }
     command
+        .envs(env.iter().map(|(k, v)| (k, v)))
         .args(args)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -202,6 +213,11 @@ fn dispatch(mut msg: Value, pending: &Pending, in_tx: &mpsc::UnboundedSender<Inc
 }
 
 impl Connection {
+    /// Gehören beide Handles zum selben Agent-Prozess?
+    pub fn same(&self, other: &Connection) -> bool {
+        Arc::ptr_eq(&self.next_id, &other.next_id)
+    }
+
     fn send(&self, msg: Value) {
         let line = msg.to_string();
         if let Some(t) = &self.tracer {

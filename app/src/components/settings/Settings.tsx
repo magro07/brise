@@ -36,6 +36,7 @@ import { AgentsSettings } from "../agents/AgentsSettings";
 /** Abschnitte, die Vibes Konfiguration brauchen – ohne Vibe-Verbindung ausgeblendet. */
 const VIBE_SECTIONS = new Set(["account", "models", "permissions", "agents", "skills", "web", "voice", "advanced"]);
 import { looksSecret, maskSecrets } from "../../lib/format";
+import { AccountsCard } from "./Accounts";
 import { Button, Spinner, Switch, clsx } from "../ui";
 import { MODE_INFO } from "../composer/Pickers";
 import { confirmAction } from "../../lib/dialogs";
@@ -435,6 +436,7 @@ export function SettingsView() {
                 />
               </Card>
               <KeyCard />
+              <AccountsCard />
               <Card title="Mistral Vibe">
                 <Row title="Version" control={<span className="text-fg-2">{info?.init.agentInfo?.version ?? "–"}</span>} />
                 <VibeUpdateRow />

@@ -1,7 +1,8 @@
 //! Brücke zwischen Oberfläche und den ACP-Agenten (Vibe, Claude Code, …):
 //! Tauri-Commands für Anfragen, Tauri-Events für alles, was ein Agent von sich
 //! aus schickt. Je Backend läuft höchstens ein Prozess, jede Session gehört
-//! genau einem Backend (siehe backends.rs).
+//! genau einem Backend (siehe backends.rs). Weitere Vibe-Accounts bekommen je
+//! einen eigenen `vibe-acp` (Schlüssel `vibe@<account>`, siehe accounts.rs).
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -19,21 +20,35 @@ use crate::rpc::{self, Connection, Incoming, RpcError};
 
 type CmdResult<T> = Result<T, String>;
 
-/// Ein laufender Agent-Prozess (ein Backend).
+/// Ein laufender Agent-Prozess (ein Backend oder ein weiterer Vibe-Account).
 struct Agent {
     conn: Connection,
     child: tokio::process::Child,
     info: ConnectInfo,
 }
 
+/// Offene Freigabe: (Agent-Schlüssel, Session, Verbindung, JSON-RPC-ID).
+type Permissions = Arc<Mutex<HashMap<String, (String, String, Connection, Value)>>>;
+
+/// Sessions, deren Updates gerade nicht an die Oberfläche gehen, mit dem Text
+/// der zuletzt wiedergegebenen Nutzernachricht.
+type Muted = Arc<Mutex<HashMap<String, Replay>>>;
+
+#[derive(Default)]
+struct Replay {
+    last_user: String,
+    in_user: bool,
+}
+
 #[derive(Default)]
 pub struct AgentState {
-    /// Laufende Agenten je Backend-ID.
+    /// Laufende Agenten je Backend-ID bzw. `vibe@<account>`.
     agents: AsyncMutex<HashMap<String, Agent>>,
     /// Verbindungsaufbau nacheinander, damit kein Backend doppelt startet.
     connecting: AsyncMutex<()>,
-    /// Offene Freigabe-Anfragen: Schlüssel für die Oberfläche → (Backend, Session, JSON-RPC-ID).
-    permissions: Arc<Mutex<HashMap<String, (String, String, Value)>>>,
+    /// Offene Freigabe-Anfragen, Schlüssel für die Oberfläche.
+    permissions: Permissions,
+    muted: Muted,
     /// Zu welchem Backend gehört welche Session?
     sessions: Mutex<HashMap<String, String>>,
     /// Zählt Verbindungen, damit ein altes `acp:closed` die neue nicht beendet.
@@ -65,8 +80,68 @@ fn remember(state: &AgentState, session_id: &str, backend: &str) {
     state.sessions.lock().unwrap().insert(session_id.to_string(), backend.to_string());
 }
 
-async fn call_session(state: &AgentState, session_id: &str, method: &str, params: Value) -> CmdResult<Value> {
-    call_on(state, &session_backend(state, session_id), method, params).await
+/// Schlüssel eines weiteren Vibe-Accounts in `agents`.
+fn account_key(account: &str) -> String {
+    format!("{DEFAULT_BACKEND}@{account}")
+}
+
+/// Verbindung eines Vibe-Accounts; ein weiterer Prozess startet beim ersten Bedarf.
+async fn account_connection(app: &AppHandle, state: &AgentState, account: &str) -> CmdResult<Connection> {
+    if account == crate::accounts::STANDARD {
+        return ensure(app, state, DEFAULT_BACKEND).await;
+    }
+    let key = account_key(account);
+    let _guard = state.connecting.lock().await;
+    if let Some(a) = state.agents.lock().await.get_mut(&key) {
+        if matches!(a.child.try_wait(), Ok(None)) {
+            return Ok(a.conn.clone());
+        }
+    }
+    let env = crate::accounts::agent_env(account)?;
+    let (conn, child, info) = start_agent(app, state, DEFAULT_BACKEND, &env, Some(account)).await?;
+    state.agents.lock().await.insert(key, Agent { conn: conn.clone(), child, info });
+    Ok(conn)
+}
+
+/// Verbindung, über die eine Session läuft (Backend und, bei Vibe, Account).
+async fn session_connection(app: &AppHandle, state: &AgentState, session_id: &str) -> CmdResult<Connection> {
+    let backend = session_backend(state, session_id);
+    if backend == DEFAULT_BACKEND {
+        if let Some(account) = crate::accounts::for_session(session_id) {
+            return account_connection(app, state, &account).await;
+        }
+    }
+    ensure(app, state, &backend).await
+}
+
+async fn session_call(app: &AppHandle, state: &AgentState, session_id: &str, method: &str, params: Value) -> CmdResult<Value> {
+    session_connection(app, state, session_id).await?.request(method, params).await.map_err(|e| e.to_string())
+}
+
+fn bind(app: &AppHandle, session_id: &str, account: &str) {
+    crate::accounts::bind_session(session_id, account);
+    let _ = app.emit("accounts:session", json!({ "sessionId": session_id, "id": account, "name": crate::accounts::name(account) }));
+}
+
+/// Beendet den Prozess eines Accounts (beim Entfernen).
+pub async fn stop_account(state: &AgentState, account: &str) {
+    if let Some(mut a) = state.agents.lock().await.remove(&account_key(account)) {
+        let _ = a.child.kill().await;
+    }
+}
+
+/// Beendet einen Agenten samt seiner weiteren Accounts.
+async fn stop_backend(state: &AgentState, backend: &str) {
+    let prefix = format!("{backend}@");
+    let old: Vec<Agent> = {
+        let mut agents = state.agents.lock().await;
+        let keys: Vec<String> = agents.keys().filter(|k| *k == backend || k.starts_with(&prefix)).cloned().collect();
+        keys.iter().filter_map(|k| agents.remove(k)).collect()
+    };
+    for mut a in old {
+        let _ = a.child.kill().await;
+    }
+    state.permissions.lock().unwrap().retain(|_, (k, _, _, _)| k != backend && !k.starts_with(&prefix));
 }
 
 /// Sucht `vibe-acp`. Aus dem Desktop gestartete Apps erben oft nicht den PATH
@@ -138,13 +213,9 @@ async fn connect_backend(app: &AppHandle, state: &AgentState, backend: &str, reu
             }
         }
     }
-    let old = state.agents.lock().await.remove(backend);
-    if let Some(mut old) = old {
-        let _ = old.child.kill().await;
-    }
-    state.permissions.lock().unwrap().retain(|_, (b, _, _)| b != backend);
+    stop_backend(state, backend).await;
 
-    let launch = spec.locate().ok_or(if backend == DEFAULT_BACKEND { "VIBE_NOT_FOUND" } else { "BACKEND_NOT_FOUND" })?;
+    spec.locate().ok_or(if backend == DEFAULT_BACKEND { "VIBE_NOT_FOUND" } else { "BACKEND_NOT_FOUND" })?;
 
     // Vor dem Start von Vibe: Standardmodelle und Skills eintragen, neue Modelle suchen.
     let mut new_models = Value::Null;
@@ -155,15 +226,35 @@ async fn connect_backend(app: &AppHandle, state: &AgentState, backend: &str, reu
         }
     }
 
-    // Mit mehreren Backends bekommt jedes seine eigene Trace-Datei (`<pfad>.<backend>`).
+    let (conn, child, mut info) = start_agent(app, state, backend, &[], None).await?;
+    info.new_models = new_models;
+    state.agents.lock().await.insert(backend.to_string(), Agent { conn, child, info: info.clone() });
+    Ok(info)
+}
+
+/// Startet den Agenten eines Backends, initialisiert ACP und leitet seine
+/// Nachrichten weiter. `account` ist ein weiterer Vibe-Account.
+async fn start_agent(
+    app: &AppHandle,
+    state: &AgentState,
+    backend: &str,
+    env: &[(String, String)],
+    account: Option<&str>,
+) -> CmdResult<(Connection, tokio::process::Child, ConnectInfo)> {
+    let spec = backends::get(backend).ok_or_else(|| format!("Unbekanntes Backend: {backend}"))?;
+    let launch = spec.locate().ok_or(if backend == DEFAULT_BACKEND { "VIBE_NOT_FOUND" } else { "BACKEND_NOT_FOUND" })?;
+    // Jedes Backend und jeder weitere Account bekommt eine eigene Trace-Datei (`<pfad>.<backend>`, `<pfad>.<account>`).
     let trace = std::env::var_os("BRISE_ACP_TRACE").map(|p| {
         let mut p = PathBuf::from(p).into_os_string();
         if backend != DEFAULT_BACKEND {
             p.push(format!(".{backend}"));
         }
+        if let Some(a) = account {
+            p.push(format!(".{a}"));
+        }
         PathBuf::from(p)
     });
-    let (conn, events, child) = rpc::spawn(launch.program.as_os_str(), &launch.args, trace.as_deref()).map_err(|e| e.to_string())?;
+    let (conn, events, child) = rpc::spawn_with_env(launch.program.as_os_str(), &launch.args, env, trace.as_deref()).map_err(|e| e.to_string())?;
 
     let init = conn
         .request(
@@ -183,20 +274,29 @@ async fn connect_backend(app: &AppHandle, state: &AgentState, backend: &str, reu
     let auth = auth_of(backend, &conn).await;
 
     let generation = state.generation.fetch_add(1, Ordering::SeqCst) + 1;
-    tauri::async_runtime::spawn(pump(app.clone(), backend.to_string(), conn.clone(), events, state.permissions.clone(), generation));
-
+    let key = account.map_or_else(|| backend.to_string(), account_key);
+    tauri::async_runtime::spawn(pump(
+        app.clone(),
+        backend.to_string(),
+        key,
+        conn.clone(),
+        events,
+        state.permissions.clone(),
+        state.muted.clone(),
+        generation,
+        account.map(str::to_string),
+    ));
     let info = ConnectInfo {
         generation,
         backend: backend.to_string(),
         title: spec.title(),
         caps: spec.caps(),
-        new_models,
+        new_models: Value::Null,
         agent_path: launch.display(),
         init,
         auth,
     };
-    state.agents.lock().await.insert(backend.to_string(), Agent { conn: conn.clone(), child, info: info.clone() });
-    Ok(info)
+    Ok((conn, child, info))
 }
 
 /// Verbindung zum Backend, bei Bedarf jetzt aufbauen.
@@ -216,22 +316,23 @@ async fn ensure(app: &AppHandle, state: &AgentState, backend: &str) -> CmdResult
 /// Beendet den Agenten eines Backends (z. B. nach der Anmeldung neu starten).
 #[tauri::command]
 pub async fn disconnect_backend(state: State<'_, AgentState>, backend: String) -> CmdResult<()> {
-    let old = state.agents.lock().await.remove(&backend);
-    if let Some(mut old) = old {
-        let _ = old.child.kill().await;
-    }
+    stop_backend(&state, &backend).await;
     Ok(())
 }
 
 /// Leitet alles, was der Agent von sich aus schickt, an die Oberfläche weiter.
 /// Jedes Event trägt die Backend-ID.
+#[allow(clippy::too_many_arguments)]
 async fn pump(
     app: AppHandle,
     backend: String,
+    key: String,
     conn: Connection,
     mut events: mpsc::UnboundedReceiver<Incoming>,
-    permissions: Arc<Mutex<HashMap<String, (String, String, Value)>>>,
+    permissions: Permissions,
+    muted: Muted,
     generation: u64,
+    account: Option<String>,
 ) {
     let tag = |mut params: Value| {
         if let Some(obj) = params.as_object_mut() {
@@ -242,9 +343,23 @@ async fn pump(
     while let Some(ev) = events.recv().await {
         match ev {
             Incoming::Notification { method, params } if method == "session/update" => {
+                let sid = params["sessionId"].as_str().unwrap_or_default();
+                if let Some(replay) = muted.lock().unwrap().get_mut(sid) {
+                    let update = &params["update"];
+                    if update["sessionUpdate"] == "user_message_chunk" {
+                        if !replay.in_user {
+                            replay.last_user.clear();
+                        }
+                        replay.last_user.push_str(update["content"]["text"].as_str().unwrap_or_default());
+                        replay.in_user = true;
+                    } else {
+                        replay.in_user = false;
+                    }
+                    continue;
+                }
                 let _ = app.emit("acp:update", tag(params));
             }
-            Incoming::Notification { method, params } if method == "_auth/status_update" => {
+            Incoming::Notification { method, params } if method == "_auth/status_update" && account.is_none() => {
                 let _ = app.emit("acp:backend-auth", json!({ "backend": backend, "status": params["authStatus"] }));
             }
             Incoming::Notification { method, params } => {
@@ -252,10 +367,10 @@ async fn pump(
             }
             Incoming::Request { id, method, params } => match method.as_str() {
                 "session/request_permission" => {
-                    let key = format!("{backend}:{generation}:{id}");
+                    let ui_key = format!("{key}:{generation}:{id}");
                     let session = params["sessionId"].as_str().unwrap_or_default().to_string();
-                    permissions.lock().unwrap().insert(key.clone(), (backend.clone(), session, id));
-                    let _ = app.emit("acp:permission", json!({ "key": key, "request": params, "backend": backend }));
+                    permissions.lock().unwrap().insert(ui_key.clone(), (key.clone(), session, conn.clone(), id));
+                    let _ = app.emit("acp:permission", json!({ "key": ui_key, "request": params, "backend": backend }));
                 }
                 "fs/read_text_file" => conn.respond(id, fs_read(&params)),
                 "fs/write_text_file" => conn.respond(id, fs_write(&params)),
@@ -263,7 +378,15 @@ async fn pump(
             },
         }
     }
-    let _ = app.emit("acp:closed", json!({ "generation": generation, "backend": backend }));
+    match account {
+        // Ein weiterer Account startet beim nächsten Bedarf neu; die Oberfläche bleibt verbunden.
+        Some(account) => {
+            let _ = app.emit("accounts:closed", json!({ "account": account }));
+        }
+        None => {
+            let _ = app.emit("acp:closed", json!({ "generation": generation, "backend": backend }));
+        }
+    }
 }
 
 /// Ordner aus der Kommandozeile (`brise ~/code/projekt`), wie bei `code .`.
@@ -346,8 +469,10 @@ fn mcp_servers(cwd: &str, search: bool, rea: bool) -> Value {
 }
 
 /// Neue Session beim gewählten Backend (fehlt es, bei Vibe). Startet den
-/// Agenten bei Bedarf.
+/// Agenten bei Bedarf. Vibe-Sessions nehmen ohne `account` den Account des
+/// Projekts (siehe accounts.rs).
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn new_session(
     app: AppHandle,
     state: State<'_, AgentState>,
@@ -355,13 +480,21 @@ pub async fn new_session(
     search: Option<bool>,
     rea: Option<bool>,
     backend: Option<String>,
+    account: Option<String>,
 ) -> CmdResult<Value> {
     let backend = backend.unwrap_or_else(|| DEFAULT_BACKEND.into());
-    let conn = ensure(&app, &state, &backend).await?;
+    let account = (backend == DEFAULT_BACKEND).then(|| account.unwrap_or_else(|| crate::accounts::for_project(&cwd)));
+    let conn = match &account {
+        Some(a) => account_connection(&app, &state, a).await?,
+        None => ensure(&app, &state, &backend).await?,
+    };
     let servers = mcp_servers(&cwd, search.unwrap_or(true), rea.unwrap_or(false));
     let mut r = conn.request("session/new", json!({ "cwd": cwd, "mcpServers": servers })).await.map_err(|e| e.to_string())?;
     if let Some(id) = r["sessionId"].as_str() {
         remember(&state, id, &backend);
+        if let Some(a) = &account {
+            bind(&app, id, a);
+        }
     }
     r["backend"] = json!(backend);
     Ok(r)
@@ -378,21 +511,83 @@ pub async fn load_session(
     backend: Option<String>,
 ) -> CmdResult<Value> {
     let backend = backend.unwrap_or_else(|| session_backend(&state, &session_id));
-    let conn = ensure(&app, &state, &backend).await?;
     remember(&state, &session_id, &backend);
+    // Eine Vibe-Session lädt in dem Account, mit dem sie begonnen hat.
+    let account = (backend == DEFAULT_BACKEND).then(|| crate::accounts::for_session(&session_id).unwrap_or_else(|| crate::accounts::STANDARD.into()));
+    let conn = match &account {
+        Some(a) => account_connection(&app, &state, a).await?,
+        None => ensure(&app, &state, &backend).await?,
+    };
     let servers = mcp_servers(&cwd, search.unwrap_or(true), rea.unwrap_or(false));
-    conn.request("session/load", json!({ "cwd": cwd, "sessionId": session_id, "mcpServers": servers })).await.map_err(|e| e.to_string())
+    let result = conn
+        .request("session/load", json!({ "cwd": cwd, "sessionId": session_id, "mcpServers": servers }))
+        .await
+        .map_err(|e| e.to_string())?;
+    if let Some(a) = &account {
+        bind(&app, &session_id, a);
+    }
+    Ok(result)
+}
+
+/// Zieht eine Vibe-Session in einen anderen Account um, z. B. auf die Reserve
+/// nach einem Limit. Der Verlauf wird dort geladen, ohne ihn der Oberfläche
+/// erneut zu zeigen. Liefert die zuletzt gespeicherte Nutzernachricht, damit
+/// die Oberfläche entscheiden kann, ob sie den Prompt wiederholen muss.
+#[tauri::command]
+pub async fn switch_account(
+    app: AppHandle,
+    state: State<'_, AgentState>,
+    cwd: String,
+    session_id: String,
+    account: String,
+    search: Option<bool>,
+    rea: Option<bool>,
+) -> CmdResult<Value> {
+    if session_backend(&state, &session_id) != DEFAULT_BACKEND {
+        return Err("Accounts gibt es nur für Vibe-Sessions".into());
+    }
+    let conn = account_connection(&app, &state, &account).await?;
+    let servers = mcp_servers(&cwd, search.unwrap_or(true), rea.unwrap_or(false));
+    state.muted.lock().unwrap().insert(session_id.clone(), Replay::default());
+    let result = conn.request("session/load", json!({ "cwd": cwd, "sessionId": session_id, "mcpServers": servers })).await;
+    // Nachzügler der Wiedergabe abwarten, bevor die Session wieder sichtbar wird.
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    let replay = state.muted.lock().unwrap().remove(&session_id).unwrap_or_default();
+    result.map_err(|e| e.to_string())?;
+    bind(&app, &session_id, &account);
+    Ok(json!({ "id": account, "name": crate::accounts::name(&account), "lastUserText": replay.last_user }))
+}
+
+/// Reserve-Account für eine Vibe-Session am Limit, falls einer eingetragen ist.
+#[tauri::command]
+pub fn reserve_account(state: State<'_, AgentState>, session_id: String) -> Value {
+    if session_backend(&state, &session_id) != DEFAULT_BACKEND {
+        return Value::Null;
+    }
+    let current = crate::accounts::for_session(&session_id).unwrap_or_else(|| crate::accounts::STANDARD.into());
+    match crate::accounts::reserve_for(&current) {
+        Some(id) => json!({
+            "id": id,
+            "name": crate::accounts::name(&id),
+            "from": crate::accounts::name(&current),
+            "auto": crate::accounts::auto_switch(),
+        }),
+        None => Value::Null,
+    }
 }
 
 /// Vibe-Erweiterungen (`_voice/…` usw.) direkt aufrufen – nur bei Backends,
-/// die sie können.
+/// die sie können; mit `sessionId` über den Account der Session.
 #[tauri::command]
-pub async fn ext(state: State<'_, AgentState>, method: String, params: Value, backend: Option<String>) -> CmdResult<Value> {
+pub async fn ext(app: AppHandle, state: State<'_, AgentState>, method: String, params: Value, backend: Option<String>) -> CmdResult<Value> {
     let backend = backend.unwrap_or_else(|| DEFAULT_BACKEND.into());
     if !backends::caps(&backend).vibe_extensions {
         return Err(format!("{} unterstützt _{method} nicht", title(&backend)));
     }
-    call_on(&state, &backend, &format!("_{method}"), params).await
+    match params["sessionId"].as_str().map(str::to_string) {
+        Some(sid) => session_call(&app, &state, &sid, &format!("_{method}"), params).await,
+        None => call_on(&state, &backend, &format!("_{method}"), params).await,
+    }
 }
 
 /// Kann das verbundene Backend `session/list` bzw. Sessions löschen?
@@ -412,7 +607,8 @@ pub async fn list_sessions(state: State<'_, AgentState>, cwd: Option<String>, ba
         let agents = state.agents.lock().await;
         agents
             .iter()
-            .filter(|(id, a)| backend.as_deref().is_none_or(|b| b == id.as_str()) && session_capability(&a.info, "list"))
+            // Weitere Vibe-Accounts teilen sich den Sessions-Ordner mit dem Standard.
+            .filter(|(id, a)| !id.contains('@') && backend.as_deref().is_none_or(|b| b == id.as_str()) && session_capability(&a.info, "list"))
             .map(|(id, a)| (id.clone(), a.conn.clone()))
             .collect()
     };
@@ -440,19 +636,25 @@ pub async fn list_sessions(state: State<'_, AgentState>, cwd: Option<String>, ba
 
 /// `prompt` sind fertige ACP-Content-Blöcke (Text, resource_link, image).
 #[tauri::command]
-pub async fn prompt(state: State<'_, AgentState>, session_id: String, prompt: Vec<Value>) -> CmdResult<Value> {
-    call_session(&state, &session_id, "session/prompt", json!({ "sessionId": session_id, "prompt": prompt })).await
+pub async fn prompt(app: AppHandle, state: State<'_, AgentState>, session_id: String, prompt: Vec<Value>) -> CmdResult<Value> {
+    session_connection(&app, &state, &session_id)
+        .await?
+        .request("session/prompt", json!({ "sessionId": session_id, "prompt": prompt }))
+        .await
+        // Limit erkennbar machen (Vibe: -31001 nach eigenen Wiederholungen).
+        .map_err(|e| if e.code == -31001 { format!("RATE_LIMIT: {}", e.message) } else { e.to_string() })
 }
 
 #[tauri::command]
 pub async fn set_config_option(
+    app: AppHandle,
     state: State<'_, AgentState>,
     session_id: String,
     config_id: String,
     value: Value,
 ) -> CmdResult<Value> {
-    call_session(&state, &session_id, "session/set_config_option", json!({ "sessionId": session_id, "configId": config_id, "value": value }))
-        .await
+    let params = json!({ "sessionId": session_id, "configId": config_id, "value": value });
+    session_call(&app, &state, &session_id, "session/set_config_option", params).await
 }
 
 #[tauri::command]
@@ -463,7 +665,7 @@ pub async fn config_schema(state: State<'_, AgentState>) -> CmdResult<Value> {
 /// Vibe löscht über `_session/delete`, andere Agenten über `session/delete`,
 /// sofern sie es in `sessionCapabilities` anbieten.
 #[tauri::command]
-pub async fn delete_session(state: State<'_, AgentState>, session_id: String) -> CmdResult<Value> {
+pub async fn delete_session(app: AppHandle, state: State<'_, AgentState>, session_id: String) -> CmdResult<Value> {
     let backend = session_backend(&state, &session_id);
     let method = {
         let agents = state.agents.lock().await;
@@ -476,23 +678,23 @@ pub async fn delete_session(state: State<'_, AgentState>, session_id: String) ->
             return Err(format!("{} kann Sessions nicht löschen", title(&backend)));
         }
     };
-    let r = call_on(&state, &backend, method, json!({ "sessionId": session_id })).await?;
+    let r = session_call(&app, &state, &session_id, method, json!({ "sessionId": session_id })).await?;
     state.sessions.lock().unwrap().remove(&session_id);
+    crate::accounts::forget_session(&session_id);
     Ok(r)
 }
 
 #[tauri::command]
 pub async fn cancel(app: AppHandle, state: State<'_, AgentState>, session_id: String) -> CmdResult<()> {
-    let backend = session_backend(&state, &session_id);
-    let conn = connection(&state, &backend).await?;
+    let conn = session_connection(&app, &state, &session_id).await?;
     // Laut ACP muss der Client offene Freigaben selbst als abgebrochen beantworten.
-    let open: Vec<(String, Value)> = {
+    let open: Vec<(String, Connection, Value)> = {
         let mut map = state.permissions.lock().unwrap();
-        let keys: Vec<String> = map.iter().filter(|(_, (b, s, _))| *b == backend && (s.is_empty() || *s == session_id)).map(|(k, _)| k.clone()).collect();
-        keys.into_iter().filter_map(|k| map.remove(&k).map(|(_, _, id)| (k, id))).collect()
+        let keys: Vec<String> = map.iter().filter(|(_, (_, s, c, _))| c.same(&conn) && (s.is_empty() || *s == session_id)).map(|(k, _)| k.clone()).collect();
+        keys.into_iter().filter_map(|k| map.remove(&k).map(|(_, _, c, id)| (k, c, id))).collect()
     };
-    for (key, id) in open {
-        conn.respond(id, Ok(json!({ "outcome": { "outcome": "cancelled" } })));
+    for (key, owner, id) in open {
+        owner.respond(id, Ok(json!({ "outcome": { "outcome": "cancelled" } })));
         let _ = app.emit("acp:permission-closed", json!({ "key": key, "optionId": null }));
     }
     conn.notify("session/cancel", json!({ "sessionId": session_id }));
@@ -500,8 +702,8 @@ pub async fn cancel(app: AppHandle, state: State<'_, AgentState>, session_id: St
 }
 
 #[tauri::command]
-pub async fn set_mode(state: State<'_, AgentState>, session_id: String, mode_id: String) -> CmdResult<Value> {
-    call_session(&state, &session_id, "session/set_mode", json!({ "sessionId": session_id, "modeId": mode_id })).await
+pub async fn set_mode(app: AppHandle, state: State<'_, AgentState>, session_id: String, mode_id: String) -> CmdResult<Value> {
+    session_call(&app, &state, &session_id, "session/set_mode", json!({ "sessionId": session_id, "modeId": mode_id })).await
 }
 
 #[tauri::command]
@@ -511,12 +713,12 @@ pub async fn respond_permission(
     key: String,
     option_id: Option<String>,
 ) -> CmdResult<()> {
-    let (backend, _, id) = state.permissions.lock().unwrap().remove(&key).ok_or("Diese Freigabe ist nicht mehr offen")?;
+    let (_, _, conn, id) = state.permissions.lock().unwrap().remove(&key).ok_or("Diese Freigabe ist nicht mehr offen")?;
     let outcome = match &option_id {
         Some(option) => json!({ "outcome": "selected", "optionId": option }),
         None => json!({ "outcome": "cancelled" }),
     };
-    connection(&state, &backend).await?.respond(id, Ok(json!({ "outcome": outcome })));
+    conn.respond(id, Ok(json!({ "outcome": outcome })));
     let _ = app.emit("acp:permission-closed", json!({ "key": key, "optionId": option_id }));
     Ok(())
 }

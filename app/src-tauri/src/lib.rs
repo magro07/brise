@@ -1,3 +1,4 @@
+mod accounts;
 mod agent;
 mod assist;
 mod backends;
@@ -129,6 +130,16 @@ pub fn run() {
             config::read_image,
             credentials::save_api_key,
             credentials::api_key_info,
+            accounts::list_accounts,
+            accounts::add_account,
+            accounts::update_account,
+            accounts::remove_account,
+            accounts::set_default_account,
+            accounts::set_project_account,
+            accounts::set_auto_switch,
+            accounts::session_account,
+            agent::switch_account,
+            agent::reserve_account,
             installer::install_vibe,
             installer::upgrade_vibe,
             installer::install_info,
