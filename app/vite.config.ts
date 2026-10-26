@@ -3,6 +3,8 @@ import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 // @ts-expect-error type error without @types/node package
 import process from "node:process";
+// @ts-expect-error type error without @types/node package
+import { fileURLToPath } from "node:url";
 const host = process.env.TAURI_DEV_HOST;
 
 /**
@@ -12,7 +14,8 @@ const host = process.env.TAURI_DEV_HOST;
  */
 function modelRuntime(): Plugin {
   const id = "virtual:model-runtime";
-  const entry = new URL("./src/components/model3d/runtime.ts", import.meta.url).pathname;
+  // fileURLToPath statt .pathname: unter Windows wäre das „/D:/…“.
+  const entry = fileURLToPath(new URL("./src/components/model3d/runtime.ts", import.meta.url));
   return {
     name: "brise-model-runtime",
     resolveId: (source) => (source === id ? "\0" + id : null),
