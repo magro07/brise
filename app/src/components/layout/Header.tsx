@@ -4,6 +4,7 @@ import { basename, useStore, type Session } from "../../lib/store";
 import { IconButton, Menu, MenuContent, MenuItem, MenuTrigger, Tip, clsx } from "../ui";
 import { PANEL_TABS, changedFiles, subagents } from "../panels/SidePanel";
 import { confirmAction } from "../../lib/dialogs";
+import { AccountBadge } from "./AccountBadge";
 
 export function Header({ session }: { session?: Session }) {
   const project = useStore((s) => s.activeProject);
@@ -31,6 +32,7 @@ export function Header({ session }: { session?: Session }) {
         {project && <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted" />}
         <span className="truncate font-medium">{session ? (session.title ?? "Neue Session") : "Neue Session"}</span>
         {session?.readOnly && <span className="rounded bg-hover px-1.5 text-[0.75em] text-muted">Subagent</span>}
+        {!session?.readOnly && <AccountBadge sessionId={session?.id} />}
       </div>
 
       <div className="flex items-center gap-0.5">

@@ -1,6 +1,6 @@
 # ADR 0002 – Mehrere Mistral-Schlüssel
 
-Stand: 26.10.2026 · Status: **vorgeschlagen, wartet auf Entscheidung**
+Stand: 26.10.2026 · Status: **angenommen** (Sticky + Reserve, umgesetzt auf `claude/multikey-caaa53`)
 
 ## Anlass
 
@@ -92,9 +92,17 @@ Usage/Stats).
   Session. Vibe sucht den Schlüssel in dieser Reihenfolge: Session-Kontext
   (nur App-Server-Kanäle, nicht ACP), dann Umgebung, dann Schlüsselbund
   (`vibe/utils/api_keys.py`). Ein zweiter Account braucht also einen zweiten
-  `vibe-acp`-Prozess mit `MISTRAL_API_KEY` in der Kind-Umgebung (`rpc::spawn`).
-  Die Umgebung schlägt den Schlüsselbund, der Standard-Eintrag bleibt
-  unberührt.
+  `vibe-acp`-Prozess.
+- **Schlüssel nicht über die Umgebung.** Vibe gibt seine komplette Umgebung an
+  Shell-Befehle des Modells weiter (`vibe/core/utils/shell.py`,
+  `{**os.environ, …}`). `MISTRAL_API_KEY` in der Kind-Umgebung wäre also per
+  `env` für das Modell lesbar. Stattdessen setzt Brise
+  `VIBE_PROVIDERS='[{"name":"mistral", …, "api_key_env_var":"BRISE_KEY_<id>"}]'`.
+  Vibe führt das per Feld mit dem eingebauten Provider zusammen und liest den
+  Schlüssel dann selbst aus dem Schlüsselbund (Dienst `ai.mistral.vibe`, Konto
+  `BRISE_KEY_<id>`). In der Umgebung steht nur der Variablenname. Geprüft mit
+  Vibe 3.0.2: Ein Dummy-Eintrag wird gefunden („from the keyring“), und ein
+  Prompt scheitert erwartungsgemäß mit -31002 (ungültiger Schlüssel).
 - **Sessions sind prozessübergreifend.** Sessions liegen im gemeinsamen
   `VIBE_HOME`. Ein anderer Prozess kann sie per `session/load` übernehmen.
   Das ist der Weg für einen Wechsel, er kostet aber den Cache (siehe oben).
@@ -130,7 +138,7 @@ ein, wenn der Haupt-Account am Limit ist.
 1. **Schlüssel mit Namen:** Jeder Schlüssel bekommt einen Namen, z. B.
    „Privat (Abo)“, „Firma“, „Reserve (Pay-as-you-go)“, und einen
    Schlüsselbund-Eintrag unter Dienst `ai.mistral.vibe`, Konto
-   `brise:<id>`. Der bisherige Eintrag `MISTRAL_API_KEY` bleibt der
+   `BRISE_KEY_<id>`. Der bisherige Eintrag `MISTRAL_API_KEY` bleibt der
    Standard-Account und wird mit Vibe-CLI geteilt. Angezeigt werden nur Name
    und Kurzform (`abcd…wxyz`).
 2. **Zuordnung:** Es gibt einen Standard-Account, pro Projekt überschreibbar.

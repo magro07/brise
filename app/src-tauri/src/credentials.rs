@@ -16,11 +16,19 @@ pub const API_BASE: &str = "https://api.mistral.ai/v1";
 type CmdResult<T> = Result<T, String>;
 
 fn entry() -> keyring::Result<keyring::Entry> {
+    entry_for(ACCOUNT)
+}
+
+/// Schlüsselbund-Eintrag unter Vibes Dienstnamen; weitere Accounts (siehe
+/// `accounts.rs`) liegen unter eigenen Kontonamen daneben.
+pub fn entry_for(account: &str) -> keyring::Result<keyring::Entry> {
     // Pythons Windows-Backend nutzt den Dienstnamen als Ziel; daran halten wir uns.
+    // Das Ziel ist dort der eindeutige Name, weitere Accounts brauchen also ein eigenes.
     if cfg!(windows) {
-        keyring::Entry::new_with_target(SERVICE, SERVICE, ACCOUNT)
+        let target = if account == ACCOUNT { SERVICE.to_string() } else { format!("{SERVICE}:{account}") };
+        keyring::Entry::new_with_target(&target, SERVICE, account)
     } else {
-        keyring::Entry::new(SERVICE, ACCOUNT)
+        keyring::Entry::new(SERVICE, account)
     }
 }
 
@@ -69,13 +77,13 @@ fn write_env_file(key: &str) -> CmdResult<()> {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct KeyCheck {
-    valid: bool,
-    message: String,
-    models: usize,
+    pub valid: bool,
+    pub message: String,
+    pub models: usize,
 }
 
 /// Prüft einen Schlüssel gegen die Mistral-API, ohne ihn zu speichern.
-async fn check(key: &str) -> CmdResult<KeyCheck> {
+pub async fn check(key: &str) -> CmdResult<KeyCheck> {
     let resp = reqwest::Client::new()
         .get(format!("{API_BASE}/models"))
         .bearer_auth(key)
@@ -137,11 +145,14 @@ pub fn api_key_info() -> KeyInfo {
     let key = read_key();
     KeyInfo {
         present: key.is_some(),
-        hint: key.map(|k| {
-            let chars: Vec<char> = k.chars().collect();
-            let start: String = chars.iter().take(4).collect();
-            let end: String = chars.iter().rev().take(4).collect::<Vec<_>>().into_iter().rev().collect();
-            format!("{start}…{end}")
-        }),
+        hint: key.as_deref().map(hint),
     }
+}
+
+/// Nur Anfang und Ende eines Schlüssels, zum Wiedererkennen.
+pub fn hint(key: &str) -> String {
+    let chars: Vec<char> = key.chars().collect();
+    let start: String = chars.iter().take(4).collect();
+    let end: String = chars.iter().rev().take(4).collect::<Vec<_>>().into_iter().rev().collect();
+    format!("{start}…{end}")
 }

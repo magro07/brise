@@ -96,6 +96,16 @@ pub fn spawn(
     args: &[String],
     trace: Option<&Path>,
 ) -> Result<(Connection, mpsc::UnboundedReceiver<Incoming>, Child)> {
+    spawn_with_env(program, args, &[], trace)
+}
+
+/// Wie `spawn`, mit zusätzlichen Umgebungsvariablen für den Agenten.
+pub fn spawn_with_env(
+    program: &std::ffi::OsStr,
+    args: &[String],
+    env: &[(String, String)],
+    trace: Option<&Path>,
+) -> Result<(Connection, mpsc::UnboundedReceiver<Incoming>, Child)> {
     let tracer = match trace {
         Some(path) => Some(Tracer(Arc::new(Mutex::new(
             File::create(path).with_context(|| format!("Trace-Datei {path:?}"))?,
@@ -113,6 +123,7 @@ pub fn spawn(
         }
     }
     command
+        .envs(env.iter().map(|(k, v)| (k, v)))
         .args(args)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())

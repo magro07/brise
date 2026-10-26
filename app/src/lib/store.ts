@@ -15,6 +15,7 @@ import {
   type SessionSummary,
 } from "./acp";
 import { load, save } from "./persist";
+import { promptWithReserve } from "./accounts";
 import type { Suggestion } from "./acp";
 
 // ---------- Modell ----------
@@ -1072,7 +1073,11 @@ export const useStore = create<State & Actions>((set, get) => {
       }
 
       try {
-        const res = await api.prompt(sid, blocks);
+        const res = await promptWithReserve({ id: sid, cwd: get().sessions[sid]?.cwd ?? project }, blocks, {
+          search: get().prefs.agentSearch,
+          rea: get().prefs.rea,
+          notice: (text, tone) => pushItem(sid, { type: "notice", id: uid(), text, tone }),
+        });
         pushItem(sid, {
           type: "turn",
           id: uid(),

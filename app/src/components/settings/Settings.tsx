@@ -28,6 +28,7 @@ import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { tokens } from "../../lib/format";
 import { useStore, type Theme } from "../../lib/store";
 import { looksSecret, maskSecrets } from "../../lib/format";
+import { AccountsCard } from "./Accounts";
 import { Button, Spinner, Switch, clsx } from "../ui";
 import { MODE_INFO } from "../composer/Pickers";
 import { confirmAction } from "../../lib/dialogs";
@@ -416,6 +417,7 @@ export function SettingsView() {
                 />
               </Card>
               <KeyCard />
+              <AccountsCard />
               <Card title="Mistral Vibe">
                 <Row title="Version" control={<span className="text-fg-2">{info?.init.agentInfo?.version ?? "–"}</span>} />
                 <VibeUpdateRow />

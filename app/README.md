@@ -23,6 +23,7 @@ src-tauri/src/
   agent.rs               ACP-Commands, Event-Weiterleitung, Login, fs-Handler
   config.rs              config.toml lesen/schreiben (toml_edit, mit Backup), Dateien, Bilder
   credentials.rs         Mistral-Key prüfen/speichern (Schlüsselbund wie Vibe, sonst .env)
+  accounts.rs            weitere Schlüssel mit Namen, Account je Projekt/Session, Reserve bei Limit
   installer.rs           lädt uv und installiert Vibe in Brises Datenordner
   embeddings.rs          Projektindex + semantische Suche, MCP-Server-Modus
   models.rs              Mistral-Modellkatalog, Modelle in config.toml, Startprüfung
@@ -52,6 +53,15 @@ Danach kommt die Anmeldung: im Browser (Mistral-Konto, Kontingent des Plans) ode
 eingefügtem Vibe-Key bzw. API-Key. Der Key wird gegen `GET /v1/models` geprüft und
 dort gespeichert, wo Vibe ihn selbst ablegt: im Schlüsselbund unter Dienst
 `ai.mistral.vibe`, Konto `MISTRAL_API_KEY`, ersatzweise in `$VIBE_HOME/.env`.
+
+Weitere Schlüssel (Firma, Kunde, Pay-as-you-go) trägt man unter *Einstellungen →
+Konto → Accounts* mit Namen ein. Sie liegen nur im Schlüsselbund (Konto
+`BRISE_KEY_<id>`), `accounts.json` im Datenordner enthält nur Namen und
+Zuordnungen. Für jeden benutzten Account startet Brise einen eigenen `vibe-acp`.
+Eine Session bleibt bei ihrem Account, damit der Prompt-Cache erhalten bleibt.
+Bei einem Limit kann sie auf einen Pay-as-you-go-Schlüssel als Reserve wechseln.
+Mehrere eigene Abo-Accounts sind laut Mistrals Bedingungen nicht erlaubt, deshalb
+rotiert Brise nicht zwischen ihnen. Hintergrund: `docs/adr/0002-mehrere-schluessel.md`.
 
 ## Entwickeln
 

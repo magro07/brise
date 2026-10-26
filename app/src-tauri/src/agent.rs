@@ -16,12 +16,33 @@ use crate::rpc::{self, Connection, Incoming, RpcError};
 
 type CmdResult<T> = Result<T, String>;
 
+/// Offene Freigabe-Anfragen: Schlüssel für die Oberfläche → Verbindung und JSON-RPC-ID.
+type Permissions = Arc<Mutex<HashMap<String, (Connection, Value)>>>;
+
+/// Sessions, deren Updates gerade nicht an die Oberfläche gehen, mit dem Text
+/// der zuletzt wiedergegebenen Nutzernachricht.
+type Muted = Arc<Mutex<HashMap<String, Replay>>>;
+
+#[derive(Default)]
+struct Replay {
+    last_user: String,
+    in_user: bool,
+}
+
+/// Ein weiterer `vibe-acp` für einen Account außer dem Standard (siehe accounts.rs).
+struct Extra {
+    conn: Connection,
+    child: tokio::process::Child,
+}
+
 #[derive(Default)]
 pub struct AgentState {
+    /// Der Prozess des Standard-Accounts.
     conn: AsyncMutex<Option<Connection>>,
     child: AsyncMutex<Option<tokio::process::Child>>,
-    /// Offene Freigabe-Anfragen: Schlüssel für die Oberfläche → JSON-RPC-ID.
-    permissions: Arc<Mutex<HashMap<String, Value>>>,
+    permissions: Permissions,
+    extra: AsyncMutex<HashMap<String, Extra>>,
+    muted: Muted,
     /// Zählt Verbindungen, damit ein altes `acp:closed` die neue nicht beendet.
     generation: AtomicU64,
     /// Letzte erfolgreiche Verbindung – ein Neuladen der Oberfläche übernimmt sie.
@@ -34,6 +55,95 @@ async fn connection(state: &AgentState) -> CmdResult<Connection> {
 
 async fn call(state: &AgentState, method: &str, params: Value) -> CmdResult<Value> {
     connection(state).await?.request(method, params).await.map_err(|e| e.to_string())
+}
+
+/// Verbindung des Accounts; ein weiterer Prozess startet beim ersten Bedarf.
+async fn account_connection(app: &AppHandle, state: &AgentState, account: &str) -> CmdResult<Connection> {
+    if account == crate::accounts::STANDARD {
+        return connection(state).await;
+    }
+    let mut extra = state.extra.lock().await;
+    if let Some(e) = extra.get_mut(account) {
+        if matches!(e.child.try_wait(), Ok(None)) {
+            return Ok(e.conn.clone());
+        }
+    }
+    let env = crate::accounts::agent_env(account)?;
+    let (conn, child, _) = start_agent(app, state, &env, Some(account)).await?;
+    extra.insert(account.to_string(), Extra { conn: conn.clone(), child });
+    Ok(conn)
+}
+
+/// Verbindung, über die eine Session läuft.
+async fn session_connection(app: &AppHandle, state: &AgentState, session_id: &str) -> CmdResult<Connection> {
+    match crate::accounts::for_session(session_id) {
+        Some(account) => account_connection(app, state, &account).await,
+        None => connection(state).await,
+    }
+}
+
+async fn session_call(app: &AppHandle, state: &AgentState, session_id: &str, method: &str, params: Value) -> CmdResult<Value> {
+    session_connection(app, state, session_id).await?.request(method, params).await.map_err(|e| e.to_string())
+}
+
+fn bind(app: &AppHandle, session_id: &str, account: &str) {
+    crate::accounts::bind_session(session_id, account);
+    let _ = app.emit(
+        "accounts:session",
+        json!({ "sessionId": session_id, "id": account, "name": crate::accounts::name(account) }),
+    );
+}
+
+/// Beendet den Prozess eines Accounts (beim Entfernen).
+pub async fn stop_account(state: &AgentState, account: &str) {
+    if let Some(mut e) = state.extra.lock().await.remove(account) {
+        let _ = e.child.kill().await;
+    }
+}
+
+/// Startet `vibe-acp`, initialisiert ACP und leitet seine Nachrichten weiter.
+async fn start_agent(
+    app: &AppHandle,
+    state: &AgentState,
+    env: &[(String, String)],
+    account: Option<&str>,
+) -> CmdResult<(Connection, tokio::process::Child, ConnectInfo)> {
+    let path = find_vibe_acp().ok_or("VIBE_NOT_FOUND")?;
+    let trace = std::env::var_os("BRISE_ACP_TRACE").map(|t| match account {
+        Some(a) => PathBuf::from(format!("{}.{a}", t.to_string_lossy())),
+        None => PathBuf::from(t),
+    });
+    let (conn, events, child) = rpc::spawn_with_env(path.as_os_str(), &[], env, trace.as_deref()).map_err(|e| e.to_string())?;
+
+    let init = conn
+        .request(
+            "initialize",
+            json!({
+                "protocolVersion": 1,
+                "clientCapabilities": {
+                    "fs": { "readTextFile": true, "writeTextFile": true },
+                    "terminal": false,
+                    "_meta": { "browser-auth-delegated": true }
+                },
+                "clientInfo": { "name": "brise", "title": "Brise", "version": env!("CARGO_PKG_VERSION") }
+            }),
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+    let auth = conn.request("_auth/status", json!({})).await.unwrap_or(Value::Null);
+
+    let generation = state.generation.fetch_add(1, Ordering::SeqCst) + 1;
+    tauri::async_runtime::spawn(pump(
+        app.clone(),
+        conn.clone(),
+        events,
+        state.permissions.clone(),
+        state.muted.clone(),
+        generation,
+        account.map(str::to_string),
+    ));
+    let info = ConnectInfo { generation, new_models: Value::Null, agent_path: path.display().to_string(), init, auth };
+    Ok((conn, child, info))
 }
 
 /// Sucht `vibe-acp`. Aus dem Desktop gestartete Apps erben oft nicht den PATH
@@ -91,35 +201,15 @@ pub async fn agent_connect(app: AppHandle, state: State<'_, AgentState>, reuse: 
     if let Some(mut old) = state.child.lock().await.take() {
         let _ = old.kill().await;
     }
+    for (_, mut e) in state.extra.lock().await.drain() {
+        let _ = e.child.kill().await;
+    }
     state.permissions.lock().unwrap().clear();
 
-    let path = find_vibe_acp().ok_or("VIBE_NOT_FOUND")?;
-    let trace = std::env::var_os("BRISE_ACP_TRACE").map(PathBuf::from);
-    let (conn, events, child) = rpc::spawn(path.as_os_str(), &[], trace.as_deref()).map_err(|e| e.to_string())?;
-
-    let init = conn
-        .request(
-            "initialize",
-            json!({
-                "protocolVersion": 1,
-                "clientCapabilities": {
-                    "fs": { "readTextFile": true, "writeTextFile": true },
-                    "terminal": false,
-                    "_meta": { "browser-auth-delegated": true }
-                },
-                "clientInfo": { "name": "brise", "title": "Brise", "version": env!("CARGO_PKG_VERSION") }
-            }),
-        )
-        .await
-        .map_err(|e| e.to_string())?;
-    let auth = conn.request("_auth/status", json!({})).await.unwrap_or(Value::Null);
-
-    let generation = state.generation.fetch_add(1, Ordering::SeqCst) + 1;
-    tauri::async_runtime::spawn(pump(app, conn.clone(), events, state.permissions.clone(), generation));
+    let (conn, child, mut info) = start_agent(&app, &state, &[], None).await?;
+    info.new_models = new_models;
     *state.conn.lock().await = Some(conn);
     *state.child.lock().await = Some(child);
-
-    let info = ConnectInfo { generation, new_models, agent_path: path.display().to_string(), init, auth };
     *state.info.lock().await = Some(info.clone());
     Ok(info)
 }
@@ -129,12 +219,28 @@ async fn pump(
     app: AppHandle,
     conn: Connection,
     mut events: mpsc::UnboundedReceiver<Incoming>,
-    permissions: Arc<Mutex<HashMap<String, Value>>>,
+    permissions: Permissions,
+    muted: Muted,
     generation: u64,
+    account: Option<String>,
 ) {
     while let Some(ev) = events.recv().await {
         match ev {
             Incoming::Notification { method, params } if method == "session/update" => {
+                let sid = params["sessionId"].as_str().unwrap_or_default();
+                if let Some(replay) = muted.lock().unwrap().get_mut(sid) {
+                    let update = &params["update"];
+                    if update["sessionUpdate"] == "user_message_chunk" {
+                        if !replay.in_user {
+                            replay.last_user.clear();
+                        }
+                        replay.last_user.push_str(update["content"]["text"].as_str().unwrap_or_default());
+                        replay.in_user = true;
+                    } else {
+                        replay.in_user = false;
+                    }
+                    continue;
+                }
                 let _ = app.emit("acp:update", params);
             }
             Incoming::Notification { method, params } => {
@@ -143,7 +249,7 @@ async fn pump(
             Incoming::Request { id, method, params } => match method.as_str() {
                 "session/request_permission" => {
                     let key = format!("{generation}:{id}");
-                    permissions.lock().unwrap().insert(key.clone(), id);
+                    permissions.lock().unwrap().insert(key.clone(), (conn.clone(), id));
                     let _ = app.emit("acp:permission", json!({ "key": key, "request": params }));
                 }
                 "fs/read_text_file" => conn.respond(id, fs_read(&params)),
@@ -152,7 +258,15 @@ async fn pump(
             },
         }
     }
-    let _ = app.emit("acp:closed", json!({ "generation": generation }));
+    match account {
+        // Ein weiterer Account startet beim nächsten Bedarf neu; die Oberfläche bleibt verbunden.
+        Some(account) => {
+            let _ = app.emit("accounts:closed", json!({ "account": account }));
+        }
+        None => {
+            let _ = app.emit("acp:closed", json!({ "generation": generation }));
+        }
+    }
 }
 
 /// Ordner aus der Kommandozeile (`brise ~/code/projekt`), wie bei `code .`.
@@ -233,28 +347,95 @@ fn mcp_servers(cwd: &str, search: bool, rea: bool) -> Value {
     Value::Array(list)
 }
 
+/// Ohne `account` nimmt die Session den Account des Projekts (siehe accounts.rs).
 #[tauri::command]
-pub async fn new_session(state: State<'_, AgentState>, cwd: String, search: Option<bool>, rea: Option<bool>) -> CmdResult<Value> {
+pub async fn new_session(
+    app: AppHandle,
+    state: State<'_, AgentState>,
+    cwd: String,
+    search: Option<bool>,
+    rea: Option<bool>,
+    account: Option<String>,
+) -> CmdResult<Value> {
+    let account = account.unwrap_or_else(|| crate::accounts::for_project(&cwd));
     let servers = mcp_servers(&cwd, search.unwrap_or(true), rea.unwrap_or(false));
-    call(&state, "session/new", json!({ "cwd": cwd, "mcpServers": servers })).await
+    let conn = account_connection(&app, &state, &account).await?;
+    let result = conn.request("session/new", json!({ "cwd": cwd, "mcpServers": servers })).await.map_err(|e| e.to_string())?;
+    if let Some(id) = result["sessionId"].as_str() {
+        bind(&app, id, &account);
+    }
+    Ok(result)
 }
 
+/// Eine Session lädt in dem Account, mit dem sie begonnen hat.
 #[tauri::command]
 pub async fn load_session(
+    app: AppHandle,
     state: State<'_, AgentState>,
     cwd: String,
     session_id: String,
     search: Option<bool>,
     rea: Option<bool>,
 ) -> CmdResult<Value> {
+    let account = crate::accounts::for_session(&session_id).unwrap_or_else(|| crate::accounts::STANDARD.into());
     let servers = mcp_servers(&cwd, search.unwrap_or(true), rea.unwrap_or(false));
-    call(&state, "session/load", json!({ "cwd": cwd, "sessionId": session_id, "mcpServers": servers })).await
+    let conn = account_connection(&app, &state, &account).await?;
+    let result = conn
+        .request("session/load", json!({ "cwd": cwd, "sessionId": session_id, "mcpServers": servers }))
+        .await
+        .map_err(|e| e.to_string())?;
+    bind(&app, &session_id, &account);
+    Ok(result)
 }
 
-/// Vibe-Erweiterungen (`_voice/…` usw.) direkt aufrufen.
+/// Zieht eine Session in einen anderen Account um, z. B. auf die Reserve
+/// nach einem Limit. Der Verlauf wird dort geladen, ohne ihn der Oberfläche
+/// erneut zu zeigen. Liefert die zuletzt gespeicherte Nutzernachricht, damit
+/// die Oberfläche entscheiden kann, ob sie den Prompt wiederholen muss.
 #[tauri::command]
-pub async fn ext(state: State<'_, AgentState>, method: String, params: Value) -> CmdResult<Value> {
-    call(&state, &format!("_{method}"), params).await
+pub async fn switch_account(
+    app: AppHandle,
+    state: State<'_, AgentState>,
+    cwd: String,
+    session_id: String,
+    account: String,
+    search: Option<bool>,
+    rea: Option<bool>,
+) -> CmdResult<Value> {
+    let conn = account_connection(&app, &state, &account).await?;
+    let servers = mcp_servers(&cwd, search.unwrap_or(true), rea.unwrap_or(false));
+    state.muted.lock().unwrap().insert(session_id.clone(), Replay::default());
+    let result = conn.request("session/load", json!({ "cwd": cwd, "sessionId": session_id, "mcpServers": servers })).await;
+    // Nachzügler der Wiedergabe abwarten, bevor die Session wieder sichtbar wird.
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    let replay = state.muted.lock().unwrap().remove(&session_id).unwrap_or_default();
+    result.map_err(|e| e.to_string())?;
+    bind(&app, &session_id, &account);
+    Ok(json!({ "id": account, "name": crate::accounts::name(&account), "lastUserText": replay.last_user }))
+}
+
+/// Reserve-Account für eine Session am Limit, falls einer eingetragen ist.
+#[tauri::command]
+pub fn reserve_account(session_id: String) -> Value {
+    let current = crate::accounts::for_session(&session_id).unwrap_or_else(|| crate::accounts::STANDARD.into());
+    match crate::accounts::reserve_for(&current) {
+        Some(id) => json!({
+            "id": id,
+            "name": crate::accounts::name(&id),
+            "from": crate::accounts::name(&current),
+            "auto": crate::accounts::auto_switch(),
+        }),
+        None => Value::Null,
+    }
+}
+
+/// Vibe-Erweiterungen (`_voice/…` usw.) direkt aufrufen; mit `sessionId` über deren Account.
+#[tauri::command]
+pub async fn ext(app: AppHandle, state: State<'_, AgentState>, method: String, params: Value) -> CmdResult<Value> {
+    match params["sessionId"].as_str().map(str::to_string) {
+        Some(sid) => session_call(&app, &state, &sid, &format!("_{method}"), params).await,
+        None => call(&state, &format!("_{method}"), params).await,
+    }
 }
 
 /// Ohne `cwd` liefert Vibe die Sessions aller Projekte.
@@ -269,19 +450,25 @@ pub async fn list_sessions(state: State<'_, AgentState>, cwd: Option<String>) ->
 
 /// `prompt` sind fertige ACP-Content-Blöcke (Text, resource_link, image).
 #[tauri::command]
-pub async fn prompt(state: State<'_, AgentState>, session_id: String, prompt: Vec<Value>) -> CmdResult<Value> {
-    call(&state, "session/prompt", json!({ "sessionId": session_id, "prompt": prompt })).await
+pub async fn prompt(app: AppHandle, state: State<'_, AgentState>, session_id: String, prompt: Vec<Value>) -> CmdResult<Value> {
+    session_connection(&app, &state, &session_id)
+        .await?
+        .request("session/prompt", json!({ "sessionId": session_id, "prompt": prompt }))
+        .await
+        // Limit erkennbar machen (Vibe: -31001 nach eigenen Wiederholungen).
+        .map_err(|e| if e.code == -31001 { format!("RATE_LIMIT: {}", e.message) } else { e.to_string() })
 }
 
 #[tauri::command]
 pub async fn set_config_option(
+    app: AppHandle,
     state: State<'_, AgentState>,
     session_id: String,
     config_id: String,
     value: Value,
 ) -> CmdResult<Value> {
-    call(&state, "session/set_config_option", json!({ "sessionId": session_id, "configId": config_id, "value": value }))
-        .await
+    let params = json!({ "sessionId": session_id, "configId": config_id, "value": value });
+    session_call(&app, &state, &session_id, "session/set_config_option", params).await
 }
 
 #[tauri::command]
@@ -290,17 +477,19 @@ pub async fn config_schema(state: State<'_, AgentState>) -> CmdResult<Value> {
 }
 
 #[tauri::command]
-pub async fn delete_session(state: State<'_, AgentState>, session_id: String) -> CmdResult<Value> {
-    call(&state, "_session/delete", json!({ "sessionId": session_id })).await
+pub async fn delete_session(app: AppHandle, state: State<'_, AgentState>, session_id: String) -> CmdResult<Value> {
+    let result = session_call(&app, &state, &session_id, "_session/delete", json!({ "sessionId": session_id })).await?;
+    crate::accounts::forget_session(&session_id);
+    Ok(result)
 }
 
 #[tauri::command]
 pub async fn cancel(app: AppHandle, state: State<'_, AgentState>, session_id: String) -> CmdResult<()> {
-    let conn = connection(&state).await?;
+    let conn = session_connection(&app, &state, &session_id).await?;
     // Laut ACP muss der Client offene Freigaben selbst als abgebrochen beantworten.
-    let open: Vec<(String, Value)> = state.permissions.lock().unwrap().drain().collect();
-    for (key, id) in open {
-        conn.respond(id, Ok(json!({ "outcome": { "outcome": "cancelled" } })));
+    let open: Vec<(String, (Connection, Value))> = state.permissions.lock().unwrap().drain().collect();
+    for (key, (owner, id)) in open {
+        owner.respond(id, Ok(json!({ "outcome": { "outcome": "cancelled" } })));
         let _ = app.emit("acp:permission-closed", json!({ "key": key, "optionId": null }));
     }
     conn.notify("session/cancel", json!({ "sessionId": session_id }));
@@ -308,8 +497,8 @@ pub async fn cancel(app: AppHandle, state: State<'_, AgentState>, session_id: St
 }
 
 #[tauri::command]
-pub async fn set_mode(state: State<'_, AgentState>, session_id: String, mode_id: String) -> CmdResult<Value> {
-    call(&state, "session/set_mode", json!({ "sessionId": session_id, "modeId": mode_id })).await
+pub async fn set_mode(app: AppHandle, state: State<'_, AgentState>, session_id: String, mode_id: String) -> CmdResult<Value> {
+    session_call(&app, &state, &session_id, "session/set_mode", json!({ "sessionId": session_id, "modeId": mode_id })).await
 }
 
 #[tauri::command]
@@ -319,12 +508,12 @@ pub async fn respond_permission(
     key: String,
     option_id: Option<String>,
 ) -> CmdResult<()> {
-    let id = state.permissions.lock().unwrap().remove(&key).ok_or("Diese Freigabe ist nicht mehr offen")?;
+    let (conn, id) = state.permissions.lock().unwrap().remove(&key).ok_or("Diese Freigabe ist nicht mehr offen")?;
     let outcome = match &option_id {
         Some(option) => json!({ "outcome": "selected", "optionId": option }),
         None => json!({ "outcome": "cancelled" }),
     };
-    connection(&state).await?.respond(id, Ok(json!({ "outcome": outcome })));
+    conn.respond(id, Ok(json!({ "outcome": outcome })));
     let _ = app.emit("acp:permission-closed", json!({ "key": key, "optionId": option_id }));
     Ok(())
 }
