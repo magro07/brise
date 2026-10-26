@@ -17,7 +17,8 @@ type CmdResult<T> = Result<T, String>;
 const FAST_MODEL: &str = "mistral-small-latest";
 
 /// Chat-Anfrage mit JSON-Antwort.
-async fn quick_json(model: &str, system: &str, user: &str, timeout: u64) -> CmdResult<Value> {
+/// `feature` und `cwd` landen im Nutzungsjournal.
+async fn quick_json(model: &str, system: &str, user: &str, timeout: u64, feature: &str, cwd: Option<&str>) -> CmdResult<Value> {
     let key = read_key().ok_or("Kein Mistral-Schlüssel")?;
     let body: Value = reqwest::Client::new()
         .post(format!("{API_BASE}/chat/completions"))
@@ -35,6 +36,7 @@ async fn quick_json(model: &str, system: &str, user: &str, timeout: u64) -> CmdR
         .json()
         .await
         .map_err(|e| e.to_string())?;
+    crate::usage::record(crate::usage::Record::new("assist", feature, model).project(cwd).tokens(&body));
     let text = body["choices"][0]["message"]["content"].as_str().ok_or_else(|| format!("Unerwartete Antwort: {body}"))?;
     serde_json::from_str(text).map_err(|e| format!("Kein gültiges JSON: {e}"))
 }
@@ -55,7 +57,7 @@ pub async fn classify_task(text: String, history: Option<String>, model: Option<
     }
     user.push_str("Neue Aufgabe:\n");
     user.push_str(&text.chars().take(4000).collect::<String>());
-    let v = quick_json(model.as_deref().unwrap_or(FAST_MODEL), SYSTEM, &user, 6).await?;
+    let v = quick_json(model.as_deref().unwrap_or(FAST_MODEL), SYSTEM, &user, 6, "Einstufung", None).await?;
     let level = match v["level"].as_str() {
         Some(l @ ("simple" | "standard" | "complex")) => l,
         _ => "standard",
@@ -149,7 +151,7 @@ pub async fn project_suggestions(cwd: String, recent: Vec<String>, refresh: Opti
         Keine allgemeinen Floskeln. Wiederhole keine Aufgaben aus den letzten Sessions. \
         Antworte als JSON: {\"suggestions\":[{\"title\":\"max. 4 Wörter\",\"description\":\"ein kurzer Satz\",\"prompt\":\"vollständige Anweisung an den Agenten auf Deutsch\",\"icon\":\"bug|test|docs|refactor|feature|explain|git|perf|security\"}]}";
     let user = format!("Projekt: {cwd}\n\n{brief}\n\nLetzte Sessions in diesem Projekt: {}", if recent.is_empty() { "keine".into() } else { recent.join("; ") });
-    let v = quick_json(model.as_deref().unwrap_or(FAST_MODEL), SYSTEM, &user, 20).await?;
+    let v = quick_json(model.as_deref().unwrap_or(FAST_MODEL), SYSTEM, &user, 20, "Vorschläge", Some(&cwd)).await?;
     let suggestions = v["suggestions"].clone();
     if !suggestions.is_array() {
         return Err("Keine Vorschläge erhalten".into());
@@ -173,7 +175,7 @@ pub async fn commit_message(cwd: String, model: Option<String>) -> CmdResult<Str
     const SYSTEM: &str = "Formuliere eine Git-Commit-Nachricht für den Diff. Halte dich an Sprache und Stil der bisherigen Commits \
         (falls vorhanden, sonst Deutsch): Betreffzeile im Imperativ, max. 72 Zeichen, optional Leerzeile und kurze Stichpunkte. \
         Antworte als JSON: {\"message\":\"...\"}";
-    let v = quick_json(model.as_deref().unwrap_or(FAST_MODEL), SYSTEM, &format!("Bisherige Commits:\n{log}\n\nDiff:\n{diff}"), 20).await?;
+    let v = quick_json(model.as_deref().unwrap_or(FAST_MODEL), SYSTEM, &format!("Bisherige Commits:\n{log}\n\nDiff:\n{diff}"), 20, "Commit-Nachricht", Some(&cwd)).await?;
     v["message"].as_str().map(str::to_string).ok_or_else(|| "Keine Nachricht erhalten".into())
 }
 
@@ -190,7 +192,7 @@ pub async fn adjust_reasoning(task: String, progress: String, current: String, m
         task.chars().take(2000).collect::<String>(),
         progress.chars().take(2500).collect::<String>()
     );
-    let v = quick_json(model.as_deref().unwrap_or(FAST_MODEL), SYSTEM, &user, 6).await?;
+    let v = quick_json(model.as_deref().unwrap_or(FAST_MODEL), SYSTEM, &user, 6, "Denkstufe", None).await?;
     let level = match v["level"].as_str() {
         Some(l @ ("low" | "high" | "max")) => l,
         _ => current.as_str(),

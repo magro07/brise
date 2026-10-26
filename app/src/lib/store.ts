@@ -11,11 +11,13 @@ import {
   type ContentBlock,
   type PermissionOption,
   type PermissionRequest,
+  type PromptResult,
   type SessionSetup,
   type SessionSummary,
 } from "./acp";
 import { load, save } from "./persist";
 import type { Suggestion } from "./acp";
+import { budgetModel, reportTurn } from "../components/usage/usage";
 
 // ---------- Modell ----------
 
@@ -992,7 +994,7 @@ export const useStore = create<State & Actions>((set, get) => {
         if (a.kind === "document") {
           // PDF/Office per Mistral OCR als Text mitgeben.
           try {
-            const text = await api.ocrDocument(a.path);
+            const text = await api.ocrDocument(a.path, get().sessions[sid]?.cwd);
             blocks.push({ type: "resource", resource: { uri: `file://${a.path.replace(/\\/g, "/")}`, mimeType: "text/markdown", text } });
           } catch (e) {
             pushItem(sid, { type: "notice", id: uid(), text: `OCR für ${a.name}: ${e}`, tone: "warn" });
@@ -1039,10 +1041,15 @@ export const useStore = create<State & Actions>((set, get) => {
           .catch(() => ({ level: heuristicLevel(text), reason: "Schätzung ohne KI" }));
         const available = modelOption.options.map((o) => o.value);
         const needsVision = attachments.some((a) => a.kind === "image");
-        const model =
+        const budget = await budgetModel(
           prefs.autoStrategy === "reasoning" && available.includes(prefs.autoBaseModel) && !(needsVision && /glm-5-3$/.test(prefs.autoBaseModel))
             ? prefs.autoBaseModel
-            : pickModel(verdict.level, prefs.routing, available, needsVision);
+            : pickModel(verdict.level, prefs.routing, available, needsVision),
+          available,
+          needsVision,
+        );
+        const model = budget.model;
+        if (budget.note) verdict.reason = `${verdict.reason} · ${budget.note}`;
         if (model && model !== modelOption.currentValue) await get().setOption("model", model, sid).catch(() => {});
         let thinkingLabel: string | undefined;
         const sessionNow = get().sessions[sid];
@@ -1071,8 +1078,10 @@ export const useStore = create<State & Actions>((set, get) => {
         }));
       }
 
+      let turnUsage: PromptResult["usage"];
       try {
         const res = await api.prompt(sid, blocks);
+        turnUsage = res.usage;
         pushItem(sid, {
           type: "turn",
           id: uid(),
@@ -1091,6 +1100,7 @@ export const useStore = create<State & Actions>((set, get) => {
         pushItem(sid, { type: "notice", id: uid(), text: String(e), tone: "error" });
       } finally {
         patchSession(sid, (s) => ({ ...s, running: false, turnStarted: undefined }));
+        reportTurn(sid, turnUsage);
         get().refreshIndex();
       }
     },

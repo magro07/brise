@@ -143,7 +143,8 @@ fn chunk_file(rel: &str, text: &str) -> Vec<(Entry, String)> {
     out
 }
 
-async fn embed(client: &reqwest::Client, key: &str, model: &str, inputs: &[String]) -> CmdResult<Vec<Vec<f32>>> {
+/// `tag` = (Funktion, Projekt) fürs Nutzungsjournal.
+async fn embed(client: &reqwest::Client, key: &str, model: &str, inputs: &[String], tag: (&str, &str)) -> CmdResult<Vec<Vec<f32>>> {
     let mut attempt = 0;
     loop {
         let resp = client
@@ -165,12 +166,13 @@ async fn embed(client: &reqwest::Client, key: &str, model: &str, inputs: &[Strin
             // Zu groß? Dann halbieren und einzeln versuchen.
             if status.as_u16() == 400 && inputs.len() > 1 {
                 let mid = inputs.len() / 2;
-                let mut a = Box::pin(embed(client, key, model, &inputs[..mid])).await?;
-                a.extend(Box::pin(embed(client, key, model, &inputs[mid..])).await?);
+                let mut a = Box::pin(embed(client, key, model, &inputs[..mid], tag)).await?;
+                a.extend(Box::pin(embed(client, key, model, &inputs[mid..], tag)).await?);
                 return Ok(a);
             }
             return Err(format!("Embedding-Fehler ({status}): {}", body["message"].as_str().or(body["detail"].as_str()).unwrap_or("unbekannt")));
         }
+        crate::usage::record(crate::usage::Record::new("embed", tag.0, model).project(Some(tag.1)).tokens(&body));
         let mut data: Vec<(usize, Vec<f32>)> = body["data"]
             .as_array()
             .ok_or("Antwort ohne Daten")?
@@ -278,7 +280,7 @@ pub async fn index_project(app: AppHandle, cwd: String, model: String) -> CmdRes
         let full = batch.len() >= BATCH_ITEMS || chars >= BATCH_CHARS || iter.peek().is_none();
         if full {
             let inputs: Vec<String> = batch.iter().map(|(_, t)| t.clone()).collect();
-            let vectors = embed(&client, &key, &model, &inputs).await?;
+            let vectors = embed(&client, &key, &model, &inputs, ("Index", &cwd)).await?;
             fresh.extend(batch.drain(..).map(|(e, _)| e).zip(vectors));
             chars = 0;
             let _ = app.emit("index:progress", json!({ "cwd": cwd, "done": fresh.len(), "total": total }));
@@ -310,10 +312,10 @@ pub struct Hit {
     snippet: String,
 }
 
-async fn search(cwd: &str, query: &str, limit: usize) -> CmdResult<Vec<Hit>> {
+async fn search(cwd: &str, query: &str, limit: usize, feature: &str) -> CmdResult<Vec<Hit>> {
     let index = load_index(cwd).ok_or("Dieses Projekt ist noch nicht indexiert.")?;
     let key = read_key().ok_or("Kein Mistral-Schlüssel gefunden.")?;
-    let q = embed(&reqwest::Client::new(), &key, &index.meta.model, &[query.to_string()]).await?.pop().ok_or("Leere Antwort")?;
+    let q = embed(&reqwest::Client::new(), &key, &index.meta.model, &[query.to_string()], (feature, cwd)).await?.pop().ok_or("Leere Antwort")?;
     if q.len() != index.meta.dim {
         return Err("Index passt nicht zum Modell – bitte neu indexieren.".into());
     }
@@ -342,7 +344,7 @@ async fn search(cwd: &str, query: &str, limit: usize) -> CmdResult<Vec<Hit>> {
 
 #[tauri::command]
 pub async fn semantic_search(cwd: String, query: String, limit: Option<usize>) -> CmdResult<Vec<Hit>> {
-    search(&cwd, &query, limit.unwrap_or(12)).await
+    search(&cwd, &query, limit.unwrap_or(12), "Suche").await
 }
 
 // ---------- MCP-Server für Vibe ----------
@@ -382,7 +384,7 @@ pub fn run_mcp_server(cwd: String) {
                 let args = &msg["params"]["arguments"];
                 let query = args["query"].as_str().unwrap_or("").to_string();
                 let limit = args["limit"].as_u64().unwrap_or(8).clamp(1, 20) as usize;
-                match rt.block_on(search(&cwd, &query, limit)) {
+                match rt.block_on(search(&cwd, &query, limit, "Suche (Agent)")) {
                     Ok(hits) => {
                         let text = hits
                             .iter()

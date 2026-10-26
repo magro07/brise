@@ -12,6 +12,7 @@ import {
   DatabaseZap,
   Download,
   Bot,
+  ChartColumn,
   Cpu,
   KeyRound,
   Palette,
@@ -31,10 +32,12 @@ import { looksSecret, maskSecrets } from "../../lib/format";
 import { Button, Spinner, Switch, clsx } from "../ui";
 import { MODE_INFO } from "../composer/Pickers";
 import { confirmAction } from "../../lib/dialogs";
+import { UsagePage } from "../usage/UsagePage";
 
 const SECTIONS = [
   { id: "general", label: "Allgemein", icon: Palette },
   { id: "account", label: "Konto", icon: UserRound },
+  { id: "usage", label: "Nutzung", icon: ChartColumn },
   { id: "models", label: "Modelle & Kontext", icon: Cpu },
   { id: "permissions", label: "Freigaben & Sicherheit", icon: ShieldCheck },
   { id: "agents", label: "Agents & Subagents", icon: Bot },
@@ -424,6 +427,8 @@ export function SettingsView() {
               </Card>
             </>
           )}
+
+          {section === "usage" && <UsagePage />}
 
           {section === "models" && (
             <>

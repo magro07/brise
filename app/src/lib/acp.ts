@@ -133,8 +133,8 @@ export const api = {
   externalEditors: () => invoke<{ id: string; name: string }[]>("external_editors"),
   openExternal: (editor: string, cwd: string, path?: string, line?: number) =>
     invoke<void>("open_in_external", { editor, cwd, path: path ?? null, line: line ?? null }),
-  fimComplete: (prefix: string, suffix: string) => invoke<string>("fim_complete", { prefix, suffix, model: null }),
-  ocrDocument: (path: string) => invoke<string>("ocr_document", { path }),
+  fimComplete: (prefix: string, suffix: string, cwd?: string) => invoke<string>("fim_complete", { prefix, suffix, model: null, cwd: cwd ?? null }),
+  ocrDocument: (path: string, cwd?: string) => invoke<string>("ocr_document", { path, cwd: cwd ?? null }),
   createProject: (parent: string, name: string, git: boolean, readme: boolean) => invoke<string>("create_project", { parent, name, git, readme }),
   createPath: (cwd: string, path: string, dir: boolean) => invoke<void>("create_path", { cwd, path, dir }),
   defaultProjectsDir: () => invoke<string>("default_projects_dir"),
