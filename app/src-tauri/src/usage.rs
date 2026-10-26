@@ -107,6 +107,12 @@ pub struct Record {
     /// Wer den Aufruf gemacht hat: `vibe`, `brise` (direkt an die API), später weitere.
     #[serde(skip_serializing_if = "String::is_empty")]
     pub backend: String,
+    /// Anbieter, falls nicht Mistral (z. B. `cortecs`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
+    /// Vom Anbieter gemeldete Kosten in € – haben Vorrang vor der Preistabelle.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cost_eur: Option<f64>,
 }
 
 impl Record {
@@ -300,6 +306,9 @@ impl Pricer {
 
     /// (Kosten in €, Cache-Ersparnis in €, Preis bekannt)
     fn cost(&self, r: &Record) -> (f64, f64, bool) {
+        if let Some(eur) = r.cost_eur {
+            return (eur, 0.0, true);
+        }
         let Some(p) = self.find(&r.model) else { return (0.0, 0.0, false) };
         let f = self.factor(p);
         let cached = r.cached.min(r.input) as f64;
@@ -388,6 +397,10 @@ pub fn usage_turn(report: TurnReport) -> CmdResult<Value> {
         save_totals(&map)?;
         delta
     };
+    // Turns über Cortecs-Modelle erfasst cortecs.rs selbst (mit exakten Kosten).
+    if report.model.starts_with("cortecs") {
+        return Ok(json!({ "input": delta.input, "cached": delta.cached, "output": delta.output, "costEur": 0.0, "viaCortecs": true }));
+    }
     let subagents = report.subagents.unwrap_or(0);
     let mut rec = Record::new("chat", if subagents > 0 { "Chat mit Subagents" } else { "Chat" }, &report.model).project(report.project.as_deref()).backend("vibe");
     rec.turns = 1;

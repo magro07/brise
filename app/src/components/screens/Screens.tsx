@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { AlertTriangle, BookOpen, Bug, CheckCircle2, Download, FileSearch, FolderOpen, FolderPlus, Gauge, GitBranch, Globe, KeyRound, LogIn, RefreshCw, Rocket, ShieldCheck, Sparkles, TestTube2, Wand2 } from "lucide-react";
 import { api, type Suggestion } from "../../lib/acp";
-import { basename, useStore } from "../../lib/store";
+import { basename, helperProvider, useStore } from "../../lib/store";
 import { Button, Logo, Spinner, clsx } from "../ui";
 import { pickProject } from "../layout/Sidebar";
 
@@ -224,7 +224,9 @@ export function DraftHero({ project }: { project: string }) {
     setLoading(true);
     const recent = index.filter((x) => x.cwd === project).slice(0, 8).map((x) => x.title ?? "").filter(Boolean);
     try {
-      const list = await api.projectSuggestions(project, recent, useStore.getState().prefs.assistModel, refresh);
+      const provider = helperProvider(project);
+      if (!provider) throw new Error("ZDR-Projekt ohne Cortecs");
+      const list = await api.projectSuggestions(project, recent, useStore.getState().prefs.assistModel, refresh, provider);
       setSuggestions(list.slice(0, 4));
       setPersonal(true);
     } catch {

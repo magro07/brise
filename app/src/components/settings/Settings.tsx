@@ -35,6 +35,7 @@ import { Button, Spinner, Switch, clsx } from "../ui";
 import { MODE_INFO } from "../composer/Pickers";
 import { confirmAction } from "../../lib/dialogs";
 import { UsagePage } from "../usage/UsagePage";
+import { CortecsView } from "./CortecsSettings";
 
 const SECTIONS = [
   { id: "general", label: "Allgemein", icon: Palette },
@@ -42,6 +43,7 @@ const SECTIONS = [
   { id: "usage", label: "Nutzung", icon: ChartColumn },
   { id: "models", label: "Modelle & Kontext", icon: Cpu },
   { id: "permissions", label: "Freigaben & Sicherheit", icon: ShieldCheck },
+  { id: "cortecs", label: "Cortecs & Datenschutz", icon: ShieldCheck },
   { id: "agents", label: "Agents & Subagents", icon: Bot },
   { id: "skills", label: "Skills", icon: Sparkles },
   { id: "web", label: "Websuche & Recherche", icon: Globe },
@@ -444,6 +446,8 @@ export function SettingsView() {
           )}
 
           {section === "skills" && <SkillsView values={values} write={write} />}
+
+          {section === "cortecs" && <CortecsView onModelsChanged={() => setDirty(true)} />}
 
           {section === "permissions" && (
             <>

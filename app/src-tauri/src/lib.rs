@@ -2,6 +2,7 @@ mod agent;
 mod assist;
 mod git;
 mod config;
+mod cortecs;
 mod credentials;
 mod council;
 mod customize;
@@ -16,6 +17,7 @@ mod usage;
 mod installer;
 mod rpc;
 mod selftest;
+mod sensitive;
 
 pub fn run_mcp_search(cwd: String) {
     embeddings::run_mcp_server(cwd);
@@ -92,6 +94,9 @@ pub fn run() {
         .manage(meter::Meter::default())
         .setup(|app| {
             customize::watch(app.handle().clone());
+            if let Err(e) = cortecs::start_proxy() {
+                eprintln!("Cortecs-Proxy: {e}");
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -173,6 +178,18 @@ pub fn run() {
             council::council_run,
             council::council_find,
             council::council_today,
+            cortecs::cortecs_save_key,
+            cortecs::cortecs_delete_key,
+            cortecs::cortecs_check_key,
+            cortecs::cortecs_save_settings,
+            cortecs::cortecs_models,
+            cortecs::cortecs_add_model,
+            cortecs::cortecs_utility_active,
+            cortecs::cortecs_status,
+            cortecs::cortecs_project_config,
+            cortecs::cortecs_classify_task,
+            cortecs::cortecs_adjust_reasoning,
+            sensitive::sensitivity_check,
         ])
         .run(tauri::generate_context!())
         .expect("Brise konnte nicht gestartet werden");
