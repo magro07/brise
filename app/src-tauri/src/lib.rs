@@ -11,6 +11,7 @@ mod mistral;
 mod models;
 mod skills;
 mod terminal;
+mod usage;
 mod installer;
 mod rpc;
 mod selftest;
@@ -154,6 +155,15 @@ pub fn run() {
             meter::meter_stop,
             customize::read_customization,
             customize::sync_prefs,
+            usage::usage_turn,
+            usage::usage_baseline,
+            usage::usage_record,
+            usage::usage_overview,
+            usage::usage_save_settings,
+            usage::usage_prices,
+            usage::usage_save_prices,
+            usage::usage_model_prices,
+            usage::usage_import,
         ])
         .run(tauri::generate_context!())
         .expect("Brise konnte nicht gestartet werden");

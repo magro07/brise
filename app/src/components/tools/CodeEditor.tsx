@@ -48,7 +48,7 @@ function registerCodestral(monaco: typeof Monaco) {
       const suffix = model.getValueInRange({ startLineNumber: position.lineNumber, startColumn: position.column, endLineNumber: full.endLineNumber, endColumn: full.endColumn }).slice(0, 2500);
       if (!prefix.trim()) return { items: [] };
       try {
-        const text = await api.fimComplete(prefix, suffix);
+        const text = await api.fimComplete(prefix, suffix, useStore.getState().activeProject ?? undefined);
         if (token.isCancellationRequested || !text.trim()) return { items: [] };
         return {
           items: [{ insertText: text, range: new monaco.Range(position.lineNumber, position.column, position.lineNumber, position.column) }],

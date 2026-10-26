@@ -4,6 +4,7 @@ import { basename, useStore, type Session } from "../../lib/store";
 import { IconButton, Menu, MenuContent, MenuItem, MenuTrigger, Tip, clsx } from "../ui";
 import { PANEL_TABS, changedFiles, subagents } from "../panels/SidePanel";
 import { confirmAction } from "../../lib/dialogs";
+import { HeaderMeter } from "../usage/HeaderMeter";
 
 export function Header({ session }: { session?: Session }) {
   const project = useStore((s) => s.activeProject);
@@ -34,6 +35,7 @@ export function Header({ session }: { session?: Session }) {
       </div>
 
       <div className="flex items-center gap-0.5">
+        <HeaderMeter />
         {!panel && PANEL_TABS.map((t) => (
           <Tip key={t.id} label={t.label}>
             <button

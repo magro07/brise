@@ -33,6 +33,7 @@ src-tauri/src/
   files.rs               Dateien für den Editor, externe Editoren (VS Code & Co.)
   customize.rs           Selbstanpassung per Chat: MCP-Server brise-app, Live-Übernahme
   meter.rs               Mikrofonpegel für die Wellen-Animation (cpal, nur Messung)
+  usage.rs               Nutzungsjournal, Preistabelle, Import aus Vibes Session-Logs
   selftest.rs            `brise --self-test` für die CI auf allen Systemen
 src-tauri/resources/skills/   mitgelieferte Skills (Lizenzen und Quellen in NOTICE.md)
 ```
@@ -121,6 +122,17 @@ Umgebungsvariablen:
   - Für indexierte Projekte startet Brise sich selbst als MCP-Server
     (`brise --mcp-search <ordner>`) und gibt ihn neuen Sessions mit. Vibe kann dann
     `semantic_code_search` als Werkzeug nutzen.
+- **Nutzung (Einstellungen → Nutzung, Balken in der Kopfzeile):** Mistral liefert weder
+  über Vibe (`/whoami` kennt nur den Plan) noch über die API Verbrauch oder Limit. Brise
+  schreibt deshalb jeden Vorgang mit Modell, Tokens (Eingabe/Cache/Ausgabe), Projekt,
+  Session, Funktion, Zugang (Fingerabdruck des Schlüssels) und Backend nach
+  `<Datenordner>/usage/YYYY-MM.jsonl` und rechnet mit `resources/prices.json` (änderbar).
+  Monatsbudget (Standard 255 €) mit Prognose, Warnungen bei 50/80/95 %, optional weicht
+  Auto ab 95 % auf günstigere Modelle aus. Statistik für heute, 7 Tage, Monat, Jahr und
+  gesamt: Verlauf nach Modell, Verteilung, Aufschlüsselung, Top-Sessions und -Projekte,
+  Cache-Trefferquote, Aktivitäts-Heatmap. Der Verlauf vor Brise (und Nutzung über die
+  Vibe-CLI) kommt aus Vibes Session-Logs (`$VIBE_HOME/logs/session`), dort nur als Summe
+  je Session. Abgleich über „Stand laut Console eintragen“.
 - Hell- und Dunkelmodus, einstellbare Schriftgröße, Benachrichtigung, wenn eine
   Session im Hintergrund fertig wird.
 

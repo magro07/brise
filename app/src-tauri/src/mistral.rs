@@ -8,6 +8,7 @@ use base64::Engine;
 use serde_json::{json, Value};
 
 use crate::credentials::{read_key, API_BASE};
+use crate::usage::Record;
 
 type CmdResult<T> = Result<T, String>;
 
@@ -17,14 +18,15 @@ fn client() -> reqwest::Client {
 
 /// Codestral Fill-in-the-Middle: Vervollständigung zwischen `prefix` und `suffix`.
 #[tauri::command]
-pub async fn fim_complete(prefix: String, suffix: String, model: Option<String>) -> CmdResult<String> {
+pub async fn fim_complete(prefix: String, suffix: String, model: Option<String>, cwd: Option<String>) -> CmdResult<String> {
     let key = read_key().ok_or("Kein Mistral-Schlüssel")?;
+    let model = model.unwrap_or_else(|| "codestral-latest".into());
     let body: Value = client()
         .post(format!("{API_BASE}/fim/completions"))
         .bearer_auth(key)
         .timeout(Duration::from_secs(8))
         .json(&json!({
-            "model": model.unwrap_or_else(|| "codestral-latest".into()),
+            "model": model,
             "prompt": prefix,
             "suffix": suffix,
             "max_tokens": 96,
@@ -38,12 +40,13 @@ pub async fn fim_complete(prefix: String, suffix: String, model: Option<String>)
         .json()
         .await
         .map_err(|e| e.to_string())?;
+    crate::usage::record(Record::new("fim", "Vervollständigung", &model).project(cwd.as_deref()).tokens(&body));
     Ok(body["choices"][0]["message"]["content"].as_str().unwrap_or_default().to_string())
 }
 
 /// Mistral OCR: PDF, Office-Dokument oder Bild → Markdown.
 #[tauri::command]
-pub async fn ocr_document(path: String) -> CmdResult<String> {
+pub async fn ocr_document(path: String, cwd: Option<String>) -> CmdResult<String> {
     let key = read_key().ok_or("Kein Mistral-Schlüssel")?;
     let ext = Path::new(&path).extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
     let mime = match ext.as_str() {
@@ -78,6 +81,9 @@ pub async fn ocr_document(path: String) -> CmdResult<String> {
     if !status.is_success() {
         return Err(format!("OCR fehlgeschlagen ({status}): {}", body["message"].as_str().unwrap_or("")));
     }
+    let mut rec = Record::new("ocr", "OCR", body["model"].as_str().unwrap_or("mistral-ocr-latest")).project(cwd.as_deref());
+    rec.pages = body["usage_info"]["pages_processed"].as_u64().unwrap_or_else(|| body["pages"].as_array().map_or(0, |p| p.len() as u64));
+    crate::usage::record(rec);
     let pages: Vec<String> = body["pages"]
         .as_array()
         .into_iter()

@@ -1,0 +1,25 @@
+{
+  "stand": "2026-10-26",
+  "quelle": "https://docs.mistral.ai/inference/pricing (Standard-Inferenz, Ansicht EUR)",
+  "currency": "EUR",
+  "usdToEur": 0.85,
+  "models": [
+    { "id": "glm-5-3-flash", "label": "GLM-5.3 Flash", "match": ["glm-5-3-flash", "glm-5.3-flash"], "input": 0.1275, "cached": 0.0255, "output": 0.425 },
+    { "id": "glm-5-3", "label": "GLM-5.3", "match": ["glm-5-3", "glm-5.3"], "input": 1.19, "cached": 0.119, "output": 3.74 },
+    { "id": "mistral-medium-3.5", "label": "Mistral Medium 3.5", "match": ["mistral-medium", "devstral", "mistral-vibe-cli"], "input": 1.275, "cached": 0.1275, "output": 6.375 },
+    { "id": "mistral-large-4", "label": "Mistral Large 4", "match": ["mistral-large-4", "mistral-large-latest"], "input": 1.156, "cached": 0.119, "output": 3.553 },
+    { "id": "mistral-large-3", "label": "Mistral Large 3", "match": ["mistral-large-3", "mistral-large-25"], "input": 0.425, "cached": 0.0425, "output": 1.275 },
+    { "id": "mistral-small-4", "label": "Mistral Small 4", "match": ["mistral-small", "magistral-small"], "input": 0.1275, "cached": 0.01275, "output": 0.51 },
+    { "id": "ministral-14b", "label": "Ministral 3 14B", "match": ["ministral-14b", "ministral-3-14b"], "input": 0.17, "cached": 0.017, "output": 0.17 },
+    { "id": "ministral-8b", "label": "Ministral 3 8B", "match": ["ministral-8b", "ministral-3-8b"], "input": 0.1275, "cached": 0.01275, "output": 0.1275 },
+    { "id": "ministral-3b", "label": "Ministral 3 3B", "match": ["ministral-3b", "ministral-3-3b"], "input": 0.085, "cached": 0.0085, "output": 0.085 },
+    { "id": "codestral", "label": "Codestral", "match": ["codestral"], "input": 0.255, "cached": 0.0255, "output": 0.765 },
+    { "id": "codestral-embed", "label": "Codestral Embed", "match": ["codestral-embed"], "input": 0.1275, "cached": 0.01275, "output": 0 },
+    { "id": "mistral-embed", "label": "Mistral Embed", "match": ["mistral-embed"], "input": 0.085, "cached": 0.0085, "output": 0 },
+    { "id": "mistral-ocr", "label": "Mistral OCR 4.1", "match": ["ocr"], "perPage": 0.0034 },
+    { "id": "voxtral-realtime", "label": "Voxtral Realtime (Spracheingabe)", "match": ["transcribe-realtime", "voxtral-realtime"], "perMinute": 0.0068 },
+    { "id": "voxtral-transcribe", "label": "Voxtral Transcribe", "match": ["transcribe"], "perMinute": 0.002975 },
+    { "id": "voxtral-tts", "label": "Voxtral TTS (Vorlesen)", "match": ["tts"], "perMillionChars": 11.05 },
+    { "id": "web-search", "label": "Websuche (Werkzeug)", "match": ["web_search", "web-search"], "perCall": 0.0255, "hinweis": "Nicht auf der Preisseite – Schätzung, bitte mit der Console abgleichen" }
+  ]
+}
