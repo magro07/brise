@@ -21,8 +21,8 @@ selbst in der Hand behalten.
    und arbeitet mit Mistral Vibe, Claude Code, Codex und Gemini CLI. Jede Session
    wählt ihren Agenten, das bestehende Abo bzw. die eigene Anmeldung bleibt gültig.
    Keiner davon ist Voraussetzung.
-3. **Kontrolle für Power-User.** Model Council für zweite Meinungen, eigene
-   Benchmarks, Secrets nur im Schlüsselbund, Auto-Modellwahl, t/s- und
+3. **Kontrolle für Power-User.** Es gibt einen Model Council für eine zweite Meinungen, eigene
+   Benchmarks, Secrets die nur im Schlüsselbund sichtbar sind, Auto-Modellwahl, t/s- und
    Latenz-Messung, Nutzungsjournal mit Budget, Modelle ohne Datenspeicherung über
    Cortecs und Selbst-Hosting des Relays im Homelab.
 
