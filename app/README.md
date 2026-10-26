@@ -199,11 +199,13 @@ Dazu bekommt jede Session im MCP-Server `brise-app` diese Werkzeuge:
 
 | Werkzeug | Was es tut |
 |---|---|
-| `start_session(title, task, backend?, model?, worktree?, difficulty?, thinking?, mode?)` | Teilaufgabe vorschlagen bzw. starten; ohne `model` wählt Brise einen Arbeiter aus dem Pool. `mode: "design"` bzw. `"3d"` startet eine Design- bzw. 3D-Session (siehe [3D-Modus](#3d-modus)) |
+| `start_session(title, task, backend?, model?, thinking?, budget?, reason?, worktree?, difficulty?, mode?)` | Teilaufgabe vorschlagen bzw. starten; ohne `model` wählt Brise als Rückfall aus dem Pool. `mode: "design"` bzw. `"3d"` startet eine Design- bzw. 3D-Session (siehe [3D-Modus](#3d-modus)) |
 | `list_sessions` | eigene Untersessions mit Status und Branch |
 | `get_session(session)` | Status, letzter Bericht, Branch, Commits vor der Basis, nicht committete Dateien |
 | `send_message(session, text)` | Nachricht an eine Untersession (läuft sie, nach dem Turn) |
-| `escalate_session(session, feedback)` | Teilaufgabe auf die nächste Stufe des Arbeiter-Pools heben |
+| `available_models` | erlaubte Arbeiter mit Preis, t/s, Latenz, Kontext, Stärken und Restbudget |
+| `reassign_session(session, backend?, model?, thinking?, budget?, feedback?, reason)` | Arbeiter wechseln (hoch, runter, anderes Backend) |
+| `escalate_session(session, feedback)` | Rückfall: nächste Stufe des Arbeiter-Pools |
 | `stop_session(session)` | Turn abbrechen, Untersession beenden (Worktree bleibt) |
 | `merge_session(session)` | Freigabe zum Mergen ihres Branches anfragen |
 
@@ -239,6 +241,12 @@ Dazu bekommt jede Session im MCP-Server `brise-app` diese Werkzeuge:
   Stufe 1, komplex → Stufe 2; innerhalb einer Stufe das günstigste Modell (Preistabelle),
   bei Gleichstand das schnellere (t/s im Journal). Ab 70 % des Budgets je Lauf nur noch
   Stufe 1, bei 100 % keine neuen Arbeiter. Team-Richtlinien filtern den Pool.
+- **Dynamisch:** Der Kurator entscheidet selbst, ob er delegiert, und wählt je Teilaufgabe
+  Backend, Modell, Denkstufe und Budget (`start_session` mit `reason`). `available_models`
+  zeigt ihm je erlaubtem Modell Preis, gemessene t/s und Latenz, Kontext, Denkstufen und
+  Stärken; `reassign_session` stuft während der Arbeit um. Jede Entscheidung steht mit
+  Begründung im Protokoll („Entscheidungen“ in der Leiste). Pool, Budget und
+  Team-Richtlinie sind Leitplanken, die Brise erzwingt; die Stufenwahl ist nur Rückfall.
 - **Eskalation:** `escalate_session(session, feedback)` hebt eine Teilaufgabe auf die nächste
   Stufe (gleiches Backend: Modellwechsel in der Session; sonst neue Session im selben
   Worktree). Scheitert ein Arbeiter (Fehler, Token- oder Schrittlimit), eskaliert Brise

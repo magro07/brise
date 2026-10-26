@@ -10,6 +10,20 @@ import { nearestThinking, useStore, type Session } from "./store";
 
 export type SubStatus = "starting" | "running" | "waiting" | "done" | "error" | "stopped" | "interrupted" | "merged" | "escalated";
 
+/** Entscheidung über den Arbeiter einer Teilaufgabe (Protokoll mit Begründung). */
+export interface Decision {
+  at: number;
+  /** kurator oder automatik */
+  by: string;
+  /** start, wechsel, eskalation */
+  action: string;
+  backend: string;
+  model?: string | null;
+  thinking?: string | null;
+  budget?: number | null;
+  reason: string;
+}
+
 export interface SubSession {
   id: string;
   master: string;
@@ -41,6 +55,8 @@ export interface SubSession {
   escalations: number;
   models: string[];
   escalatedTo?: string | null;
+  budget?: number | null;
+  decisions: Decision[];
 }
 
 export interface Proposal {
@@ -63,6 +79,8 @@ export interface Proposal {
   thinking?: string | null;
   choice?: string | null;
   escalationOf?: string | null;
+  budget?: number | null;
+  decisions: Decision[];
 }
 
 export interface MergeRequest {
@@ -324,6 +342,8 @@ async function handleCall(kind: string, p: any): Promise<unknown> {
       if (thinking) await st2.setOption("thinking", thinking, s.id).catch(() => {});
       useStore.setState((x) => (x.sessions[s.id] ? { sessions: { ...x.sessions, [s.id]: { ...x.sessions[s.id], keepModel: true, autoThinking: false } } } : {}));
       const now = useStore.getState().sessions[s.id];
+      // Nur Wechsel, kein Feedback: gilt ab der nächsten Nachricht.
+      if (!p.text) return { queued: false };
       if (now?.running || now?.replaying) {
         messages[s.id] = [...(messages[s.id] ?? []), p.text];
         if (now) wake(now);

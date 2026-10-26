@@ -215,6 +215,33 @@ Menge der Umsetzung erledigen.
   Eskalationen je Arbeiter; Kosten „Kurator“ und „Arbeiter“ je Master-Session
   in der Leiste und auf der Nutzungsseite.
 
+### Dynamische Zuordnung durch den Kurator (Ergänzung)
+
+Die Zuordnung entscheidet der Kurator selbst, nicht eine Stufentabelle:
+
+- Er entscheidet, ob er eine Aufgabe selbst erledigt oder delegiert, und wählt
+  bei `start_session` `backend`, `model`, `thinking` und `budget` frei, mit
+  kurzer Begründung (`reason`).
+- `available_models` liefert ihm je erlaubtem Modell Preis je Token
+  (Preistabelle), gemessene t/s und Zeit bis zum ersten Token (Journal, 30
+  Tage), Kontextgröße und Denkstufen (Vibes `config.toml`), grobe Stärken je
+  Modellfamilie und das restliche Laufbudget.
+- `reassign_session(session, backend?, model?, thinking?, budget?, feedback?, reason)`
+  stuft während der Arbeit um – hoch, runter oder auf ein anderes Backend.
+- Jede Entscheidung (Start, Wechsel, Eskalation) landet mit Zeit, Urheber
+  (Kurator oder Automatik), Modell, Denkstufe, Budget und Begründung im
+  Protokoll der Untersession (`decisions`); die Leiste zeigt es aufklappbar wie
+  das Denkstufen-Protokoll der Auto-Modellwahl.
+- Die Einstellungen sind Leitplanken und werden im Backend erzwungen: Modelle
+  außerhalb des Pools lehnt `start_session`/`reassign_session` ab (`POOL:`),
+  ebenso Überschreitungen des Laufbudgets und Verstöße gegen die
+  Team-Richtlinie. Ein Budget je Teilaufgabe darf das restliche Laufbudget
+  nicht übersteigen; ist es verbraucht, nimmt die Untersession keine
+  Nachrichten mehr an, bis der Kurator es erhöht.
+- Die Stufenlogik oben (Wahl nach `difficulty`, `escalate_session`, automatische
+  Eskalation nach einem Fehler) ist nur noch Rückfall, wenn der Kurator nichts
+  vorgibt.
+
 ### Abos und geteilte Sessions
 
 Claude-Code-Sessions laufen über das Claude-Abo des Nutzers (Pro/Max). Nach
@@ -316,3 +343,21 @@ Nicht live getestet: automatische Eskalation nach einem Fehler des Arbeiters
 (Logik per Unit-Test der Auswahl), Eskalation auf ein anderes Backend,
 Claude Code als Kurator (hier nicht angemeldet), Abo-Schutz in einer
 geteilten Session.
+
+### Testprotokoll dynamische Zuordnung (26.10.2026)
+
+Zweiter echter Lauf, Kurator Mistral Large 4, Abnahme je Teilaufgabe
+(`tests/check_multiply.py`, `tests/check_expr.py`):
+
+- Der Kurator las `available_models` und wählte selbst, je mit Begründung und
+  Budget: „Multiplizieren“ → GLM-5.3, Denkstufe off, 0,10 € („triviale
+  Aufgabe … schnell und am günstigsten“); „Ausdrücke“ (Parser ohne `eval`) →
+  Mistral Medium 3.5, Denkstufe low, 0,50 € („large-4 wäre unnötig teuer“).
+- Beide Abnahmen grün, beide Branches nach Freigabe gemerged, ohne Konflikt.
+- Umstufung per Auftrag getestet: „Potenz“ startete mit Mistral Medium 3.5,
+  der Kurator stufte sofort per `reassign_session` auf GLM-5.3 herunter
+  (Begründung und Budget 0,05 € im Protokoll). Weil die Untersession da schon
+  lief, galt der Wechsel ab ihrer nächsten Nachricht. Abnahme grün, gemerged.
+- Das Entscheidungsprotokoll in der Leiste zeigt Zeit, Urheber, Modell,
+  Denkstufe, Budget und Begründung je Entscheidung. Kosten laut Leiste:
+  Kurator 0,22 €, Arbeiter 0,11 €.

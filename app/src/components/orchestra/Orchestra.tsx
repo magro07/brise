@@ -9,6 +9,7 @@ import {
   STATUS_LABEL,
   masterCosts,
   startCurator,
+  type Decision,
   type MasterCosts,
   acceptProposal,
   approveMerge,
@@ -99,7 +100,13 @@ function ProposalCard({ p }: { p: Proposal }) {
           {p.mode === "3d" ? "3D-Modus – neues Modell" : p.mode === "design" ? "Design-Modus – neues Design" : p.worktree ? "eigener Worktree und Branch" : "im selben Ordner"}
         </span>
       </div>
-      {p.choice && <div className="mb-2 text-[0.8em] text-muted" data-testid="orch-choice">{p.choice}</div>}
+      {p.choice && (
+        <div className="mb-2 text-[0.8em] text-muted" data-testid="orch-choice">
+          {p.choice}
+          {p.thinking && ` · Denkstufe ${p.thinking}`}
+          {p.budget != null && ` · Budget ${euro(p.budget)}`}
+        </div>
+      )}
       <div className={clsx("whitespace-pre-wrap text-[0.9em] text-fg-2 selectable", long && !open && "line-clamp-4")}>{p.task}</div>
       {long && (
         <button className="mt-1 inline-flex items-center gap-1 text-[0.8em] text-muted hover:text-fg" onClick={() => setOpen(!open)}>
@@ -235,12 +242,19 @@ function MasterStrip({ session, subs, live }: { session: Session; subs: SubSessi
   const costs = useMasterCosts(session.id, [busy, session.running]);
   const model = String(session.config.find((o) => o.id === "model")?.currentValue ?? "");
   const workers = costs?.costs.workers.reduce((a, w) => a + w.cost, 0) ?? 0;
+  const [log, setLog] = useState(false);
+  const decisions = subs.flatMap((s) => (s.decisions ?? []).map((d) => ({ ...d, title: s.title }))).sort((a, b) => a.at - b.at);
   const active = subs.filter((s) => ["starting", "running", "waiting"].includes(liveStatus(s, live[s.id]))).length;
   return (
     <div className="mb-2 flex flex-wrap items-center gap-1.5 rounded-xl border border-line bg-elev px-3 py-1.5 text-[0.85em]" data-brise="orch-strip">
       <span className="mr-1 inline-flex items-center gap-1.5 font-medium">
         <Network className="h-3.5 w-3.5 text-accent" /> Untersessions {active > 0 && <span className="text-muted">· {active} aktiv</span>}
       </span>
+      {decisions.length > 0 && (
+        <button className="mr-1 inline-flex items-center gap-0.5 text-[0.85em] text-muted hover:text-fg" onClick={() => setLog(!log)} data-testid="orch-log-toggle">
+          Entscheidungen ({decisions.length}) <ChevronDown className={clsx("h-3 w-3", log && "rotate-180")} />
+        </button>
+      )}
       {costs && (
         <span className="mr-1 text-[0.85em] text-muted" data-testid="orch-costs" title="Geschätzt nach Preistabelle (Nutzungsjournal)">
           <Crown className="mr-0.5 inline h-3 w-3" />Kurator {model && `${model} `}{euro(costs.costs.curator)} · Arbeiter {euro(workers)}
@@ -269,7 +283,31 @@ function MasterStrip({ session, subs, live }: { session: Session; subs: SubSessi
           </button>
         );
       })}
+      {log && <DecisionLog decisions={decisions} />}
     </div>
+  );
+}
+
+const ACTION_LABEL: Record<string, string> = { start: "Start", wechsel: "Wechsel", eskalation: "Eskalation" };
+
+/** Wer hat welchen Arbeiter warum gewählt – wie das Denkstufen-Protokoll der Auto-Modellwahl. */
+function DecisionLog({ decisions }: { decisions: (Decision & { title: string })[] }) {
+  return (
+    <ol className="mt-1 w-full space-y-1 border-t border-line pt-1.5 text-[0.85em]" data-testid="orch-log">
+      {decisions.map((d, i) => (
+        <li key={i} className="flex gap-2">
+          <span className="shrink-0 tabular-nums text-muted">{new Date(d.at).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })}</span>
+          <span className="min-w-0">
+            <span className="font-medium">{d.title}</span>
+            <span className="text-muted"> · {ACTION_LABEL[d.action] ?? d.action} durch {d.by === "kurator" ? "Kurator" : "Automatik"} → </span>
+            <span className="font-mono">{d.backend}/{d.model ?? "Standard"}</span>
+            {d.thinking && <span className="text-muted"> · {d.thinking}</span>}
+            {d.budget != null && <span className="text-muted"> · {euro(d.budget)}</span>}
+            <span className="block text-fg-2">{d.reason}</span>
+          </span>
+        </li>
+      ))}
+    </ol>
   );
 }
 
@@ -294,7 +332,7 @@ function SubRow({ sub, status, active, title }: { sub: SubSession; status: SubSt
       <button
         className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
         onClick={() => openSub(sub)}
-        title={`${STATUS_LABEL[status]} · ${sub.model ?? "Standardmodell"}${sub.tier ? ` (Stufe ${sub.tier})` : ""}${sub.choice ? ` · ${sub.choice}` : ""}${sub.branch ? ` · ${sub.branch}` : ""}`}
+        title={`${STATUS_LABEL[status]} · ${sub.model ?? "Standardmodell"}${sub.tier ? ` (Stufe ${sub.tier})` : ""}${sub.decisions?.length ? ` · ${sub.decisions[sub.decisions.length - 1].reason}` : sub.choice ? ` · ${sub.choice}` : ""}${sub.branch ? ` · ${sub.branch}` : ""}`}
       >
         <StatusDot status={status} />
         <span className="truncate">{sub.title || title}</span>
@@ -396,7 +434,7 @@ function CuratorCard({ locked }: { locked: boolean }) {
   return (
     <Card
       title="Kurator und Arbeiter"
-      description="Ein starkes Modell (Kurator) plant, schreibt die Aufträge, prüft und eskaliert; günstigere Arbeiter-Modelle setzen um. Ohne Modellangabe wählt Brise je Teilaufgabe aus dem Pool: einfach und normal → Stufe 1, komplex → Stufe 2, Eskalation → nächste Stufe."
+      description="Ein starkes Modell (Kurator) plant, entscheidet je Teilaufgabe selbst über Delegation, Backend, Modell, Denkstufe und Budget (mit Begründung im Protokoll), prüft und stuft um. Diese Einstellungen sind nur Leitplanken: erlaubter Pool, Budget, Team-Richtlinie. Gibt der Kurator nichts vor, wählt Brise als Rückfall aus dem Pool (einfach/normal → Stufe 1, komplex → Stufe 2, Eskalation → nächste Stufe)."
     >
       <Row
         title="Kurator"

@@ -281,3 +281,19 @@ pub async fn startup_check(app: tauri::AppHandle) -> CmdResult<StartupReport> {
     let _ = std::fs::write(&path, serde_json::to_vec(&merged).unwrap_or_default());
     Ok(StartupReport { changed, new_models })
 }
+
+/// Eckdaten eines Vibe-Modells aus config.toml (für `available_models` der Master-Session):
+/// Kontextgröße, Bilder, Denkstufen. Leer, wenn das Modell dort nicht eingetragen ist.
+pub fn model_facts(alias: &str) -> Value {
+    let Some(path) = crate::config::vibe_home().map(|h| h.join("config.toml")) else { return Value::Null };
+    let Ok(doc) = std::fs::read_to_string(path).unwrap_or_default().parse::<toml::Table>() else { return Value::Null };
+    let Some(m) = doc.get("models").and_then(|m| m.as_array()).and_then(|a| a.iter().find(|m| m.get("alias").and_then(|v| v.as_str()) == Some(alias))) else {
+        return Value::Null;
+    };
+    json!({
+        "name": m.get("name").and_then(|v| v.as_str()),
+        "context": m.get("max_context_length").and_then(|v| v.as_integer()),
+        "images": m.get("supports_images").and_then(|v| v.as_bool()),
+        "thinking": m.get("thinking_levels").and_then(|v| v.as_array()).map(|a| a.iter().filter_map(|x| x.as_str()).collect::<Vec<_>>()),
+    })
+}
