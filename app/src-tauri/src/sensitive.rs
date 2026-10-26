@@ -194,7 +194,7 @@ fn rules() -> &'static [Rule] {
 
 fn not_placeholder_secret(m: &str) -> bool {
     let v = m.rsplit(['=', ':']).next().unwrap_or(m).trim().trim_matches(['"', '\'']).to_lowercase();
-    let placeholders = ["xxx", "***", "changeme", "password", "passwort", "secret", "your", "example", "dummy", "test", "<", "${", "{{", "process.env", "os.environ", "env(", "getenv", "none", "null", "undefined", "todo", "placeholder", "redacted", "..."];
+    let placeholders = ["xxx", "***", "changeme", "password", "passwort", "secret", "your", "example", "dummy", "test", "<", "${", "{{", "process.env", "os.environ", "env(", "getenv", "none", "null", "undefined", "todo", "placeholder", "redacted", "...", "}}"];
     v.len() >= 8 && !placeholders.iter().any(|p| v.contains(p)) && v.chars().any(|c| c.is_ascii_digit() || !c.is_alphanumeric())
 }
 
@@ -307,6 +307,36 @@ pub fn scan(text: &str, source: &str) -> Vec<(&'static str, Hit)> {
             }
         }
     }
+    out
+}
+
+/// Fundstellen von Zugangsdaten (Byte-Bereiche des eigentlichen Werts), für
+/// das Angebot „als Secret speichern“ im Composer.
+pub fn credential_spans(text: &str) -> Vec<(&'static str, usize, usize)> {
+    let mut out: Vec<(&'static str, usize, usize)> = Vec::new();
+    for rule in rules().iter().filter(|r| r.category == "credentials") {
+        for caps in rule.re.captures_iter(text) {
+            let m = caps.get(0).unwrap();
+            if rule.check.is_some_and(|c| !c(m.as_str())) {
+                continue;
+            }
+            // Nur der Wert, nicht „password =“ bzw. Benutzer und Host der URL.
+            let (start, end) = if let Some(g) = caps.get(1) {
+                (g.start(), g.end())
+            } else if rule.label == "Verbindungs-URL mit Passwort" {
+                let s = m.as_str();
+                let at = s.rfind('@').unwrap_or(s.len());
+                let colon = s[..at].rfind(':').map_or(0, |c| c + 1);
+                (m.start() + colon, m.start() + at)
+            } else {
+                (m.start(), m.end())
+            };
+            if start < end && !out.iter().any(|(_, s, e)| start < *e && *s < end) {
+                out.push((rule.label, start, end));
+            }
+        }
+    }
+    out.sort_by_key(|(_, s, _)| *s);
     out
 }
 
@@ -437,6 +467,7 @@ mod tests {
         assert!(labels("password = \"S3cure#Pass\"").contains(&"Passwort/Token im Klartext".to_string()));
         assert!(labels("password = process.env.DB_PASSWORD").is_empty());
         assert!(labels("api_key: \"<your-key-here>\"").is_empty());
+        assert!(labels("echo \"Token: {{secret:DEMO_TOKEN}}\"").is_empty());
     }
 
     #[test]
@@ -455,6 +486,13 @@ mod tests {
     fn health_and_ai_act() {
         assert!(!labels("Die Patientin hat die Diagnose Depression").is_empty());
         assert!(labels("Baue ein Tool, das Bewerber automatisch nach Lebenslauf rankt").iter().any(|l| l.starts_with("Hochrisiko")));
+    }
+
+    #[test]
+    fn credential_value_spans() {
+        let text = "Nimm password = \"S3cure#Pass\" und ghp_abcdefghijklmnopqrstuvwxyz0123456789 sowie postgres://app:geheim123@db/x";
+        let spans: Vec<&str> = credential_spans(text).into_iter().map(|(_, s, e)| &text[s..e]).collect();
+        assert_eq!(spans, vec!["S3cure#Pass", "ghp_abcdefghijklmnopqrstuvwxyz0123456789", "geheim123"]);
     }
 
     #[test]

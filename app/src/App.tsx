@@ -23,6 +23,8 @@ import { JoinDialog } from "./components/collab/JoinDialog";
 import { TeamDialog } from "./components/collab/TeamDialog";
 import { GuestPane } from "./components/collab/GuestComposer";
 import { DesignView } from "./components/design/DesignView";
+import { SecretPrompt } from "./components/secrets/SecretPrompt";
+import { initSecrets, useSecretRequest } from "./lib/secrets";
 
 /** Backend-Events abonnieren und einmal mit Vibe verbinden. */
 function useBackend() {
@@ -51,6 +53,7 @@ function useBackend() {
     });
     s().connect(true);
     const stopCollab = initCollab();
+    const stopSecrets = initSecrets();
     api.readCustomization().then((c) => s().applyCustomization({ ...c, settings: { ...c.settings, overrides: undefined } }));
     api.startupProject().then((p) => {
       if (p) s().openProject(p);
@@ -59,6 +62,7 @@ function useBackend() {
       disposed = true;
       unlisten.forEach((f) => f());
       stopCollab();
+      stopSecrets();
     };
   }, []);
 }
@@ -179,6 +183,7 @@ function PaneView({ index, project, last }: { index: number; project: string; la
   const focusPane = useStore((s) => s.focusPane);
   const focused = useStore((s) => s.focusedPane === index);
   const pending = session?.pending[0];
+  const secretRequest = useSecretRequest(session?.id, session?.cwd);
   const showTabs = multiple || (pane?.tabs.length ?? 0) > 0;
   return (
     <div className={clsx("flex min-w-0 flex-1 flex-col", !last && "border-r border-line")} onMouseDownCapture={() => focusPane(index)} onFocusCapture={() => focusPane(index)}>
@@ -187,7 +192,15 @@ function PaneView({ index, project, last }: { index: number; project: string; la
       <div className="mx-auto w-full max-w-[820px] px-6 pb-5">
         {index === 0 && <NewModelsBanner />}
         {session && <TaskStrip session={session} />}
-        {session?.guest ? <GuestPane session={session} /> : session && pending ? <PermissionPrompt session={session} pending={pending} /> : <Composer session={session} project={session?.cwd ?? project} focused={focused} />}
+        {session?.guest ? (
+          <GuestPane session={session} />
+        ) : session && pending ? (
+          <PermissionPrompt session={session} pending={pending} />
+        ) : session && secretRequest ? (
+          <SecretPrompt key={secretRequest.id} request={secretRequest} />
+        ) : (
+          <Composer session={session} project={session?.cwd ?? project} focused={focused} />
+        )}
       </div>
     </div>
   );

@@ -462,8 +462,9 @@ pub fn child_env() -> Vec<Value> {
 
 /// MCP-Server, die Brise jeder Session mitgibt: Selbstanpassung, Council, semantische
 /// Suche (falls indexiert) und die REA-Werkzeuge (falls Node.js da ist).
-fn mcp_servers(cwd: &str, search: bool, rea: bool) -> Value {
-    let mut list: Vec<Value> = crate::customize::mcp_entry().into_iter().collect();
+/// `tag` ordnet Secret-Anfragen des MCP-Servers der Session zu (siehe secrets.rs).
+fn mcp_servers(cwd: &str, tag: &str, search: bool, rea: bool) -> Value {
+    let mut list: Vec<Value> = crate::customize::mcp_entry(cwd, tag).into_iter().collect();
     list.extend(crate::council::mcp_entry(cwd));
     if search {
         list.extend(crate::embeddings::mcp_entry(cwd));
@@ -496,9 +497,11 @@ pub async fn new_session(
         Some(a) => account_connection(&app, &state, a).await?,
         None => ensure(&app, &state, &backend).await?,
     };
-    let servers = mcp_servers(&cwd, search.unwrap_or(true), rea.unwrap_or(false));
+    let tag = crate::secrets::new_tag();
+    let servers = mcp_servers(&cwd, &tag, search.unwrap_or(true), rea.unwrap_or(false));
     let mut r = conn.request("session/new", json!({ "cwd": cwd, "mcpServers": servers })).await.map_err(|e| e.to_string())?;
     if let Some(id) = r["sessionId"].as_str() {
+        crate::secrets::bind_tag(&tag, id);
         remember(&state, id, &backend);
         if let Some(a) = &account {
             bind(&app, id, a);
@@ -526,7 +529,7 @@ pub async fn load_session(
         Some(a) => account_connection(&app, &state, a).await?,
         None => ensure(&app, &state, &backend).await?,
     };
-    let servers = mcp_servers(&cwd, search.unwrap_or(true), rea.unwrap_or(false));
+    let servers = mcp_servers(&cwd, &format!("s:{session_id}"), search.unwrap_or(true), rea.unwrap_or(false));
     let result = conn
         .request("session/load", json!({ "cwd": cwd, "sessionId": session_id, "mcpServers": servers }))
         .await
@@ -555,7 +558,7 @@ pub async fn switch_account(
         return Err("Accounts gibt es nur für Vibe-Sessions".into());
     }
     let conn = account_connection(&app, &state, &account).await?;
-    let servers = mcp_servers(&cwd, search.unwrap_or(true), rea.unwrap_or(false));
+    let servers = mcp_servers(&cwd, &format!("s:{session_id}"), search.unwrap_or(true), rea.unwrap_or(false));
     state.muted.lock().unwrap().insert(session_id.clone(), Replay::default());
     let result = conn.request("session/load", json!({ "cwd": cwd, "sessionId": session_id, "mcpServers": servers })).await;
     // Nachzügler der Wiedergabe abwarten, bevor die Session wieder sichtbar wird.
