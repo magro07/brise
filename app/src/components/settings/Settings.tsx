@@ -26,6 +26,7 @@ import {
   UserRound,
   Scale,
   Users,
+  FlaskConical,
 } from "lucide-react";
 import { CouncilSettings } from "./CouncilSettings";
 import { api, type CatalogModel, type ConfigFile, type IndexStatus, type JsonSchema, type SkillInfo } from "../../lib/acp";
@@ -42,6 +43,7 @@ import { Button, Spinner, Switch, clsx } from "../ui";
 import { MODE_INFO } from "../composer/Pickers";
 import { confirmAction } from "../../lib/dialogs";
 import { UsagePage } from "../usage/UsagePage";
+import { BenchPage } from "../bench/BenchPage";
 import { CortecsView } from "./CortecsSettings";
 import { CollabSettings } from "../collab/CollabSettings";
 
@@ -50,6 +52,7 @@ const SECTIONS = [
   { id: "backends", label: "Agenten", icon: Boxes },
   { id: "account", label: "Konto", icon: UserRound },
   { id: "usage", label: "Nutzung", icon: ChartColumn },
+  { id: "bench", label: "Benchmarks", icon: FlaskConical },
   { id: "models", label: "Modelle & Kontext", icon: Cpu },
   { id: "permissions", label: "Freigaben & Sicherheit", icon: ShieldCheck },
   { id: "cortecs", label: "Cortecs & Datenschutz", icon: ShieldCheck },
@@ -323,7 +326,7 @@ export function SettingsView() {
       </nav>
 
       <div className="min-w-0 flex-1 overflow-y-auto">
-        <div className="mx-auto max-w-[760px] px-8 py-8">
+        <div className={clsx("mx-auto px-8 py-8", section === "bench" ? "max-w-[1080px]" : "max-w-[760px]")}>
           <h1 className="mb-6 text-[1.5em] font-semibold tracking-tight">{SECTIONS.find((s) => s.id === section)?.label}</h1>
 
           {error && (
@@ -450,6 +453,8 @@ export function SettingsView() {
           )}
 
           {section === "usage" && <UsagePage />}
+
+          {section === "bench" && <BenchPage />}
 
           {section === "models" && (
             <>

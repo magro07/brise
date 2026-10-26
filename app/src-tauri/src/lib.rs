@@ -3,6 +3,7 @@ mod agent;
 mod collab;
 mod assist;
 mod backends;
+mod bench;
 mod decision;
 mod git;
 mod config;
@@ -244,6 +245,16 @@ pub fn run() {
             design::design_remove,
             design::design_export,
             design::design_import_tokens,
+            bench::bench_list,
+            bench::bench_get,
+            bench::bench_save,
+            bench::bench_delete,
+            bench::bench_dir,
+            bench::bench_runs,
+            bench::bench_delete_run,
+            bench::bench_status,
+            bench::bench_run,
+            bench::bench_cancel,
         ])
         .run(tauri::generate_context!())
         .expect("Brise konnte nicht gestartet werden");

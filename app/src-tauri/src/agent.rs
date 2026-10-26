@@ -344,6 +344,10 @@ async fn pump(
         match ev {
             Incoming::Notification { method, params } if method == "session/update" => {
                 let sid = params["sessionId"].as_str().unwrap_or_default();
+                // Bench-Sessions laufen unsichtbar; ihre Updates wertet bench.rs aus.
+                if crate::bench::observe(sid, &params["update"]) {
+                    continue;
+                }
                 if let Some(replay) = muted.lock().unwrap().get_mut(sid) {
                     let update = &params["update"];
                     if update["sessionUpdate"] == "user_message_chunk" {
@@ -367,6 +371,10 @@ async fn pump(
             }
             Incoming::Request { id, method, params } => match method.as_str() {
                 "session/request_permission" => {
+                    if let Some(answer) = crate::bench::auto_permission(params["sessionId"].as_str().unwrap_or_default(), &params) {
+                        conn.respond(id, Ok(answer));
+                        continue;
+                    }
                     let ui_key = format!("{key}:{generation}:{id}");
                     let session = params["sessionId"].as_str().unwrap_or_default().to_string();
                     permissions.lock().unwrap().insert(ui_key.clone(), (key.clone(), session, conn.clone(), id));

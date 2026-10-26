@@ -1,0 +1,43 @@
+{
+  "name": "Beispiel: Kleine Aufgaben",
+  "description": "Mitgelieferter Mini-Benchmark: eine Rechenfrage (Regex), ein Bugfix mit Tests (Befehl) und eine Erklärung, die ein Richtermodell bewertet. Kopieren und anpassen.",
+  "judgeModel": "mistral-small-latest",
+  "tasks": [
+    {
+      "id": "rechnen",
+      "name": "Rechnen",
+      "prompt": "Wie viel ist 17 * 23? Antworte nur mit der Zahl, ohne Werkzeuge zu benutzen.",
+      "checks": [
+        { "type": "regex", "pattern": "^\\s*391\\s*\\.?\\s*$" }
+      ],
+      "timeoutSec": 120
+    },
+    {
+      "id": "bugfix",
+      "name": "Bugfix mit Tests",
+      "prompt": "In diesem Ordner liegt calc.py mit einem Fehler. Behebe ihn so, dass `python3 -m unittest` grün ist. Ändere test_calc.py nicht. Antworte zum Schluss mit einem Satz, was falsch war.",
+      "files": {
+        "calc.py": "def mittelwert(werte):\n    \"\"\"Arithmetisches Mittel einer nicht leeren Liste.\"\"\"\n    return sum(werte) / (len(werte) + 1)\n\n\ndef ist_schaltjahr(jahr):\n    return jahr % 4 == 0\n",
+        "test_calc.py": "import unittest\n\nfrom calc import ist_schaltjahr, mittelwert\n\n\nclass Tests(unittest.TestCase):\n    def test_mittelwert(self):\n        self.assertEqual(mittelwert([2, 4, 6]), 4)\n\n    def test_schaltjahr(self):\n        self.assertTrue(ist_schaltjahr(2024))\n        self.assertTrue(ist_schaltjahr(2000))\n        self.assertFalse(ist_schaltjahr(1900))\n        self.assertFalse(ist_schaltjahr(2023))\n\n\nif __name__ == \"__main__\":\n    unittest.main()\n"
+      },
+      "checks": [
+        { "type": "command", "run": "python3 -m unittest -q", "timeoutSec": 60 },
+        { "type": "file", "path": "test_calc.py", "pattern": "assertFalse\\(ist_schaltjahr\\(1900\\)\\)" }
+      ],
+      "timeoutSec": 300
+    },
+    {
+      "id": "erklaeren",
+      "name": "Rebase erklären",
+      "prompt": "Erkläre in höchstens drei Sätzen auf Deutsch, was `git rebase` macht und wann man es lieber nicht benutzt. Benutze keine Werkzeuge.",
+      "checks": [
+        { "type": "judge", "criteria": "Fachlich korrekt (Commits werden auf eine neue Basis neu angewendet, Historie wird umgeschrieben); nennt, dass man bereits geteilte/gepushte Branches nicht rebasen sollte; höchstens drei Sätze; auf Deutsch.", "threshold": 0.7 }
+      ],
+      "timeoutSec": 120
+    }
+  ],
+  "targets": [
+    { "backend": "vibe", "model": "mistral-large-4", "label": "Mistral Large 4" },
+    { "backend": "vibe", "model": "glm-5-3", "options": { "thinking": "high" }, "label": "GLM-5.3 (hoch)" }
+  ]
+}

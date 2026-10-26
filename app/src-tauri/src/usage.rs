@@ -350,6 +350,19 @@ impl Pricer {
     }
 }
 
+/// Geschätzte Kosten (€) eines Eintrags; `None`, wenn die Preistabelle das Modell nicht kennt.
+pub fn estimate_eur(rec: &Record) -> Option<f64> {
+    let (cost, _, priced) = Pricer::new().cost(rec);
+    priced.then_some(cost)
+}
+
+/// Summe der Journal-Einträge eines Anbieters im Zeitraum, z. B. die Cortecs-Aufrufe
+/// eines Benchmark-Turns, die der ZDR-Proxy selbst bucht.
+pub fn provider_cost(provider: &str, from: u64, to: u64) -> f64 {
+    let pricer = Pricer::new();
+    read_range(from, to).iter().filter(|r| r.provider.as_deref() == Some(provider)).map(|r| pricer.cost(r).0).sum()
+}
+
 // ---------- Vibe-Turns ----------
 
 /// Vibe meldet kumulierte Summen je Session. Brise merkt sich den letzten

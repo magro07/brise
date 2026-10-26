@@ -19,7 +19,7 @@ const FAST_MODEL: &str = "mistral-small-latest";
 
 /// Chat-Anfrage mit JSON-Antwort.
 /// `feature` und `cwd` landen im Nutzungsjournal.
-async fn quick_json(model: &str, system: &str, user: &str, timeout: u64, feature: &str, cwd: Option<&str>) -> CmdResult<Value> {
+pub(crate) async fn quick_json(model: &str, system: &str, user: &str, timeout: u64, feature: &str, cwd: Option<&str>) -> CmdResult<Value> {
     let key = read_key().ok_or("Kein Mistral-Schlüssel")?;
     let started = std::time::Instant::now();
     let body: Value = reqwest::Client::new()
