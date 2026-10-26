@@ -17,6 +17,7 @@ import { SettingsView } from "./components/settings/Settings";
 import { DraftHero, NoProject, StartScreen } from "./components/screens/Screens";
 import { NewProjectDialog } from "./components/screens/NewProject";
 import { TextPrompt, Tour } from "./components/screens/Tour";
+import { DesignView } from "./components/design/DesignView";
 
 /** Backend-Events abonnieren und einmal mit Vibe verbinden. */
 function useBackend() {
@@ -198,7 +199,7 @@ export default function App() {
       ) : (
         <div className="flex h-full">
           {sidebarOpen && <Sidebar />}
-          {view === "settings" ? <SettingsView /> : <Workspace />}
+          {view === "settings" ? <SettingsView /> : view === "design" ? <DesignView /> : <Workspace />}
         </div>
       )}
       <CommandPalette />

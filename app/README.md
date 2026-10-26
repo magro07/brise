@@ -16,6 +16,7 @@ src/
     composer/            Eingabe mit @/Slash, Modus/Modell/Denkstufe, Freigaben, Aufgaben
     panels/              Seitenpanel: Änderungen, Kontext, Subagents, Aufgaben
     settings/            Einstellungen aus Vibes Schema, schreibt config.toml
+    design/              Design-Modus: Chat + Live-Vorschau, Varianten, Versionen, Tokens, Übergabe
     screens/             Start, Login, Vibe fehlt, leere Zustände
     ui/                  Buttons, Menüs, Tooltips, Schalter, Ring
 src-tauri/src/
@@ -34,6 +35,7 @@ src-tauri/src/
   customize.rs           Selbstanpassung per Chat: MCP-Server brise-app, Live-Übernahme
   meter.rs               Mikrofonpegel für die Wellen-Animation (cpal, nur Messung)
   selftest.rs            `brise --self-test` für die CI auf allen Systemen
+  design.rs              Design-Modus: Arbeitsordner, Kopien/Versionen, Export ins Projekt, Token-Import
 src-tauri/resources/skills/   mitgelieferte Skills (Lizenzen und Quellen in NOTICE.md)
 ```
 
@@ -140,7 +142,7 @@ Sessions erst nach dem ersten Turn, leere tauchen also nirgends auf.
   zugeordnete Modell (Standard: GLM-5.3 Flash, Medium 3.5, Large 4). Bei Bildern nimmt
   Brise ein Modell, das Bilder versteht. Unter jeder Nachricht steht die Wahl.
 - **Skills:** Brise liefert reverse-engineer-anything (rea), sechs ponytail-Skills,
-  gauntlet-loop, frontend-design, webapp-testing, mcp-builder und skill-creator mit.
+  gauntlet-loop, frontend-design, webapp-testing, mcp-builder, skill-creator und design-mode mit.
   Bei jedem Start kopiert Brise sie in den Datenordner und trägt diesen in Vibes
   `skill_paths` ein. Einzelne Skills lassen sich abschalten (`disabled_skills`). Die
   REA-Werkzeuge laufen als MCP-Server über `npx rea-agents mcp`, wenn Node.js da ist.
@@ -158,6 +160,37 @@ Sessions erst nach dem ersten Turn, leere tauchen also nirgends auf.
 - **Personalisierte Vorschläge:** Auf der Startseite eines Projekts formuliert Mistral
   Small vier Aufgaben aus Manifest, README, Git-Status, Commits, TODOs und den letzten
   Sessions. Zwischengespeichert, bis sich der Git-Stand ändert oder 12 Stunden um sind.
+
+## Design-Modus
+
+Umschalter „Code | Design“ in der Seitenleiste. Im Design-Modus stehen statt der Projekte
+die Designs; links chattet man mit dem Agenten, rechts läuft die Live-Vorschau.
+
+- **Arbeitsordner:** jedes Design liegt in `<Datenordner>/design/d-…/` (`index.html` oder
+  `App.jsx`, `variants/<a|b…>/`, `notes.md`, `tokens.css`/`tokens.json`, Versionen unter
+  `.versions/`). Die Session dazu ist eine normale Vibe-Session mit diesem Ordner als `cwd`
+  im Modus „Edits automatisch“. Sie taucht nicht bei den Projekten auf.
+- **Skill `design-mode`:** gibt Arbeitsweise, Dateiformat, Token-Regeln, Varianten und den
+  Aufbau von `notes.md` vor. Die erste Nachricht nennt Ordner und Design-System.
+- **Vorschau:** isoliertes iframe (`sandbox="allow-scripts"`, kein Zugriff auf Brise).
+  Brise bettet relative CSS-/JS-/Bilddateien ein und lädt die Tokens als CSS-Variablen.
+  `App.jsx` läuft mit React 19 (esm.sh), Tailwind-CDN und Babel. Mobil/Tablet/Desktop,
+  Hell/Dunkel (`data-theme="dark"` und Klasse `dark`), Laufzeitfehler mit „Beheben lassen“.
+  Jede abgeschlossene Dateiänderung des Agenten lädt die Vorschau neu.
+- **Iterieren:** 1–4 Varianten pro Nachricht, Vergleich nebeneinander, „Übernehmen“ macht
+  eine Variante zum Hauptdesign. Nach jedem Turn mit Änderungen entsteht eine Version;
+  ältere lassen sich neben der aktuellen ansehen und wiederherstellen. Mit dem
+  Auswahlwerkzeug ein Element anklicken – Selektor und HTML gehen mit der nächsten
+  Nachricht mit. Bilder (Dialog oder Einfügen) landen in `refs/` und gehen als Bild ans Modell.
+- **Design-System:** Farben (hell/dunkel), Schriften, Größen, Abstände, Radien, Schatten und
+  freie Regeln, gespeichert unter `<Datenordner>/design/systems/`. „Aus Projekt übernehmen“
+  liest CSS-Variablen (auch Tailwind 4 `@theme`, dunkle Werte aus `.dark`/`[data-theme=dark]`)
+  und Farben aus `tailwind.config.*`. Änderungen meldet Brise dem Agenten bei der nächsten Nachricht.
+- **Übergabe:** „An Session übergeben“ rendert Screenshots (Desktop, Mobil), kopiert das
+  Design nach `<Projekt>/.brise/design/<name>/` (mit `.gitignore`) und startet im gewählten
+  Projekt eine neue Coding-Session mit Auftrag: Dateien, Tokens, `notes.md`, Hinweise,
+  Akzeptanzkriterien (aus `notes.md` plus Standardkriterien, im Dialog änderbar) und Vorgehen.
+  Der Auftrag liegt zusätzlich als `handoff/AUFTRAG.md` bei.
 
 ## Selbstanpassung per Chat
 

@@ -3,6 +3,7 @@ mod assist;
 mod git;
 mod config;
 mod credentials;
+mod design;
 mod customize;
 mod embeddings;
 mod files;
@@ -154,6 +155,17 @@ pub fn run() {
             meter::meter_stop,
             customize::read_customization,
             customize::sync_prefs,
+            design::design_root,
+            design::design_read,
+            design::design_write,
+            design::design_write_base64,
+            design::design_data_url,
+            design::design_list,
+            design::design_dirs,
+            design::design_copy,
+            design::design_remove,
+            design::design_export,
+            design::design_import_tokens,
         ])
         .run(tauri::generate_context!())
         .expect("Brise konnte nicht gestartet werden");

@@ -20,6 +20,7 @@ import { basename, useStore, type Session } from "../../lib/store";
 import { relativeTime } from "../../lib/format";
 import { IconButton, Kbd, Logo, Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger, Spinner, clsx } from "../ui";
 import { confirmAction } from "../../lib/dialogs";
+import { DesignList, ModeSwitch } from "../design/Sidebar";
 
 const SHOWN_PER_PROJECT = 6;
 
@@ -89,6 +90,9 @@ export function Sidebar() {
         </SideButton>
       </div>
 
+      <ModeSwitch />
+
+      {view === "design" ? <DesignList /> : <>
       <div className="mt-3 flex items-center px-4 pb-1 text-[0.78em] font-medium uppercase tracking-wide text-muted">
         <span className="flex-1">Projekte</span>
         <Menu>
@@ -210,6 +214,7 @@ export function Sidebar() {
           );
         })}
       </nav>
+      </>}
 
       <div className="border-t border-line p-2" data-tour="settings">
         <SideButton
