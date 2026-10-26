@@ -22,6 +22,10 @@ export interface SubSession {
   branch?: string | null;
   base?: string | null;
   worktree: boolean;
+  /** "" = Code, "design" oder "3d" (ADR 0007). */
+  mode?: string;
+  /** Design- bzw. Modell-ID bei mode design/3d. */
+  item?: string | null;
   status: SubStatus;
   stopReason?: string | null;
   report?: string | null;
@@ -39,6 +43,7 @@ export interface Proposal {
   backend: string;
   model?: string | null;
   worktree: boolean;
+  mode?: string;
   state: "open" | "started" | "here" | "dismissed" | "failed";
   session?: string | null;
   error?: string | null;
@@ -189,11 +194,24 @@ async function flushNotes(master: string) {
   void useStore.getState().send(text, [], { sessionId: master, author: NOTE_AUTHOR });
 }
 
+/** Nachricht an eine Design- bzw. 3D-Session: über deren Store, damit danach gebaut und versioniert wird. */
+async function sendCreative(sub: SubSession, text: string) {
+  if (sub.mode === "3d") {
+    const { useModel } = await import("../components/model3d/modelStore");
+    await useModel.getState().message(sub.item!, text, "Master-Session");
+  } else {
+    const { useDesign } = await import("../components/design/designStore");
+    await useDesign.getState().message(sub.item!, text, "Master-Session");
+  }
+}
+
 function flushMessages(id: string) {
   const s = useStore.getState().sessions[id];
   if (!s || s.running || !messages[id]?.length) return;
   const text = messages[id].join("\n\n");
   messages[id] = [];
+  const sub = subOf(id);
+  if (sub?.item && (sub.mode === "3d" || sub.mode === "design")) return void sendCreative(sub, text);
   void useStore.getState().send(text, [], { sessionId: id, author: "Master-Session", keepModel: true });
 }
 
@@ -232,6 +250,21 @@ async function handleCall(kind: string, p: any): Promise<unknown> {
       return { cwd: s?.cwd ?? summary?.cwd ?? null, backend: s?.backend ?? summary?.backend ?? null, title: s?.title ?? summary?.title ?? null, running: !!s?.running };
     }
     case "start": {
+      // Design- und 3D-Sessions (ADR 0007): eigenes Design bzw. Modell im Datenordner statt Worktree.
+      if (p.mode === "3d" || p.mode === "design") {
+        const register = async (sid: string, item: string) => {
+          const sub = await invoke<SubSession>("orch_register", { proposal: p.proposal, session: sid, item });
+          useOrchestra.setState((o) => ({ book: { ...o.book, subs: [...o.book.subs.filter((x) => x.id !== sid), sub] } }));
+        };
+        if (p.mode === "3d") {
+          const { useModel } = await import("../components/model3d/modelStore");
+          const r = await useModel.getState().delegate(p.title, p.prompt, { author: "Master-Session", onSession: register });
+          return { sessionId: r.sessionId, item: r.modelId };
+        }
+        const { useDesign } = await import("../components/design/designStore");
+        const r = await useDesign.getState().delegate(p.title, p.prompt, { author: "Master-Session", onSession: register });
+        return { sessionId: r.sessionId, item: r.designId };
+      }
       const sid = await st.createSession(p.cwd, p.backend, { parent: p.master, model: p.model ?? undefined, title: p.title });
       const sub = await invoke<SubSession>("orch_register", { proposal: p.proposal, session: sid });
       // Sofort eintragen – sonst geht der Turn-Beginn am Abonnement vorbei.
@@ -241,6 +274,16 @@ async function handleCall(kind: string, p: any): Promise<unknown> {
       return { sessionId: sid };
     }
     case "send": {
+      const sub = subOf(p.session);
+      if (sub?.item && (sub.mode === "3d" || sub.mode === "design")) {
+        const live = st.sessions[p.session];
+        if (live?.running) {
+          messages[p.session] = [...(messages[p.session] ?? []), p.text];
+          return { queued: true };
+        }
+        void sendCreative(sub, p.text);
+        return { queued: false };
+      }
       const s = await ensureLoaded(p.session, p.cwd, p.backend, p.title);
       if (!s) throw new Error("Untersession nicht gefunden");
       if (s.running || s.replaying) {
@@ -289,6 +332,19 @@ export function forgetSub(id: string) {
 /** Untersession als Tab (oder rechts daneben) öffnen – auch nach einem Neustart. */
 export async function openSub(sub: SubSession, split = false) {
   const st = useStore.getState();
+  // Design- und 3D-Sessions öffnen im jeweiligen Modus.
+  if (sub.item && sub.mode === "3d") {
+    const { useModel } = await import("../components/model3d/modelStore");
+    st.setView("3d");
+    await useModel.getState().init();
+    return useModel.getState().open(sub.item);
+  }
+  if (sub.item && sub.mode === "design") {
+    const { useDesign } = await import("../components/design/designStore");
+    st.setView("design");
+    await useDesign.getState().init();
+    return useDesign.getState().open(sub.item);
+  }
   if (!st.sessions[sub.id] && !st.index.some((x) => x.sessionId === sub.id)) {
     useStore.setState((s) => ({ index: [...s.index, { sessionId: sub.id, cwd: sub.cwd, title: sub.title, backend: sub.backend }] }));
   }

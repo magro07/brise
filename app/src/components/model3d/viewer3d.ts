@@ -184,7 +184,10 @@ export class Viewer {
     if (b.isEmpty()) return;
     const center = b.getCenter(new THREE.Vector3());
     const radius = Math.max(b.getSize(new THREE.Vector3()).length() / 2, 1);
-    const dist = radius / Math.sin(THREE.MathUtils.degToRad(this.camera.fov / 2)) * 1.1;
+    // Schmaler Viewer: der horizontale Bildwinkel ist kleiner als der vertikale.
+    const vfov = THREE.MathUtils.degToRad(this.camera.fov);
+    const hfov = 2 * Math.atan(Math.tan(vfov / 2) * this.camera.aspect);
+    const dist = (radius / Math.sin(Math.min(vfov, hfov) / 2)) * 1.1;
     this.camera.position.copy(center).add(new THREE.Vector3(0.9, 0.65, 1.1).normalize().multiplyScalar(dist));
     this.camera.near = dist / 1000;
     this.camera.far = dist * 100;
@@ -238,7 +241,8 @@ export class Viewer {
     this.setHighlight(mesh);
     const box = new THREE.Box3().setFromObject(mesh);
     const path: string[] = [];
-    for (let o: THREE.Object3D | null = mesh; o && o !== this.model?.parent; o = o.parent) if (o.name) path.unshift(o.name);
+    // Szenen-Hüllen aus dem glTF-Export („AuxScene“, „Scene“) gehören nicht zum Pfad.
+    for (let o: THREE.Object3D | null = mesh; o && o !== this.model?.parent; o = o.parent) if (o.name && !/^(Aux)?Scene$/.test(o.name)) path.unshift(o.name);
     const material = Array.isArray(mesh.material) ? mesh.material[0] : mesh.material;
     const t = (mesh.geometry.index ? mesh.geometry.index.count : (mesh.geometry.getAttribute("position")?.count ?? 0)) / 3;
     this.onPick({
@@ -261,7 +265,7 @@ export class Viewer {
 
   /** PNG als data:-URL; ohne Raster und Auswahl, optional in fester Größe. */
   screenshot(width?: number, height?: number): string {
-    const hidden = [this.grid, this.highlight].filter(Boolean) as THREE.Object3D[];
+    const hidden = [this.grid, this.highlight, this.box].filter(Boolean) as THREE.Object3D[];
     hidden.forEach((o) => (o.visible = false));
     let url: string;
     if (width && height) {
@@ -296,4 +300,20 @@ export class Viewer {
 
 function partName(m: THREE.Object3D, i: number): string {
   return m.name || m.parent?.name || `Teil ${i + 1}`;
+}
+
+/** Modell ohne sichtbaren Viewer rendern (Delegation im Hintergrund): Screenshot und Maße. */
+export async function renderOffscreen(bytes: ArrayBuffer, ext: string, zUp: boolean): Promise<{ png: string; info: ModelInfo | null }> {
+  const host = document.createElement("div");
+  host.style.cssText = "position:fixed;left:-10000px;top:0;width:960px;height:720px;pointer-events:none";
+  document.body.appendChild(host);
+  const v = new Viewer(host);
+  try {
+    v.show(await parseModel(bytes.slice(0), ext), false);
+    v.setOptions({ zUp, grid: false });
+    return { png: v.screenshot(960, 720), info: v.info() };
+  } finally {
+    v.dispose();
+    host.remove();
+  }
 }

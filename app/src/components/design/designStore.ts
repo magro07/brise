@@ -70,6 +70,10 @@ interface DesignActions {
   restore(n: number): Promise<void>;
   promote(entry: string): Promise<void>;
   handoff(opts: { project: string; criteria: string[]; notes: string; withVariants: boolean }): Promise<void>;
+  /** Neues Design mit Auftrag einer anderen Session (ADR 0007); `onSession` läuft vor dem ersten Turn. */
+  delegate(name: string, task: string, opts?: { author?: string; onSession?: (sessionId: string, designId: string) => Promise<void> }): Promise<{ sessionId: string; designId: string }>;
+  /** Weitere Nachricht einer anderen Session an ein delegiertes Design. */
+  message(designId: string, text: string, author?: string): Promise<void>;
 }
 
 const metaPath = (id: string) => `${id}/design.json`;
@@ -181,7 +185,9 @@ export const useDesign = create<DesignState & DesignActions>((set, get) => {
     inflight[meta.id] ??= startSession(meta).finally(() => delete inflight[meta.id]);
     return inflight[meta.id];
   };
-  const startSession = async (meta: DesignMeta): Promise<string> => {
+  const startSession = async (given: DesignMeta): Promise<string> => {
+    // Immer den aktuellen Stand nehmen: der Aufrufer kann ein Meta ohne sessionId halten.
+    const meta = get().designs.find((d) => d.id === given.id) ?? given;
     const dir = absPath(meta.id);
     const sessions = useStore.getState().sessions;
     if (meta.sessionId && sessions[meta.sessionId]) return meta.sessionId;
@@ -212,6 +218,45 @@ export const useDesign = create<DesignState & DesignActions>((set, get) => {
     const latest = get().designs.find((d) => d.id === meta.id) ?? meta;
     await get().saveMeta({ ...latest, sessionId: r.sessionId });
     return r.sessionId;
+  };
+
+  /** Turn im Hintergrund (Delegation): Session sicherstellen, senden, danach Version und Vorschaubild. */
+  const promptQuietly = async (meta: DesignMeta, text: string, shown: string, author?: string) => {
+    await writeTokens(meta);
+    const sid = await ensureSession(meta);
+    const started = Date.now();
+    patchSession(sid, (s) => ({ ...s, running: true, turnStarted: started, items: [...s.items, { type: "user", id: uid(), text: shown, ...(author ? { author } : {}) }] }));
+    try {
+      const res = await api.prompt(sid, [{ type: "text", text }]);
+      pushItem(sid, { type: "turn", id: uid(), stopReason: res.stopReason, ms: Date.now() - started, tokens: res.usage?.totalTokens });
+    } catch (e) {
+      pushItem(sid, { type: "notice", id: uid(), text: String(e), tone: "error" });
+    } finally {
+      // Version und preview.png vor dem Turn-Ende, damit die Rückmeldung sie schon findet.
+      await snapshotOf(meta.id, shown.split("\n")[0].slice(0, 70), true).catch(() => {});
+      patchSession(sid, (s) => ({ ...s, running: false, turnStarted: undefined }));
+    }
+    if (get().activeId === meta.id) await get().refreshFiles();
+  };
+
+  /** Version anlegen und Vorschaubild schreiben (auch für nicht geöffnete Designs). */
+  const snapshotOf = async (id: string, label: string, waitPreview = false) => {
+    const meta = get().designs.find((d) => d.id === id);
+    if (!meta) return;
+    const files = await designApi.list(meta.id);
+    if (!entries(files).length) return;
+    const sig = signature(files);
+    if (meta.versions[meta.versions.length - 1]?.sig === sig) return;
+    const n = (meta.versions[meta.versions.length - 1]?.n ?? 0) + 1;
+    await designApi.copy(meta.id, `${meta.id}/.versions/${n}`, MANAGED, true);
+    const latest = get().designs.find((d) => d.id === id) ?? meta;
+    await get().saveMeta({ ...latest, versions: [...latest.versions, { n, label, at: Date.now(), sig }] });
+    // Vorschaubild für andere Sessions (MCP-Werkzeug read_design).
+    const main = entries(files)[0];
+    const shot = captureEntry(meta.id, main.entry, tokensCss(systemOf(meta)), "desktop", "light")
+      .then((url) => designApi.writeBase64(`${meta.id}/preview.png`, url.split(",")[1]))
+      .catch(() => {});
+    if (waitPreview) await shot;
   };
 
   return {
@@ -409,6 +454,28 @@ export const useDesign = create<DesignState & DesignActions>((set, get) => {
       await get().snapshot(text.split("\n")[0].slice(0, 70));
     },
 
+    async delegate(name, task, opts) {
+      if (!get().ready) await get().init();
+      const now = Date.now();
+      const meta: DesignMeta = { id: newId("d"), name: name.trim() || "Neues Design", created: now, updated: now, systemId: get().systems[0]?.id ?? "s-standard", versions: [], handoffs: [] };
+      await get().saveMeta(meta);
+      await designApi.write(`${meta.id}/notes.md`, `# ${meta.name}\n\nWird gerade im Auftrag einer anderen Session entworfen.\n`);
+      await writeTokens(meta);
+      const sid = await ensureSession(meta);
+      await opts?.onSession?.(sid, meta.id);
+      const sys = systemOf(meta);
+      set((s) => ({ seenSystem: { ...s.seenSystem, [meta.id]: sys.updated } }));
+      void promptQuietly(get().designs.find((d) => d.id === meta.id) ?? meta, `${preamble(meta, absPath(meta.id), sys)}\n\n${task}`, task, opts?.author);
+      return { sessionId: sid, designId: meta.id };
+    },
+
+    async message(designId, text, author) {
+      if (!get().ready) await get().init();
+      const meta = get().designs.find((d) => d.id === designId);
+      if (!meta) throw new Error(`Design ${designId} nicht gefunden`);
+      await promptQuietly(meta, text, text, author);
+    },
+
     async cancel() {
       const sid = active()?.sessionId;
       if (sid) await api.cancel(sid);
@@ -416,20 +483,7 @@ export const useDesign = create<DesignState & DesignActions>((set, get) => {
 
     async snapshot(label) {
       const meta = active();
-      if (!meta) return;
-      const files = await designApi.list(meta.id);
-      if (!entries(files).length) return;
-      const sig = signature(files);
-      if (meta.versions[meta.versions.length - 1]?.sig === sig) return;
-      const n = (meta.versions[meta.versions.length - 1]?.n ?? 0) + 1;
-      await designApi.copy(meta.id, `${meta.id}/.versions/${n}`, MANAGED, true);
-      await get().saveMeta({ ...meta, versions: [...meta.versions, { n, label, at: Date.now(), sig }] });
-      // Vorschaubild für andere Sessions (MCP-Werkzeug read_design).
-      const main = entries(files)[0];
-      if (main)
-        captureEntry(meta.id, main.entry, tokensCss(systemOf(meta)), "desktop", "light")
-          .then((url) => designApi.writeBase64(`${meta.id}/preview.png`, url.split(",")[1]))
-          .catch(() => {});
+      if (meta) await snapshotOf(meta.id, label);
     },
 
     async restore(n) {

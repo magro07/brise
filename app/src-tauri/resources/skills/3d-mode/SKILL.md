@@ -22,7 +22,8 @@ Coding-Session oder den 3D-Druck.
 | `variants/a/model.js`, … | du | Varianten zum Vergleichen |
 | `notes.md` | du | Beschreibung für die Übergabe (Pflicht, siehe unten) |
 | `out/model.glb`, `out/model.stl` | Brise | Ergebnis von `model.js` bzw. `model.scad` – nicht selbst schreiben |
-| `out/info.json` | Brise | Maße und Teile aus dem Viewer – darfst du lesen |
+| `out/info.json` | Brise | Maße und Teile des letzten Baus – darfst du lesen |
+| `out/error.txt` | Brise | Fehlermeldung, falls der letzte Bau fehlschlug (sonst nicht vorhanden) |
 | `model.json`, `.versions/`, `preview.png`, `refs/`, `handoff/` | Brise | Verwaltung bzw. Vorlagen – nicht ändern |
 
 - Schreibe nur in diesen Ordner. Für `model.js` und `model.scad` brauchst du **keine
@@ -63,6 +64,8 @@ export default function build({ THREE, params, csg }) {
 
 Regeln:
 
+- `params.breite` ist der aktuelle Wert (Zahl), auch bei der Objekt-Schreibweise
+  (`params.breite.value` geht ebenfalls).
 - `build` bekommt `{ THREE, params, csg, utils, addons }` und gibt ein
   `THREE.Object3D` (Mesh, Group) oder eine `BufferGeometry` zurück. `async` ist erlaubt.
 - Erlaubte Importe: `three`, `three/addons/…` mit `RoundedBoxGeometry`,
@@ -77,7 +80,8 @@ Regeln:
 - Farben und Materialien über `MeshStandardMaterial` (`color`, `metalness`,
   `roughness`). Sie landen im GLB; im STL zählt nur die Geometrie.
 - Alles, was die Nutzer:in sinnvoll verstellen will (Maße, Anzahl, Stärke), gehört in
-  `params`. Verwende die Werte überall statt fester Zahlen.
+  `params`. Verwende die Werte überall statt fester Zahlen. Farben nicht als Regler
+  (Zahlen wie `0xd42b2b` ergeben keinen sinnvollen Schieber), sondern als Konstanten.
 
 ## OpenSCAD (optional)
 
@@ -130,7 +134,8 @@ echten Maße recherchieren bzw. erfragen, wenn es auf Passung ankommt.
   schwebenden Teile, geschlossene Körper.
 - Für Web und Spiele: wenige Dreiecke (meist < 50 000), benannte Teile, Ursprung unten
   mittig, sinnvolle Materialien.
-- Prüfe die Maße in `out/info.json` nach dem Bau, wenn es auf Größe ankommt.
+- Nach jeder Änderung baut Brise neu (ein, zwei Sekunden). Prüfe danach `out/error.txt`
+  (darf nicht existieren) und die Maße in `out/info.json`, wenn es auf Größe ankommt.
 
 ## notes.md
 
@@ -158,4 +163,5 @@ Regler und ihre sinnvollen Bereiche.
 ## Antworten
 
 Kurz: was du gebaut oder geändert hast, wichtige Maße und ein, zwei Vorschläge für den
-nächsten Schritt. Keinen Code im Chat wiederholen – er steht in den Dateien.
+nächsten Schritt. Keinen Code im Chat wiederholen – er steht in den Dateien. Beende danach
+den Turn; nicht mit `wait` auf weitere Nachrichten warten.

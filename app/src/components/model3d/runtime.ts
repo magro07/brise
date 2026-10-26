@@ -53,6 +53,27 @@ function makeCsg() {
   return { union: op(ADDITION), subtract: op(SUBTRACTION), intersect: op(INTERSECTION) };
 }
 
+/**
+ * Zahlen kommen als Number-Objekt mit `.value`, damit `params.breite` und
+ * `params.breite.value` beide funktionieren (Modelle schreiben mal so, mal so).
+ */
+function paramValue(v: unknown): unknown {
+  return typeof v === "number" ? Object.assign(new Number(v), { value: v }) : v;
+}
+
+/** NaN in der Geometrie (z. B. undefined * 2) als verständlicher Fehler statt leerem Modell. */
+function checkFinite(obj: THREE.Object3D) {
+  obj.traverse((o) => {
+    const pos = (o as THREE.Mesh).geometry?.getAttribute?.("position");
+    if (!pos) return;
+    for (let i = 0; i < pos.array.length; i++) {
+      if (!Number.isFinite(pos.array[i])) {
+        throw new Error(`Teil „${o.name || "ohne Namen"}“ hat ungültige Koordinaten (NaN) – meist eine Rechnung mit undefined, z. B. ein falsch geschriebener Parameter.`);
+      }
+    }
+  });
+}
+
 interface Request {
   code: string;
   params: Record<string, number | boolean | string>;
@@ -75,11 +96,12 @@ self.onmessage = async (e: MessageEvent<Request>) => {
     if (typeof build !== "function") throw new Error("model.js muss eine Funktion exportieren: export default function build({ THREE, params }) { … }");
     const specs: ParamSpec[] = describeParams(exports.params);
     const params: Record<string, unknown> = {};
-    for (const s of specs) params[s.name] = e.data.params[s.name] ?? s.value;
+    for (const s of specs) params[s.name] = paramValue(e.data.params[s.name] ?? s.value);
     let obj = await build({ THREE, params, csg: makeCsg(), utils: BufferGeometryUtils, addons: ADDONS });
     if (obj?.isBufferGeometry) obj = new THREE.Mesh(obj, new THREE.MeshStandardMaterial({ color: 0xb0b8c4 }));
     if (!obj?.isObject3D) throw new Error("build() muss ein THREE.Object3D (Mesh, Group …) oder eine BufferGeometry zurückgeben.");
     obj.updateMatrixWorld(true);
+    checkFinite(obj);
     const out: Record<string, ArrayBuffer> = {};
     if (e.data.formats.includes("glb")) out.glb = (await new GLTFExporter().parseAsync(obj, { binary: true })) as ArrayBuffer;
     if (e.data.formats.includes("stl")) {
@@ -89,7 +111,8 @@ self.onmessage = async (e: MessageEvent<Request>) => {
     if (e.data.formats.includes("obj")) out.obj = new TextEncoder().encode(new OBJExporter().parse(obj)).buffer as ArrayBuffer;
     post({ ok: true, out, params: specs, logs }, Object.values(out));
   } catch (err) {
-    const error = err instanceof Error ? `${err.name}: ${err.message}${err.stack ? `\n${err.stack.split("\n").slice(0, 4).join("\n")}` : ""}` : String(err);
+    // Der Stacktrace zeigt nur in die Laufzeit (Blob), nicht in model.js – darum ohne.
+    const error = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
     post({ ok: false, error, logs });
   }
 };

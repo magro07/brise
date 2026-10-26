@@ -80,8 +80,13 @@ interface ModelActions {
   setParam(entry: string, name: string, value: number | boolean | string): void;
   resetParams(entry: string): void;
   send(text: string, images: Attachment[], variants: number): Promise<void>;
-  /** Neues Modell mit Auftrag anlegen und die Session starten (Delegation); liefert die Session-ID. */
-  delegate(name: string, task: string, author?: string): Promise<string>;
+  /**
+   * Neues Modell mit Auftrag anlegen und die Session starten (Delegation aus einer
+   * anderen Session, ADR 0007). `onSession` läuft, bevor der erste Turn beginnt.
+   */
+  delegate(name: string, task: string, opts?: { author?: string; onSession?: (sessionId: string, modelId: string) => Promise<void> }): Promise<{ sessionId: string; modelId: string }>;
+  /** Weitere Nachricht einer anderen Session an ein delegiertes Modell. */
+  message(modelId: string, text: string, author?: string): Promise<void>;
   ensureSession(meta: ModelMeta): Promise<string>;
   cancel(): Promise<void>;
   snapshot(label: string): Promise<void>;
@@ -158,11 +163,16 @@ export const DEFAULT_CRITERIA_3D = [
   "Build, Typprüfung und vorhandene Tests laufen fehlerfrei.",
 ];
 
+/** Hintergrund-Bau für nicht geöffnete Modelle (Delegation). */
+let bgBuild: (id: string) => Promise<void> = async () => {};
+
 export const useModel = create<ModelState & ModelActions>((set, get) => {
   const active = () => get().models.find((m) => m.id === get().activeId);
 
   const inflight: Record<string, Promise<string>> = {};
-  const startSession = async (meta: ModelMeta): Promise<string> => {
+  const startSession = async (given: ModelMeta): Promise<string> => {
+    // Immer den aktuellen Stand nehmen: der Aufrufer kann ein Meta ohne sessionId halten.
+    const meta = get().models.find((m) => m.id === given.id) ?? given;
     const dir = modelAbs(meta.id);
     const sessions = useStore.getState().sessions;
     if (meta.sessionId && sessions[meta.sessionId]) return meta.sessionId;
@@ -195,7 +205,7 @@ export const useModel = create<ModelState & ModelActions>((set, get) => {
   };
 
   /** Einen Turn an die Session des Modells schicken (auch für Delegation im Hintergrund). */
-  const prompt = async (meta: ModelMeta, text: string, shown: string, images: Attachment[], author?: string) => {
+  const prompt = async (meta: ModelMeta, text: string, shown: string, images: Attachment[], author?: string, beforeEnd?: () => Promise<void>) => {
     const sid = await get().ensureSession(meta);
     const blocks: ContentBlock[] = [{ type: "text", text }];
     for (const a of images) {
@@ -214,6 +224,8 @@ export const useModel = create<ModelState & ModelActions>((set, get) => {
     } catch (e) {
       pushItem(sid, { type: "notice", id: uid(), text: String(e), tone: "error" });
     } finally {
+      // Delegation: Ergebnis bauen, bevor das Turn-Ende die Rückmeldung auslöst.
+      await beforeEnd?.().catch(() => {});
       patchSession(sid, (s) => ({ ...s, running: false, turnStarted: undefined }));
     }
     return sid;
@@ -230,21 +242,44 @@ export const useModel = create<ModelState & ModelActions>((set, get) => {
     await snapshotOf(meta.id, label);
   };
 
-  /** Hauptmodell eines nicht geöffneten Modells bauen (Delegation), damit out/ und andere Sessions es sehen. */
+  /**
+   * Hauptmodell eines nicht geöffneten Modells bauen (Delegation), damit out/,
+   * Maße und Vorschaubild für andere Sessions bereitliegen.
+   */
   const buildInBackground = async (id: string) => {
     const files = await modelApi.list(id).catch(() => [] as DesignFile[]);
     const main = modelEntries(files)[0];
-    if (!main || main.kind === "file") return;
+    if (!main) return;
     try {
-      await produce(id, main, get().models.find((m) => m.id === id)?.params?.[main.entry] ?? {});
-    } catch {
-      /* Fehler sieht man beim Öffnen */
+      const r = await produce(id, main, get().models.find((m) => m.id === id)?.params?.[main.entry] ?? {});
+      const { renderOffscreen, webglAvailable } = await import("./viewer3d");
+      if (!webglAvailable()) return;
+      const { png, info } = await renderOffscreen(r.bytes, r.ext, main.kind === "scad" || r.ext === "3mf");
+      if (info) await modelApi.write(`${id}/out/info.json`, JSON.stringify(info));
+      await modelApi.writeBase64(`${id}/preview.png`, png.split(",")[1]);
+    } catch (e) {
+      console.warn("3D-Modell im Hintergrund bauen", e);
     }
   };
 
-  /** Quelle bauen und Ausgaben schreiben; liefert Bytes für den Viewer. */
-  const produce = async (id: string, e: ModelEntry, values: Record<string, unknown>): Promise<{ bytes: ArrayBuffer; ext: string; params: ParamSpec[]; logs: string[] }> => {
+  /**
+   * Quelle bauen und Ausgaben schreiben; liefert Bytes für den Viewer. Baufehler
+   * landen in `out/error.txt`, damit der Agent sie während seines Turns sieht.
+   */
+  const produce = async (id: string, e: ModelEntry, values: Record<string, unknown>) => {
     const base = `${id}/${e.dir ? `${e.dir}/` : ""}`;
+    try {
+      const r = await produceRaw(id, e, values, base);
+      await modelApi.remove(`${base}out/error.txt`).catch(() => {});
+      return r;
+    } catch (err) {
+      const logs = (err as { logs?: string[] })?.logs ?? [];
+      await modelApi.write(`${base}out/error.txt`, `${err instanceof Error ? err.message : err}${logs.length ? `\n\nAusgaben:\n${logs.join("\n")}` : ""}\n`).catch(() => {});
+      throw err;
+    }
+  };
+
+  const produceRaw = async (id: string, e: ModelEntry, values: Record<string, unknown>, base: string): Promise<{ bytes: ArrayBuffer; ext: string; params: ParamSpec[]; logs: string[] }> => {
     if (e.kind === "js") {
       const code = await modelApi.read(`${id}/${e.entry}`);
       const { buildModel } = await import("./sandbox");
@@ -273,6 +308,8 @@ export const useModel = create<ModelState & ModelActions>((set, get) => {
     const latest = get().models.find((m) => m.id === id) ?? meta;
     await get().saveMeta({ ...latest, versions: [...latest.versions, { n, label, at: Date.now(), sig }] });
   };
+
+  bgBuild = buildInBackground;
 
   return {
     ready: false,
@@ -467,13 +504,36 @@ export const useModel = create<ModelState & ModelActions>((set, get) => {
       if (get().activeId === meta.id && variants > 1 && modelEntries(get().files).length > 1) set({ mode: { kind: "compare" } });
     },
 
-    async delegate(name, task, author) {
+    async delegate(name, task, opts) {
       if (!get().ready) await get().init();
       const meta = await get().create(name);
       const sid = await get().ensureSession(meta);
-      const text = `${preamble(meta, modelAbs(meta.id), get().tools)}\n\n[Auftrag einer anderen Session – schließe mit einem kurzen Bericht: was entstanden ist, Maße, Teile, offene Punkte.]\n\n${task}`;
-      void prompt(meta, text, task, [], author).then(() => afterTurn(meta, task.split("\n")[0].slice(0, 70)));
-      return sid;
+      await opts?.onSession?.(sid, meta.id);
+      const text = `${preamble(meta, modelAbs(meta.id), get().tools)}\n\n${task}`;
+      const label = name.slice(0, 70);
+      // Nicht geöffnet: vor dem Turn-Ende bauen und eine Version anlegen, damit die Rückmeldung ein fertiges Ergebnis meldet.
+      const finish = async () => {
+        if (get().activeId === meta.id) return;
+        await buildInBackground(meta.id);
+        await snapshotOf(meta.id, label);
+      };
+      void prompt(meta, text, task, [], opts?.author, finish).then(async () => {
+        if (get().activeId === meta.id) await afterTurn(meta, label);
+      });
+      return { sessionId: sid, modelId: meta.id };
+    },
+
+    async message(modelId, text, author) {
+      if (!get().ready) await get().init();
+      const meta = get().models.find((m) => m.id === modelId);
+      if (!meta) throw new Error(`Modell ${modelId} nicht gefunden`);
+      const label = text.split("\n")[0].slice(0, 70);
+      await prompt(meta, text, text, [], author, async () => {
+        if (get().activeId === meta.id) return;
+        await buildInBackground(meta.id);
+        await snapshotOf(meta.id, label);
+      });
+      if (get().activeId === meta.id) await afterTurn(meta, label);
     },
 
     async cancel() {
@@ -572,16 +632,25 @@ export const useModel = create<ModelState & ModelActions>((set, get) => {
 let paramTimer: ReturnType<typeof setTimeout> | undefined;
 
 // Live-Vorschau: abgeschlossene Dateiänderungen der 3D-Session bauen und laden neu.
-let editCount = 0;
-let reloadTimer: ReturnType<typeof setTimeout> | undefined;
+// Nicht geöffnete Modelle (z. B. delegierte) baut Brise im Hintergrund, damit der
+// Agent schon während seines Turns out/info.json bzw. out/error.txt lesen kann.
+const editCounts: Record<string, number> = {};
+const timers: Record<string, ReturnType<typeof setTimeout>> = {};
 useStore.subscribe((st, prev) => {
+  if (st.sessions === prev.sessions) return;
   const m = useModel.getState();
-  const sid = m.models.find((x) => x.id === m.activeId)?.sessionId;
-  if (!sid || st.sessions[sid] === prev.sessions[sid]) return;
-  const items = st.sessions[sid]?.items ?? [];
-  const done = items.filter((i) => i.type === "tool" && i.status === "completed" && (i.kind === "edit" || i.kind === "delete" || i.kind === "move" || i.kind === "execute" || i.diffs.length > 0)).length;
-  if (done === editCount) return;
-  editCount = done;
-  clearTimeout(reloadTimer);
-  reloadTimer = setTimeout(() => useModel.getState().refreshFiles(), 300);
+  for (const model of m.models) {
+    const sid = model.sessionId;
+    if (!sid || st.sessions[sid] === prev.sessions[sid]) continue;
+    const items = st.sessions[sid]?.items ?? [];
+    const done = items.filter((i) => i.type === "tool" && i.status === "completed" && (i.kind === "edit" || i.kind === "delete" || i.kind === "move" || i.kind === "execute" || i.diffs.length > 0)).length;
+    if (done === (editCounts[sid] ?? done - 1) || done === 0) {
+      editCounts[sid] = done;
+      continue;
+    }
+    editCounts[sid] = done;
+    clearTimeout(timers[sid]);
+    const active = model.id === m.activeId;
+    timers[sid] = setTimeout(() => (active ? useModel.getState().refreshFiles() : bgBuild(model.id)), 300);
+  }
 });

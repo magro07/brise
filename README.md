@@ -97,6 +97,12 @@ Protokoll und Sicherheitsmodell: [docs/collab-protocol.md](docs/collab-protocol.
 - **Semantische Codesuche** mit `codestral-embed`, im Panel und als Werkzeug für den Agenten.
 - **Design-Modus:** Chat mit Live-Vorschau, Varianten, Versionen und Design-Tokens.
   Die Übergabe startet eine Coding-Session mit Auftrag.
+- **3D-Modus:** 3D-Modelle als Code (three.js, optional OpenSCAD oder Blender) mit
+  eingebautem Viewer, Maßen, Reglern, Teileauswahl, Varianten und Versionen; Übergabe als
+  glTF oder STL mit Einbindungsauftrag.
+- **Code, Design und 3D vernetzt:** Jede Session liest Designs und Modelle samt Vorschaubild
+  (`read_design`, `read_model`), übernimmt sie ins Projekt und delegiert neue an eine
+  Design- bzw. 3D-Session (`start_session` mit `mode`).
 - **Personalisierte Vorschläge** auf der Startseite aus README, Git-Stand, TODOs und
   den letzten Sessions.
 - **Sprache (über Vibe):** Spracheingabe mit Voxtral Realtime, Vorlesen mit Voxtral TTS.
@@ -108,7 +114,7 @@ Protokoll und Sicherheitsmodell: [docs/collab-protocol.md](docs/collab-protocol.
 [ponytail](https://github.com/DietrichGebert/ponytail),
 [gauntlet-loop](https://github.com/duolahypercho/gauntlet-loop), frontend-design,
 webapp-testing, mcp-builder und skill-creator ([anthropics/skills](https://github.com/anthropics/skills)),
-dazu `brise-anpassen`, `council`, `deep-research` und `design-mode`. Lizenzen und Quellen:
+dazu `brise-anpassen`, `council`, `deep-research`, `design-mode` und `3d-mode`. Lizenzen und Quellen:
 [NOTICE.md](app/src-tauri/resources/skills/NOTICE.md).
 
 ## Bilder

@@ -1,6 +1,6 @@
 # ADR 0007: 3D-Modus und Vernetzung von Code, Design und 3D
 
-- Status: angenommen
+- Status: umgesetzt (siehe Testprotokoll)
 - Datum: 2026-10-26
 
 ## Kontext
@@ -164,3 +164,32 @@ des Projekts, z. B. `useGLTF` bei react-three-fiber, `GLTFLoader` oder
 - **Agenten-Code**: `model.js` läuft nur im isolierten iframe, nie im Fenster
   der App. Endlosschleifen fängt eine Zeitgrenze ab (iframe wird verworfen).
 - **Große Modelle**: Dateien über 64 MB zeigt der Viewer nicht an.
+
+## Testprotokoll (26.10.2026, Linux/WebKitGTK unter Xvfb, Debug-Build, Vibe)
+
+1. **3D-Modus direkt:** Startkarte „3D-Druck“ → Vibe schreibt `model.js` mit Reglern und
+   CSG-Schlitzen; Brise baut GLB/STL, der Viewer zeigt Modell, Bounding Box
+   (41,6 × 44 × 34 mm) und Regler. Regler „Anzahl Schlitze“ 3 → 5 baut sofort neu
+   (68 mm), die Kamera bleibt. Teil anklicken legt „Kabelhalter › Kabelhalter_1“ in den
+   Composer. WebGL läuft unter WebKitGTK auch ohne GPU (Software-Rendering).
+2. **Delegation aus einer Code-Session:** Code-Session im Projekt `raketenshop` ruft
+   `start_session(mode: "3d")` auf → Karte „3D-Modus – neues Modell“ → „Neue Session“ →
+   3D-Session baut eine Rakete (7 Teile), Rückmeldung mit Modell-ID → Code-Session ruft
+   `read_model` (Maße, Teile, Bild) und `export_model` auf → `public/models/rakete.glb`
+   und Einbindung mit three.js in `index.html`.
+3. **Design und 3D gleichzeitig:** Eine Code-Session delegiert einen Kaffeebecher
+   (`mode: "3d"`) und einen Hero-Bereich (`mode: "design"`). Beide enden mit `end_turn`,
+   Vorschaubilder entstehen im Hintergrund, die Code-Session übernimmt `becher.glb` mit
+   `export_model`, sieht das Design mit `read_design` an und baut beides in
+   `index.html` ein. Klick auf die Untersession öffnet sie im 3D- bzw. Design-Modus.
+4. **Fehlerfall:** Kaputtes `model.js` → Fehlerleiste mit „Beheben lassen“ und
+   `out/error.txt`.
+
+Gefundene und behobene Fehler: veraltetes Meta in `delegate` startete eine zweite
+Session (Rückmeldung blieb aus); `params.x.value` ergab NaN-Geometrie (jetzt gehen
+beide Schreibweisen, NaN wird als Fehler gemeldet); delegierte Sessions warteten mit
+Vibes `wait` (Rahmen und Skill sagen jetzt: Turn beenden); Kamera bei schmalem
+Viewer zu nah.
+
+Nicht getestet: Windows (WebView2) und macOS (WKWebView), OpenSCAD und Blender (auf dem
+Testrechner nicht installiert; Erkennung und Aufruf sind umgesetzt, aber ungeprüft).

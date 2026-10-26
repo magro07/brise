@@ -26,6 +26,7 @@ src/
     panels/              Seitenpanel: Änderungen, Kontext, Subagents, Aufgaben
     settings/            Einstellungen aus Vibes Schema, schreibt config.toml
     design/              Design-Modus: Chat + Live-Vorschau, Varianten, Versionen, Tokens, Übergabe
+    model3d/             3D-Modus: three.js-Viewer, Sandbox für model.js, Regler, Versionen, Übergabe
     screens/             Start, Login, Vibe fehlt, leere Zustände
     ui/                  Buttons, Menüs, Tooltips, Schalter, Ring
     collab/              Session teilen, beitreten, Gast-Composer, Einstellungen
@@ -57,6 +58,8 @@ src-tauri/src/
   selftest.rs            `brise --self-test` für die CI auf allen Systemen
   collab/                Kollaboration: Verschlüsselung, Einladungslinks, Relay-Verbindung, LAN-Relay
   design.rs              Design-Modus: Arbeitsordner, Kopien/Versionen, Export ins Projekt, Token-Import
+  model3d.rs             3D-Modus: Arbeitsordner, OpenSCAD/Blender finden, OpenSCAD rendern, Export,
+                         MCP-Werkzeuge list_/read_/export_design und list_/read_/export_model
 src-tauri/resources/skills/   mitgelieferte Skills (Lizenzen und Quellen in NOTICE.md)
 ```
 
@@ -196,7 +199,7 @@ Dazu bekommt jede Session im MCP-Server `brise-app` diese Werkzeuge:
 
 | Werkzeug | Was es tut |
 |---|---|
-| `start_session(title, task, backend?, model?, worktree?)` | Teilaufgabe vorschlagen bzw. starten, auf Wunsch mit anderem Backend/Modell |
+| `start_session(title, task, backend?, model?, worktree?, mode?)` | Teilaufgabe vorschlagen bzw. starten, auf Wunsch mit anderem Backend/Modell; `mode: "design"` bzw. `"3d"` startet eine Design- bzw. 3D-Session (siehe [3D-Modus](#3d-modus)) |
 | `list_sessions` | eigene Untersessions mit Status und Branch |
 | `get_session(session)` | Status, letzter Bericht, Branch, Commits vor der Basis, nicht committete Dateien |
 | `send_message(session, text)` | Nachricht an eine Untersession (läuft sie, nach dem Turn) |
@@ -420,7 +423,7 @@ Live-Tests mit Schlüssel: `cargo test --lib cortecs::tests -- --ignored --test-
   zugeordnete Modell (Standard: GLM-5.3 Flash, Medium 3.5, Large 4). Bei Bildern nimmt
   Brise ein Modell, das Bilder versteht. Unter jeder Nachricht steht die Wahl.
 - **Skills:** Brise liefert reverse-engineer-anything (rea), sechs ponytail-Skills,
-  gauntlet-loop, frontend-design, webapp-testing, mcp-builder, skill-creator und design-mode mit.
+  gauntlet-loop, frontend-design, webapp-testing, mcp-builder, skill-creator, design-mode und 3d-mode mit.
   Bei jedem Start kopiert Brise sie in den Datenordner und trägt diesen in Vibes
   `skill_paths` ein. Einzelne Skills lassen sich abschalten (`disabled_skills`). Die
   REA-Werkzeuge laufen als MCP-Server über `npx rea-agents mcp`, wenn Node.js da ist.
@@ -535,6 +538,67 @@ die Designs; links chattet man mit dem Agenten, rechts läuft die Live-Vorschau.
   Projekt eine neue Coding-Session mit Auftrag: Dateien, Tokens, `notes.md`, Hinweise,
   Akzeptanzkriterien (aus `notes.md` plus Standardkriterien, im Dialog änderbar) und Vorgehen.
   Der Auftrag liegt zusätzlich als `handoff/AUFTRAG.md` bei.
+- Nach jeder Version speichert Brise `preview.png`; andere Sessions sehen das Design damit
+  über `read_design` (siehe [Vernetzung](#vernetzung-code-design-und-3d)).
+
+## 3D-Modus
+
+Umschalter „Code | Design | 3D“ in der Seitenleiste. Im 3D-Modus stehen die 3D-Modelle in
+der Seitenleiste; links chattet man mit dem Agenten, rechts läuft der Viewer. Konzept und
+Abwägung (Blender, blender-mcp, OpenSCAD, build123d/CadQuery, three.js):
+`docs/adr/0007-3d-modus.md`.
+
+- **Arbeitsordner:** jedes Modell liegt in `<Datenordner>/3d/m-…/` (`model.js` bzw.
+  `model.scad`, `variants/<a|b…>/`, `notes.md`, erzeugte Dateien unter `out/`, Versionen unter
+  `.versions/`, `preview.png`). Die Session dazu ist eine Vibe-Session mit diesem Ordner als
+  `cwd` im Modus „Edits automatisch“; sie taucht nicht bei den Projekten auf.
+- **Modellieren, Standard „Szene als Code“:** Der Agent schreibt `model.js`
+  (`export default function build({ THREE, params, csg })`, 1 Einheit = 1 mm, Y oben). Brise
+  führt es in einem isolierten iframe (`sandbox="allow-scripts"`) als Worker aus (three.js,
+  Exporter, `three-bvh-csg` für Bohrungen und Taschen; 30 s Zeitgrenze) und speichert
+  `out/model.glb` und `out/model.stl`. Keine Installation nötig.
+- **Optional OpenSCAD und Blender:** Findet Brise `openscad`, darf der Agent `model.scad`
+  schreiben; Brise rendert sie zu `out/model.stl`. Findet Brise `blender`, darf der Agent
+  `blender --background --python model.py` ausführen und selbst nach `out/model.glb`
+  exportieren. Fertige `.glb/.gltf/.stl/.obj/.3mf` zeigt der Viewer direkt an.
+- **Skill `3d-mode`:** Arbeitsweise, Dateiformat, Einheiten, Regler, Druckbarkeit, Aufbau von
+  `notes.md`. Die erste Nachricht nennt Ordner und die gefundenen Werkzeuge.
+- **Viewer:** three.js (gebündelt, offline), Orbit, Drahtgitter, Raster, Bounding Box mit
+  Maßen in mm, Ansichten (vorne/oben/rechts/schräg), Z-oben-Umschalter für CAD-Dateien,
+  Screenshot nach `refs/`. Jede abgeschlossene Dateiänderung (auch ein Befehl) des Agenten
+  baut neu und lädt den Viewer, die Kamera bleibt stehen.
+- **Iterieren:** Teil im Viewer anklicken – Name, Mittelpunkt und Größe gehen mit der nächsten
+  Nachricht mit. `export const params` erscheint als Regler; verstellte Werte bauen sofort neu
+  und gehen mit der nächsten Nachricht an den Agenten. 1–4 Varianten, Vergleich nebeneinander,
+  „Übernehmen“, Versionen nach jedem Turn (neben der aktuellen ansehen, wiederherstellen),
+  Bilder als Vorlage, Baufehler mit „Beheben lassen“.
+- **Übergabe:** „An Session übergeben“ kopiert das Modell als GLB oder STL ins Projekt
+  (Standard `public/models/<name>.glb`), Quellcode und Notizen nach `.brise/3d/<name>/` und
+  startet eine Coding-Session mit Einbindungsauftrag (3D-Lösung des Projekts finden,
+  Maßstab mm → m, Ladezustand, Akzeptanzkriterien) und dem Vorschaubild. Design und 3D nutzen
+  dafür denselben Mechanismus (`lib/handoff.ts`).
+
+## Vernetzung: Code, Design und 3D
+
+Jede Session (auch Coding-Sessions) bekommt im MCP-Server `brise-app` Zugriff auf Designs
+und 3D-Modelle:
+
+| Werkzeug | Was es tut |
+|---|---|
+| `list_designs`, `list_models` | Designs bzw. Modelle mit ID, Stand, Versionen, erzeugten Dateien |
+| `read_design(design)` | `notes.md`, Dateien, Haupt-HTML und das letzte Vorschaubild **als Bild** |
+| `read_model(model)` | `notes.md`, Maße, Teile, Quellcode, Dateien und das Vorschaubild **als Bild** |
+| `export_design(design, target?)` | Design ins Projekt kopieren (Standard `.brise/design/<name>/`) |
+| `export_model(model, format?, target?)` | GLB/STL/OBJ/3MF bzw. Quellcode ins Projekt (Standard `public/models/<name>.glb`) |
+
+**Delegieren** läuft über die Master-Session: `start_session(title, task, mode: "3d")` bzw.
+`mode: "design"` legt ein neues Modell bzw. Design an und startet dessen Session mit dem
+Auftrag (Karte zur Bestätigung, Grenzen und Budget wie bei Untersessions). Die Session
+steht in der Seitenleiste unter der Master-Session; Klick öffnet sie im 3D- bzw.
+Design-Modus. Vor dem Turn-Ende baut Brise das Modell im Hintergrund (inklusive Maße und
+Vorschaubild) und legt eine Version an. Die Rückmeldung nennt die ID; die Master-Session
+holt das Ergebnis mit `read_model` und `export_model` ins Projekt. `send_message` schickt
+Korrekturen, `merge_session` gibt es dafür nicht.
 
 ## Selbstanpassung per Chat
 

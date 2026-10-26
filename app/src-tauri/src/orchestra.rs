@@ -85,6 +85,10 @@ pub struct Sub {
     pub branch: Option<String>,
     pub base: Option<String>,
     pub worktree: bool,
+    /// "code" (leer), "design" oder "3d" (ADR 0007).
+    pub mode: String,
+    /// Design- bzw. Modell-ID bei mode design/3d.
+    pub item: Option<String>,
     pub status: Status,
     pub stop_reason: Option<String>,
     pub report: Option<String>,
@@ -106,6 +110,8 @@ pub struct Proposal {
     pub backend: String,
     pub model: Option<String>,
     pub worktree: bool,
+    /// "code" (leer), "design" oder "3d" (ADR 0007).
+    pub mode: String,
     /// open, started, here, dismissed, failed
     pub state: String,
     pub session: Option<String>,
@@ -390,6 +396,25 @@ fn own_sub(caller: &str, args: &Value) -> CmdResult<Sub> {
     .ok_or_else(|| format!("Keine Untersession „{id}“ dieser Master-Session (siehe list_sessions)"))
 }
 
+/// Art der Untersession: Code (Worktree, Merge) oder Design bzw. 3D (Ergebnis im Datenordner).
+fn mode_arg(args: &Value) -> CmdResult<String> {
+    match args["mode"].as_str().map(str::trim).unwrap_or("") {
+        "" | "code" => Ok(String::new()),
+        "design" => Ok("design".into()),
+        "3d" => Ok("3d".into()),
+        other => Err(format!("Unbekannter mode „{other}“ – erlaubt: code, design, 3d")),
+    }
+}
+
+/// Anzeigename der Art.
+fn mode_label(mode: &str) -> &'static str {
+    match mode {
+        "design" => "Design-Session",
+        "3d" => "3D-Session",
+        _ => "Untersession",
+    }
+}
+
 fn str_arg(args: &Value, key: &str) -> Option<String> {
     args[key].as_str().map(str::trim).filter(|s| !s.is_empty()).map(str::to_string)
 }
@@ -401,9 +426,11 @@ async fn start_session(caller: &str, cwd: &str, args: &Value) -> CmdResult<Strin
     let info = call_ui("info", json!({ "session": caller })).await?;
     let master_cwd = info["cwd"].as_str().filter(|c| !c.is_empty()).unwrap_or(cwd).to_string();
     let backend = str_arg(args, "backend").or_else(|| info["backend"].as_str().map(str::to_string)).unwrap_or_else(|| "vibe".into());
-    let model = str_arg(args, "model");
+    let mode = mode_arg(args)?;
+    // Design- und 3D-Sessions laufen wie im jeweiligen Modus über Vibe, ohne Worktree.
+    let (backend, model) = if mode.is_empty() { (backend, str_arg(args, "model")) } else { ("vibe".to_string(), None) };
     let p = prefs();
-    let worktree = args["worktree"].as_bool().unwrap_or(p.worktree);
+    let worktree = mode.is_empty() && args["worktree"].as_bool().unwrap_or(p.worktree);
     check_start(&backend, model.as_deref())?;
     let proposal = Proposal {
         id: format!("p{}", random_hex(6)),
@@ -415,6 +442,7 @@ async fn start_session(caller: &str, cwd: &str, args: &Value) -> CmdResult<Strin
         backend,
         model,
         worktree,
+        mode,
         state: "open".into(),
         created: now_ms(),
         ..Default::default()
@@ -428,10 +456,13 @@ async fn start_session(caller: &str, cwd: &str, args: &Value) -> CmdResult<Strin
         ));
     }
     let s = launch(&proposal.id).await?;
-    Ok(format!("Untersession „{}“ gestartet: {}{}. Du bekommst eine Notiz, wenn sie ihren Turn beendet – bis dahin weiterarbeiten oder den Turn beenden, nicht mit wait warten.", s.title, s.id, branch_note(&s)))
+    Ok(format!("{} „{}“ gestartet: {}{}. Du bekommst eine Notiz, wenn sie ihren Turn beendet – bis dahin weiterarbeiten oder den Turn beenden, nicht mit wait warten.", mode_label(&s.mode), s.title, s.id, branch_note(&s)))
 }
 
 fn branch_note(s: &Sub) -> String {
+    if let Some(item) = &s.item {
+        return format!(" ({} {item} im {}-Modus)", if s.mode == "3d" { "Modell" } else { "Design" }, if s.mode == "3d" { "3D" } else { "Design" });
+    }
     match (&s.branch, &s.base) {
         (Some(b), Some(base)) => format!(" (Worktree {}, Branch {b} von {base})", s.cwd),
         (Some(b), None) => format!(" (Worktree {}, Branch {b})", s.cwd),
@@ -474,6 +505,18 @@ fn repo_dir_name(repo: &Path) -> String {
 /// Rahmen vor dem Auftrag einer Untersession.
 fn sub_prompt(p: &Proposal, master_title: &str) -> String {
     let mut out = format!("[Brise · Untersession der Master-Session „{master_title}“]\n");
+    if !p.mode.is_empty() {
+        out.push_str(&format!(
+            "Die Session „{master_title}“ arbeitet in einem Code-Projekt ({}) und braucht von dir {}. Arbeite nur in deinem Arbeitsordner; \
+             die Master-Session übernimmt das Ergebnis selbst ins Projekt. Beende deinen Turn mit einem kurzen Bericht: was entstanden ist, {}offene Punkte. \
+             Warte danach nicht mit wait auf Nachrichten – Rückfragen und Korrekturen kommen als neue Nachricht.\n\nAuftrag:\n",
+            p.master_cwd,
+            if p.mode == "3d" { "ein 3D-Modell" } else { "ein Design" },
+            if p.mode == "3d" { "Maße, Teile, " } else { "Aufbau, Zustände, " }
+        ));
+        out.push_str(&p.task);
+        return out;
+    }
     match (&p.branch, &p.cwd) {
         (Some(branch), Some(cwd)) => {
             out.push_str(&format!(
@@ -528,6 +571,7 @@ async fn launch(proposal: &str) -> CmdResult<Sub> {
             "backend": p.backend,
             "model": p.model,
             "title": p.title,
+            "mode": p.mode,
             "prompt": sub_prompt(&launched, &launched.master_title),
         }),
     )
@@ -536,7 +580,7 @@ async fn launch(proposal: &str) -> CmdResult<Sub> {
         Ok(r) => {
             let id = r["sessionId"].as_str().ok_or("Die Oberfläche hat keine Session-ID geliefert")?.to_string();
             // Meist hat die Oberfläche die Session schon über `orch_register` eingetragen.
-            register(&p.id, &id)
+            register(&p.id, &id, r["item"].as_str())
         }
         Err(e) => {
             // Kam die Session doch noch an (orch_register), ist der Vorschlag gestartet.
@@ -564,9 +608,12 @@ async fn launch(proposal: &str) -> CmdResult<Sub> {
     }
 }
 
-fn register(proposal: &str, session: &str) -> CmdResult<Sub> {
+fn register(proposal: &str, session: &str, item: Option<&str>) -> CmdResult<Sub> {
     with_book(true, |b| {
-        if let Some(s) = b.subs.iter().find(|s| s.id == session) {
+        if let Some(s) = b.subs.iter_mut().find(|s| s.id == session) {
+            if s.item.is_none() {
+                s.item = item.map(str::to_string);
+            }
             return Ok(s.clone());
         }
         let p = b.proposals.iter_mut().find(|x| x.id == proposal).ok_or("Vorschlag nicht gefunden")?;
@@ -585,6 +632,8 @@ fn register(proposal: &str, session: &str) -> CmdResult<Sub> {
             branch: p.branch.clone(),
             base: p.base.clone(),
             worktree: p.branch.is_some(),
+            mode: p.mode.clone(),
+            item: item.map(str::to_string),
             status: Status::Starting,
             created: now,
             updated: now,
@@ -597,8 +646,8 @@ fn register(proposal: &str, session: &str) -> CmdResult<Sub> {
 
 /// Die Oberfläche hat die Session angelegt – eintragen, bevor der erste Prompt läuft.
 #[tauri::command]
-pub fn orch_register(proposal: String, session: String) -> CmdResult<Sub> {
-    register(&proposal, &session)
+pub fn orch_register(proposal: String, session: String, item: Option<String>) -> CmdResult<Sub> {
+    register(&proposal, &session, item.as_deref())
 }
 
 #[derive(Default)]
@@ -643,13 +692,14 @@ fn list_text(caller: &str) -> String {
         .iter()
         .map(|s| {
             format!(
-                "- {} · „{}“ · {} · {}{}{}",
+                "- {} · „{}“ · {} · {}{}{}{}",
                 s.id,
                 s.title,
                 s.status.label(),
+                if s.mode.is_empty() { String::new() } else { format!("{} · ", mode_label(&s.mode)) },
                 s.backend,
                 s.model.as_deref().map(|m| format!("/{m}")).unwrap_or_default(),
-                s.branch.as_deref().map(|b| format!(" · Branch {b}")).unwrap_or_default()
+                s.branch.as_deref().map(|b| format!(" · Branch {b}")).or_else(|| s.item.as_deref().map(|i| format!(" · {i}"))).unwrap_or_default()
             )
         })
         .collect();
@@ -668,6 +718,9 @@ fn get_text(caller: &str, args: &Value) -> CmdResult<String> {
         format!("Ordner: {}", s.cwd),
         format!("Turns: {}", s.turns),
     ];
+    if let Some(note) = result_hint(&s) {
+        out.push(note);
+    }
     if let Some(g) = git_info(&s) {
         out.push(git_line(&s, &g));
         if !g.commits.is_empty() {
@@ -720,6 +773,9 @@ async fn stop_session(caller: &str, args: &Value) -> CmdResult<String> {
 
 async fn merge_session(caller: &str, args: &Value) -> CmdResult<String> {
     let s = own_sub(caller, args)?;
+    if !s.mode.is_empty() {
+        return Err(result_hint(&s).unwrap_or_else(|| "Design- und 3D-Sessions haben keinen Branch zum Mergen.".into()));
+    }
     let branch = s.branch.clone().ok_or("Diese Untersession arbeitet ohne eigenen Branch – nichts zu mergen.")?;
     if s.status == Status::Merged {
         return Err("Schon gemerged.".into());
@@ -754,6 +810,15 @@ async fn merge_session(caller: &str, args: &Value) -> CmdResult<String> {
         text.push_str(&format!(" Achtung: {} nicht committete Datei(en) im Worktree – der Merge wird so abgelehnt.", g.dirty.len()));
     }
     Ok(text)
+}
+
+/// Bei Design- und 3D-Sessions: wo das Ergebnis liegt und wie die Master-Session es übernimmt.
+fn result_hint(s: &Sub) -> Option<String> {
+    let item = s.item.as_deref()?;
+    Some(match s.mode.as_str() {
+        "3d" => format!("Ergebnis: 3D-Modell {item}. Ansehen mit read_model(\"{item}\") (Maße, Teile, Bild), ins Projekt übernehmen mit export_model(\"{item}\", format: glb|stl|source)."),
+        _ => format!("Ergebnis: Design {item}. Ansehen mit read_design(\"{item}\") (Beschreibung, HTML, Bild), ins Projekt übernehmen mit export_design(\"{item}\")."),
+    })
 }
 
 // ---------- Notizen an die Master-Session ----------
@@ -824,12 +889,15 @@ pub fn orch_status(session: String, status: Status, report: Option<String>, stop
         (_, Some("max_tokens" | "max_turn_requests")) => "hat ein Limit erreicht",
         _ => "ist fertig",
     };
-    let mut text = format!("[Brise · Rückmeldung] Untersession „{}“ ({}) {state}.", s.title, s.id);
+    let mut text = format!("[Brise · Rückmeldung] {} „{}“ ({}) {state}.", mode_label(&s.mode), s.title, s.id);
     if let Some(g) = git_info(&s) {
         text.push('\n');
         text.push_str(&git_line(&s, &g));
     }
     text.push_str(&format!("\nBericht:\n{}", s.report.as_deref().unwrap_or("(kein Text)")));
+    if let Some(hint) = result_hint(&s) {
+        text.push_str(&format!("\n{hint}"));
+    }
     text.push_str(&format!("\n{}", still_active(&s.master, &s.id)));
     if s.branch.is_some() && status == Status::Done {
         text.push_str(" Prüfe das Ergebnis (get_session, Diff im Worktree) und bitte mit merge_session um die Freigabe zum Mergen – oder schicke mit send_message Korrekturen.");
@@ -845,8 +913,9 @@ pub async fn orch_accept(proposal: String) -> CmdResult<Note> {
         Ok(s) => Ok(Note {
             master: p.master,
             text: format!(
-                "[Brise · Untersessions] Der Nutzer hat „{}“ als eigene Session gestartet: {} ({}{}){}. Du bekommst eine Notiz, wenn sie ihren Turn beendet.",
+                "[Brise · Untersessions] Der Nutzer hat „{}“ als eigene {} gestartet: {} ({}{}){}. Du bekommst eine Notiz, wenn sie ihren Turn beendet.",
                 s.title,
+                if s.mode.is_empty() { "Session" } else { mode_label(&s.mode) },
                 s.id,
                 s.backend,
                 s.model.as_deref().map(|m| format!(", {m}")).unwrap_or_default(),
@@ -969,7 +1038,9 @@ pub const MCP_INSTRUCTIONS: &str = "Master-Session: Größere Aufgaben kannst du
     (z. B. Vibe mit glm-5-3 für Code, claude für Reviews). Gib jeder einen vollständigen, eigenständigen Auftrag. \
     Brise schickt dir automatisch eine Notiz ([Brise · Rückmeldung]), sobald eine Untersession ihren Turn beendet, und startet damit einen neuen Turn. \
     Darum nie per Schleife abfragen und nicht mit wait warten, sondern weiterarbeiten oder den Turn beenden. Danach Ergebnis prüfen (get_session), bei Bedarf send_message, und zum Mergen merge_session: \
-    gemerged wird erst, wenn der Nutzer auf der Karte zustimmt.";
+    gemerged wird erst, wenn der Nutzer auf der Karte zustimmt. \
+    Mit mode: \"design\" bzw. \"3d\" startest du statt einer Code-Session eine Session im Design- bzw. 3D-Modus von Brise (UI-Entwürfe bzw. 3D-Modelle mit Live-Vorschau); \
+    deren Ergebnis holst du nach der Rückmeldung mit read_design/export_design bzw. read_model/export_model ins Projekt.";
 
 fn mcp_ready() -> bool {
     std::env::var("BRISE_ORCH_ADDR").is_ok_and(|a| !a.is_empty()) && std::env::var("BRISE_ORCH_PARENT").is_err() && check_enabled().is_ok()
@@ -994,7 +1065,13 @@ pub fn tools() -> Vec<Value> {
                     "task": { "type": "string", "description": "Vollständiger, eigenständiger Auftrag: Ziel, betroffene Dateien, was „fertig“ heißt, wie zu prüfen ist" },
                     "backend": { "type": "string", "description": "vibe, claude, codex oder gemini (Standard: Backend dieser Session)" },
                     "model": { "type": "string", "description": "Modell-Alias des Backends, z. B. glm-5-3 oder mistral-medium-3.5 bei Vibe (Standard: Einstellung des Backends)" },
-                    "worktree": { "type": "boolean", "description": "Eigener Git-Worktree und Branch (Standard: an)" }
+                    "worktree": { "type": "boolean", "description": "Eigener Git-Worktree und Branch (Standard: an)" },
+                    "mode": {
+                        "type": "string",
+                        "enum": ["code", "design", "3d"],
+                        "description": "code (Standard): Coding-Session im Projekt. design: Design-Session (HTML-Entwurf mit Live-Vorschau). \
+                            3d: 3D-Session (3D-Modell als Code mit Viewer, Ergebnis als GLB/STL). Bei design/3d ohne Worktree, Backend Vibe."
+                    }
                 },
                 "required": ["title", "task"]
             }
@@ -1087,6 +1164,20 @@ mod tests {
         let s = shorten("anfang mitte ende", 4);
         assert_eq!(s, "…ende");
         assert_eq!(shorten_start("Ein\nlanger   Titel", 9), "Ein lange…");
+    }
+
+    #[test]
+    fn design_and_3d_modes() {
+        assert_eq!(mode_arg(&json!({})).unwrap(), "");
+        assert_eq!(mode_arg(&json!({ "mode": "3d" })).unwrap(), "3d");
+        assert!(mode_arg(&json!({ "mode": "video" })).is_err());
+        let s = Sub { mode: "3d".into(), item: Some("m-abc".into()), ..Default::default() };
+        assert!(result_hint(&s).unwrap().contains("export_model(\"m-abc\""));
+        assert!(branch_note(&s).contains("m-abc"));
+        assert!(result_hint(&Sub::default()).is_none());
+        let p = Proposal { mode: "3d".into(), task: "Zahnrad mit 20 Zähnen".into(), master_cwd: "/p".into(), ..Default::default() };
+        let prompt = sub_prompt(&p, "Shop");
+        assert!(prompt.contains("ein 3D-Modell") && prompt.ends_with("Zahnrad mit 20 Zähnen") && !prompt.contains("Worktree"));
     }
 
     #[test]

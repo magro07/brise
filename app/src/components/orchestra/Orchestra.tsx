@@ -89,7 +89,7 @@ function ProposalCard({ p }: { p: Proposal }) {
         <span>·</span>
         <span className="inline-flex items-center gap-1">
           <GitBranch className="h-3 w-3" />
-          {p.worktree ? "eigener Worktree und Branch" : "im selben Ordner"}
+          {p.mode === "3d" ? "3D-Modus – neues Modell" : p.mode === "design" ? "Design-Modus – neues Design" : p.worktree ? "eigener Worktree und Branch" : "im selben Ordner"}
         </span>
       </div>
       <div className={clsx("whitespace-pre-wrap text-[0.9em] text-fg-2 selectable", long && !open && "line-clamp-4")}>{p.task}</div>
