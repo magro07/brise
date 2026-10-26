@@ -1,4 +1,5 @@
-import { ChevronRight, MoreHorizontal, PanelLeftOpen, PanelRight, Trash2 } from "lucide-react";
+import { ChevronRight, MoreHorizontal, PanelLeftOpen, PanelRight, SquareTerminal, Trash2 } from "lucide-react";
+import { shortcut } from "../../lib/platform";
 import { basename, useStore, type Session } from "../../lib/store";
 import { IconButton, Menu, MenuContent, MenuItem, MenuTrigger, Tip, clsx } from "../ui";
 import { PANEL_TABS, changedFiles, subagents } from "../panels/SidePanel";
@@ -6,6 +7,7 @@ import { PANEL_TABS, changedFiles, subagents } from "../panels/SidePanel";
 export function Header({ session }: { session?: Session }) {
   const project = useStore((s) => s.activeProject);
   const sidebarOpen = useStore((s) => s.sidebarOpen);
+  const terminalOpen = useStore((s) => s.terminalOpen);
   const panel = useStore((s) => s.panel);
   const { set, togglePanel, deleteSession, newDraft } = useStore.getState();
   const changes = changedFiles(session).length;
@@ -13,9 +15,9 @@ export function Header({ session }: { session?: Session }) {
   const badge: Record<string, number> = { changes, agents, tasks: session?.plan.length ?? 0 };
 
   return (
-    <header className="flex h-12 shrink-0 items-center gap-2 border-b border-line px-3" data-tauri-drag-region>
+    <header data-brise="header" className="flex h-12 shrink-0 items-center gap-2 border-b border-line px-3" data-tauri-drag-region>
       {!sidebarOpen && (
-        <IconButton label="Seitenleiste einblenden (Strg+B)" onClick={() => set({ sidebarOpen: true })}>
+        <IconButton label={`Seitenleiste einblenden (${shortcut("B")})`} onClick={() => set({ sidebarOpen: true })}>
           <PanelLeftOpen className="h-4 w-4" />
         </IconButton>
       )}
@@ -31,7 +33,7 @@ export function Header({ session }: { session?: Session }) {
       </div>
 
       <div className="flex items-center gap-0.5">
-        {PANEL_TABS.map((t) => (
+        {!panel && PANEL_TABS.map((t) => (
           <Tip key={t.id} label={t.label}>
             <button
               onClick={() => togglePanel(t.id)}
@@ -46,7 +48,10 @@ export function Header({ session }: { session?: Session }) {
             </button>
           </Tip>
         ))}
-        <IconButton label="Detailpanel (Strg+J)" active={!!panel} onClick={() => togglePanel()}>
+        <IconButton label={`Terminal (${shortcut("ö")})`} active={terminalOpen} onClick={() => set({ terminalOpen: !terminalOpen })}>
+          <SquareTerminal className="h-4 w-4" />
+        </IconButton>
+        <IconButton label={`Detailpanel (${shortcut("J")})`} active={!!panel} onClick={() => togglePanel()}>
           <PanelRight className="h-4 w-4" />
         </IconButton>
         {session && !session.readOnly && (

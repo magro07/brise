@@ -22,7 +22,36 @@ src-tauri/src/
   rpc.rs                 JSON-RPC über stdio
   agent.rs               ACP-Commands, Event-Weiterleitung, Login, fs-Handler
   config.rs              config.toml lesen/schreiben (toml_edit, mit Backup), Dateien, Bilder
+  credentials.rs         Mistral-Key prüfen/speichern (Schlüsselbund wie Vibe, sonst .env)
+  installer.rs           lädt uv und installiert Vibe in Brises Datenordner
+  embeddings.rs          Projektindex + semantische Suche, MCP-Server-Modus
+  models.rs              Mistral-Modellkatalog, Modelle in config.toml, Startprüfung
+  skills.rs              mitgelieferte Skills installieren, Skill-Liste
+  assist.rs              Auto-Modellwahl, personalisierte Vorschläge, Commit-Nachrichten
+  git.rs                 Git über die Kommandozeile, MinGit unter Windows
+  terminal.rs            eingebautes Terminal (PTY)
+  files.rs               Dateien für den Editor, externe Editoren (VS Code & Co.)
+  customize.rs           Selbstanpassung per Chat: MCP-Server brise-app, Live-Übernahme
+  meter.rs               Mikrofonpegel für die Wellen-Animation (cpal, nur Messung)
+  selftest.rs            `brise --self-test` für die CI auf allen Systemen
+src-tauri/resources/skills/   mitgelieferte Skills (Lizenzen und Quellen in NOTICE.md)
 ```
+
+## Erster Start ohne Vibe
+
+Ist kein Vibe installiert, bietet Brise „Mistral Vibe installieren“ an:
+
+1. Brise lädt das offizielle `uv` von GitHub (astral-sh/uv) und prüft die SHA-256-Summe.
+2. `uv tool install --python 3.13 mistral-vibe` installiert Vibe in Brises
+   Datenordner (`~/.local/share/Brise`, `%LOCALAPPDATA%\Brise`,
+   `~/Library/Application Support/Brise`). Python 3.13 bringt uv selbst mit.
+   Neuere Pythons scheitern an fehlenden fertigen Paketen.
+3. PATH und Systemdateien bleiben unverändert. Ein schon installiertes Vibe hat Vorrang.
+
+Danach kommt die Anmeldung: im Browser (Mistral-Konto, Kontingent des Plans) oder per
+eingefügtem Vibe-Key bzw. API-Key. Der Key wird gegen `GET /v1/models` geprüft und
+dort gespeichert, wo Vibe ihn selbst ablegt: im Schlüsselbund unter Dienst
+`ai.mistral.vibe`, Konto `MISTRAL_API_KEY`, ersatzweise in `$VIBE_HOME/.env`.
 
 ## Entwickeln
 
@@ -80,6 +109,18 @@ Umgebungsvariablen:
   - Die Liste dauerhaft erlaubter Befehle markiert Einträge mit Zugangsdaten und
     kann sie entfernen.
 - **Befehlspalette (Strg+K):** Sessions, Projekte und Aktionen durchsuchen.
+- **Sprache:** Mikrofon im Composer, Vibe transkribiert live mit Voxtral Realtime.
+  „Vorlesen“ an jeder Antwort fasst sie mit Voxtral TTS zusammen und liest sie vor,
+  auf Wunsch automatisch. Aufnahme und Wiedergabe übernimmt Vibe
+  (`_voice/*`-Erweiterungen von ACP).
+- **Embeddings und semantische Suche:**
+  - Reiter „Suche“ im Seitenpanel: indexiert das Projekt mit `codestral-embed`
+    (oder `mistral-embed`). Beim Aktualisieren werden nur geänderte Dateien neu
+    eingebettet. Die Suche findet Code nach Bedeutung, ein Treffer lässt sich als
+    `@Datei` anhängen.
+  - Für indexierte Projekte startet Brise sich selbst als MCP-Server
+    (`brise --mcp-search <ordner>`) und gibt ihn neuen Sessions mit. Vibe kann dann
+    `semantic_code_search` als Werkzeug nutzen.
 - Hell- und Dunkelmodus, einstellbare Schriftgröße, Benachrichtigung, wenn eine
   Session im Hintergrund fertig wird.
 
@@ -87,10 +128,69 @@ Beim Öffnen eines Projekts legt Brise im Hintergrund schon eine leere Session a
 So stehen Modell und Denkstufe vor dem ersten Prompt bereit. Vibe speichert
 Sessions erst nach dem ersten Turn, leere tauchen also nirgends auf.
 
+## Modelle, Skills, Werkzeuge
+
+- **Modelle:** Vibe selbst bietet nur Mistral Medium 3.5 an. Bei jedem Start trägt Brise
+  Mistral Large 4 und GLM-5.3 in Vibes `config.toml` ein (`[[models]]`), falls sie fehlen.
+  Außerdem gleicht Brise mit Mistrals Modellkatalog ab und meldet neue Modelle per Banner.
+  Unter Einstellungen → Modelle lassen sich Katalogmodelle und eigene Modell-IDs hinzufügen
+  oder entfernen.
+- **Auto-Modellwahl:** „Auto“ in der Modellwahl. Mistral Small stuft jede Aufgabe als
+  einfach, normal oder komplex ein. Ohne Netz greift eine Heuristik. Brise setzt dann das
+  zugeordnete Modell (Standard: GLM-5.3 Flash, Medium 3.5, Large 4). Bei Bildern nimmt
+  Brise ein Modell, das Bilder versteht. Unter jeder Nachricht steht die Wahl.
+- **Skills:** Brise liefert reverse-engineer-anything (rea), sechs ponytail-Skills,
+  gauntlet-loop, frontend-design, webapp-testing, mcp-builder und skill-creator mit.
+  Bei jedem Start kopiert Brise sie in den Datenordner und trägt diesen in Vibes
+  `skill_paths` ein. Einzelne Skills lassen sich abschalten (`disabled_skills`). Die
+  REA-Werkzeuge laufen als MCP-Server über `npx rea-agents mcp`, wenn Node.js da ist.
+- **Kontext-Aufschlüsselung:** Die Summe kommt exakt von Vibe. Brise schätzt die
+  Anteile (etwa 3,6 Zeichen pro Token): System und Werkzeuge, Skills, Projektkontext,
+  Nachrichten, Antworten, Gedankengang, Werkzeug-Ergebnisse, Subagents, freier Platz.
+  Dazu kommen die größten Einzelposten.
+- **Terminal (Strg+ö):** echte Shell im Projektordner, mehrere Tabs, Höhe ziehbar.
+- **Git:** Branch wechseln oder anlegen, Dateien vormerken oder verwerfen, Commit mit
+  KI-Nachricht, Pull (nur Fast-Forward), Push mit Rückfrage, Verlauf. Unter Windows
+  installiert Brise bei Bedarf MinGit.
+- **Editor:** Monaco (der Editor von VS Code) mit Datei-Explorer, Tabs, Strg+S und
+  Vergleich mit dem letzten Commit. „Öffnen in“ für VS Code, VSCodium, Cursor, Zed
+  oder IntelliJ, falls installiert.
+- **Personalisierte Vorschläge:** Auf der Startseite eines Projekts formuliert Mistral
+  Small vier Aufgaben aus Manifest, README, Git-Status, Commits, TODOs und den letzten
+  Sessions. Zwischengespeichert, bis sich der Git-Stand ändert oder 12 Stunden um sind.
+
+## Selbstanpassung per Chat
+
+Jede Session bekommt den MCP-Server `brise-app` (`brise --mcp-app`). Seine Werkzeuge:
+
+| Werkzeug | Was es tut |
+|---|---|
+| `brise_get_settings` | aktuelle Einstellungen, eigenes CSS, Schnellaktionen lesen |
+| `brise_set_setting` | Theme, Schriftgröße, Akzentfarbe, Sprache, Auto-Modellwahl, Modell je Stufe |
+| `brise_set_custom_css` | eigenes CSS (Variablen wie `--accent`, Bereiche über `[data-brise="…"]`) |
+| `brise_set_quick_actions` | eigene Karten auf der Startseite |
+| `brise_set_vibe_config` | Einträge in Vibes `config.toml`, Freigaben abschalten ausgenommen |
+
+Die Werkzeuge schreiben nach `<Datenordner>/custom/`. Brise beobachtet den Ordner
+und übernimmt Änderungen sofort. Der mitgelieferte Skill `brise-anpassen` erklärt
+Vibe, wann und wie er die Werkzeuge nutzt.
+
+## Plattformen
+
+- **macOS:** Brise übernimmt beim Start den PATH der Login-Shell, damit Vibe, Git,
+  Node und VS Code auch beim Start aus dem Finder gefunden werden. `Info.plist`
+  enthält `NSMicrophoneUsageDescription`, sonst verweigert macOS Brise und Vibe das
+  Mikrofon.
+- **Windows:** Unterprozesse starten ohne Konsolenfenster. MCP-Server bekommen die
+  nötigen Systemvariablen (`SystemRoot`, `TEMP` …). Fehlt Git, installiert Brise
+  MinGit. Der Mistral-Key liegt in der Windows-Anmeldeinformationsverwaltung, dort
+  wo Vibe ihn auch sucht.
+- **Linux:** getestet unter Fedora 44 (GNOME/Wayland). Zum Bauen sind WebKitGTK 4.1 und
+  die ALSA-Header nötig.
+
 ## Noch offen
 
 - Rückfragen des Agenten (`elicitation`)
-- automatische Vibe-Installation
 - Git-Panel mit Commit
 - Worktrees pro Session
 - eingebettetes Terminal

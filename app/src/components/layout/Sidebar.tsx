@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { shortcut } from "../../lib/platform";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import {
   ChevronRight,
@@ -53,7 +54,8 @@ export function Sidebar() {
       map.set(s.cwd, list);
     }
     for (const s of index) {
-      if (seen.has(s.sessionId)) continue;
+      // Ohne Titel = nie benutzt (z. B. eine vorbereitete Session).
+      if (seen.has(s.sessionId) || !s.title) continue;
       const list = map.get(s.cwd) ?? [];
       list.push({ id: s.sessionId, title: s.title ?? "Unbenannte Session", updatedAt: s.updatedAt });
       map.set(s.cwd, list);
@@ -65,21 +67,21 @@ export function Sidebar() {
   const q = query.trim().toLowerCase();
 
   return (
-    <aside className="flex h-full w-[272px] shrink-0 flex-col border-r border-line bg-sidebar">
+    <aside data-brise="sidebar" className="flex h-full w-[272px] shrink-0 flex-col border-r border-line bg-sidebar">
       <div className="flex h-12 items-center gap-2 px-3" data-tauri-drag-region>
         <Logo size={22} />
         <span className="font-semibold tracking-tight">Brise</span>
         <div className="flex-1" />
-        <IconButton label="Seitenleiste ausblenden (Strg+B)" onClick={() => set({ sidebarOpen: false })}>
+        <IconButton label={`Seitenleiste ausblenden (${shortcut("B")})`} onClick={() => set({ sidebarOpen: false })}>
           <PanelLeftClose className="h-4 w-4" />
         </IconButton>
       </div>
 
       <div className="space-y-0.5 px-2">
-        <SideButton icon={<SquarePen className="h-4 w-4" />} onClick={() => newDraft()} hint="Strg+N">
+        <SideButton icon={<SquarePen className="h-4 w-4" />} onClick={() => newDraft()} hint={shortcut("N")}>
           Neue Session
         </SideButton>
-        <SideButton icon={<Search className="h-4 w-4" />} onClick={() => set({ paletteOpen: true })} hint="Strg+K">
+        <SideButton icon={<Search className="h-4 w-4" />} onClick={() => set({ paletteOpen: true })} hint={shortcut("K")}>
           Suchen und Befehle
         </SideButton>
       </div>
@@ -198,7 +200,7 @@ export function Sidebar() {
           icon={<Settings className="h-4 w-4" />}
           onClick={() => setView(view === "settings" ? "chat" : "settings")}
           active={view === "settings"}
-          hint="Strg+,"
+          hint={shortcut(",")}
         >
           Einstellungen
         </SideButton>

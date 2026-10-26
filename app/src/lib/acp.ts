@@ -11,6 +11,7 @@ export interface AuthStatus {
 
 export interface ConnectInfo {
   generation: number;
+  newModels?: CatalogModel[] | null;
   agentPath: string;
   init: {
     agentInfo?: { title?: string; version?: string };
@@ -76,8 +77,9 @@ export const api = {
   authStatus: () => invoke<AuthStatus>("auth_status"),
   login: () => invoke<AuthStatus>("login"),
   signOut: () => invoke<AuthStatus>("sign_out"),
-  newSession: (cwd: string) => invoke<SessionSetup & { sessionId: string }>("new_session", { cwd }),
-  loadSession: (cwd: string, sessionId: string) => invoke<SessionSetup>("load_session", { cwd, sessionId }),
+  newSession: (cwd: string, search: boolean, rea: boolean) => invoke<SessionSetup & { sessionId: string }>("new_session", { cwd, search, rea }),
+  loadSession: (cwd: string, sessionId: string, search: boolean, rea: boolean) =>
+    invoke<SessionSetup>("load_session", { cwd, sessionId, search, rea }),
   listSessions: (cwd?: string) => invoke<{ sessions?: SessionSummary[] }>("list_sessions", { cwd: cwd ?? null }),
   deleteSession: (sessionId: string) => invoke("delete_session", { sessionId }),
   prompt: (sessionId: string, prompt: ContentBlock[]) => invoke<PromptResult>("prompt", { sessionId, prompt }),
@@ -91,7 +93,64 @@ export const api = {
   writeConfig: (key: string[], value: unknown) => invoke<void>("write_config_value", { key, value }),
   listFiles: (cwd: string) => invoke<string[]>("list_project_files", { cwd }),
   readImage: (path: string) => invoke<[string, string]>("read_image", { path }),
+  saveApiKey: (key: string) => invoke<{ valid: boolean; message: string; models: number }>("save_api_key", { key }),
+  apiKeyInfo: () => invoke<{ present: boolean; hint: string | null }>("api_key_info"),
+  installVibe: () => invoke<string>("install_vibe"),
+  upgradeVibe: () => invoke<void>("upgrade_vibe"),
+  installInfo: () => invoke<{ path: string | null; managed: boolean; dataDir: string }>("install_info"),
+  indexProject: (cwd: string, model: string) => invoke<IndexStatus>("index_project", { cwd, model }),
+  indexStatus: (cwd: string) => invoke<IndexStatus>("index_status", { cwd }),
+  deleteIndex: (cwd: string) => invoke<void>("delete_index", { cwd }),
+  semanticSearch: (cwd: string, query: string, limit?: number) => invoke<SearchHit[]>("semantic_search", { cwd, query, limit: limit ?? null }),
+  modelCatalog: () => invoke<CatalogModel[]>("model_catalog"),
+  configuredModels: () => invoke<{ alias: string; name: string; provider: string; displayName: string | null }[]>("configured_models"),
+  addModel: (name: string, alias?: string, displayName?: string) => invoke<void>("add_model", { name, alias: alias ?? null, displayName: displayName ?? null }),
+  removeModel: (alias: string) => invoke<void>("remove_model", { alias }),
+  startupCheck: () => invoke<{ changed: boolean; newModels: CatalogModel[] }>("startup_check"),
+  listSkills: (cwd?: string) => invoke<SkillInfo[]>("list_skills", { cwd: cwd ?? null }),
+  npxAvailable: () => invoke<boolean>("npx_available"),
+  classifyTask: (text: string, history?: string) => invoke<{ level: "simple" | "standard" | "complex"; reason: string }>("classify_task", { text, history: history ?? null }),
+  projectSuggestions: (cwd: string, recent: string[], refresh = false) => invoke<Suggestion[]>("project_suggestions", { cwd, recent, refresh }),
+  commitMessage: (cwd: string) => invoke<string>("commit_message", { cwd }),
+  gitStatus: (cwd: string) => invoke<GitStatus>("git_status", { cwd }),
+  gitDiff: (cwd: string, path: string, staged: boolean) => invoke<string>("git_diff", { cwd, path, staged }),
+  gitShowHead: (cwd: string, path: string) => invoke<string>("git_show_head", { cwd, path }),
+  git: (cwd: string, action: string, paths?: string[], arg?: string) => invoke<string>("git_run", { cwd, action, paths: paths ?? null, arg: arg ?? null }),
+  gitLog: (cwd: string, limit = 30) => invoke<{ hash: string; author: string; date: string; subject: string }[]>("git_log", { cwd, limit }),
+  gitBranches: (cwd: string) => invoke<string[]>("git_branches", { cwd }),
+  installGit: () => invoke<void>("install_git"),
+  gitAvailable: () => invoke<boolean>("git_available"),
+  termOpen: (cwd: string, cols: number, rows: number) => invoke<number>("term_open", { cwd, cols, rows }),
+  termWrite: (id: number, data: string) => invoke<void>("term_write", { id, data }),
+  termResize: (id: number, cols: number, rows: number) => invoke<void>("term_resize", { id, cols, rows }),
+  termClose: (id: number) => invoke<void>("term_close", { id }),
+  readFile: (cwd: string, path: string) => invoke<string>("read_project_file", { cwd, path }),
+  writeFile: (cwd: string, path: string, content: string) => invoke<void>("write_project_file", { cwd, path, content }),
+  externalEditors: () => invoke<{ id: string; name: string }[]>("external_editors"),
+  openExternal: (editor: string, cwd: string, path?: string, line?: number) =>
+    invoke<void>("open_in_external", { editor, cwd, path: path ?? null, line: line ?? null }),
+  meterStart: () => invoke<void>("meter_start"),
+  meterStop: () => invoke<void>("meter_stop"),
+  readCustomization: () => invoke<{ settings: Record<string, unknown>; css: string }>("read_customization"),
+  syncPrefs: (prefs: unknown) => invoke<void>("sync_prefs", { prefs }),
+  ext: <T = Record<string, unknown>>(method: string, params: Record<string, unknown> = {}) => invoke<T>("ext", { method, params }),
 };
+
+export interface IndexStatus {
+  indexed: boolean;
+  model: string | null;
+  files: number;
+  chunks: number;
+  updatedAt: number | null;
+}
+
+export interface SearchHit {
+  path: string;
+  start: number;
+  end: number;
+  score: number;
+  snippet: string;
+}
 
 export interface JsonSchema {
   type?: string | string[];
@@ -104,4 +163,39 @@ export interface JsonSchema {
   anyOf?: JsonSchema[];
   $ref?: string;
   $defs?: Record<string, JsonSchema>;
+}
+
+export interface CatalogModel {
+  id: string;
+  description: string;
+  context: number;
+  vision: boolean;
+  tools: boolean;
+  reasoning: boolean;
+  aliases: string[];
+}
+
+export interface SkillInfo {
+  name: string;
+  description: string;
+  path: string;
+  source: "brise" | "user" | "project";
+  license: string | null;
+}
+
+export interface Suggestion {
+  title: string;
+  description: string;
+  prompt: string;
+  icon: string;
+}
+
+export interface GitStatus {
+  available: boolean;
+  isRepo: boolean;
+  branch: string | null;
+  upstream: string | null;
+  ahead: number;
+  behind: number;
+  files: { path: string; index: string; worktree: string }[];
 }

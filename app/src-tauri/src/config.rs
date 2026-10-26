@@ -47,47 +47,17 @@ pub fn read_config() -> CmdResult<ConfigFile> {
 
 /// Setzt `key` auf oberster Ebene oder als Pfad (`tools.bash.allowlist`).
 /// `value = null` entfernt den Eintrag, Vibe nimmt dann wieder seinen Standard.
-#[tauri::command]
-pub fn write_config_value(key: Vec<String>, value: Value) -> CmdResult<()> {
-    if key.is_empty() {
-        return Err("Leerer Schlüssel".into());
-    }
+/// Liest config.toml, lässt `f` sie ändern und schreibt nur, wenn sich etwas
+/// geändert hat. Vor dem ersten Schreiben legt Brise eine Sicherung an.
+pub fn edit_config(f: impl FnOnce(&mut DocumentMut) -> CmdResult<()>) -> CmdResult<bool> {
     let path = config_path()?;
     let original = std::fs::read_to_string(&path).unwrap_or_default();
     let mut doc: DocumentMut = original.parse().map_err(|e| format!("config.toml ist ungültig: {e}"))?;
-
-    let (last, parents) = key.split_last().expect("nicht leer");
-    let mut table = doc.as_table_mut();
-    for part in parents {
-        if !table.contains_key(part) {
-            table.insert(part, Item::Table(toml_edit::Table::new()));
-        }
-        table = table[part.as_str()].as_table_mut().ok_or_else(|| format!("{part} ist keine Tabelle"))?;
+    f(&mut doc)?;
+    let updated = doc.to_string();
+    if updated == original {
+        return Ok(false);
     }
-    match &value {
-        Value::Null => {
-            table.remove(last);
-        }
-        // Listen von Objekten als [[tabelle]] schreiben, wie Vibe es selbst tut.
-        Value::Array(items) if !items.is_empty() && items.iter().all(Value::is_object) => {
-            let mut array = toml_edit::ArrayOfTables::new();
-            for item in items {
-                let mut t = toml_edit::Table::new();
-                for (k, v) in item.as_object().expect("geprüft") {
-                    if !v.is_null() {
-                        t.insert(k, Item::Value(json_to_toml(v)?));
-                    }
-                }
-                array.push(t);
-            }
-            table.insert(last, Item::ArrayOfTables(array));
-        }
-        _ => {
-            table.insert(last, Item::Value(json_to_toml(&value)?));
-        }
-    }
-
-    // Einmalige Sicherung der Originaldatei, bevor Brise das erste Mal schreibt.
     let backup = path.with_extension("toml.brise-backup");
     if path.exists() && !backup.exists() {
         std::fs::copy(&path, &backup).map_err(|e| format!("Backup fehlgeschlagen: {e}"))?;
@@ -96,12 +66,60 @@ pub fn write_config_value(key: Vec<String>, value: Value) -> CmdResult<()> {
         std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     }
     let tmp = path.with_extension("toml.brise-tmp");
-    std::fs::write(&tmp, doc.to_string()).map_err(|e| e.to_string())?;
+    std::fs::write(&tmp, updated).map_err(|e| e.to_string())?;
     std::fs::rename(&tmp, &path).map_err(|e| e.to_string())?;
+    Ok(true)
+}
+
+/// Objekt als TOML-Tabelle (für Einträge in `[[…]]`).
+pub fn json_to_table(item: &Value) -> CmdResult<toml_edit::Table> {
+    let mut t = toml_edit::Table::new();
+    for (k, v) in item.as_object().ok_or("Objekt erwartet")? {
+        if !v.is_null() {
+            t.insert(k, Item::Value(json_to_toml(v)?));
+        }
+    }
+    Ok(t)
+}
+
+/// Setzt `key` auf oberster Ebene oder als Pfad (`tools.bash.allowlist`).
+/// `value = null` entfernt den Eintrag, Vibe nimmt dann wieder seinen Standard.
+#[tauri::command]
+pub fn write_config_value(key: Vec<String>, value: Value) -> CmdResult<()> {
+    if key.is_empty() {
+        return Err("Leerer Schlüssel".into());
+    }
+    edit_config(|doc| {
+        let (last, parents) = key.split_last().expect("nicht leer");
+        let mut table = doc.as_table_mut();
+        for part in parents {
+            if !table.contains_key(part) {
+                table.insert(part, Item::Table(toml_edit::Table::new()));
+            }
+            table = table[part.as_str()].as_table_mut().ok_or_else(|| format!("{part} ist keine Tabelle"))?;
+        }
+        match &value {
+            Value::Null => {
+                table.remove(last);
+            }
+            // Listen von Objekten als [[tabelle]] schreiben, wie Vibe es selbst tut.
+            Value::Array(items) if !items.is_empty() && items.iter().all(Value::is_object) => {
+                let mut array = toml_edit::ArrayOfTables::new();
+                for item in items {
+                    array.push(json_to_table(item)?);
+                }
+                table.insert(last, Item::ArrayOfTables(array));
+            }
+            _ => {
+                table.insert(last, Item::Value(json_to_toml(&value)?));
+            }
+        }
+        Ok(())
+    })?;
     Ok(())
 }
 
-fn json_to_toml(v: &Value) -> CmdResult<toml_edit::Value> {
+pub fn json_to_toml(v: &Value) -> CmdResult<toml_edit::Value> {
     Ok(match v {
         Value::Bool(b) => (*b).into(),
         Value::Number(n) if n.is_i64() => n.as_i64().unwrap().into(),

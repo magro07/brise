@@ -4,6 +4,7 @@
 import { create } from "zustand";
 import {
   api,
+  type CatalogModel,
   type AuthStatus,
   type ConfigOption,
   type ConnectInfo,
@@ -14,6 +15,7 @@ import {
   type SessionSummary,
 } from "./acp";
 import { load, save } from "./persist";
+import type { Suggestion } from "./acp";
 
 // ---------- Modell ----------
 
@@ -51,8 +53,14 @@ export interface ToolItem {
   };
 }
 
+export interface Routed {
+  model: string;
+  level: "simple" | "standard" | "complex";
+  reason: string;
+}
+
 export type Item =
-  | { type: "user"; id: string; text: string; attachments?: Attachment[] }
+  | { type: "user"; id: string; text: string; attachments?: Attachment[]; routed?: Routed }
   | { type: "assistant"; id: string; text: string }
   | { type: "thought"; id: string; text: string }
   | ToolItem
@@ -113,13 +121,42 @@ export interface Session {
 }
 
 export type Phase = "connecting" | "no-vibe" | "error" | "login" | "ready";
-export type PanelTab = "changes" | "context" | "agents" | "tasks";
+export type PanelTab = "changes" | "context" | "agents" | "tasks" | "search" | "git" | "files";
 export type Theme = "system" | "light" | "dark";
 
 export interface Prefs {
   theme: Theme;
   fontSize: number;
   notify: boolean;
+  /** Sprache für die Spracheingabe (Voxtral erkennt sie meist auch selbst). */
+  sttLanguage: string;
+  /** Antworten nach jedem Turn automatisch vorlesen. */
+  autoNarrate: boolean;
+  embedModel: string;
+  /** Vibe darf die semantische Suche als Werkzeug nutzen. */
+  agentSearch: boolean;
+  /** REA-Werkzeuge (Reverse Engineering) als MCP-Server mitgeben. */
+  rea: boolean;
+  /** Modell pro Prompt automatisch wählen. */
+  autoModel: boolean;
+  /** Welches Modell (Vibe-Alias) für welche Aufgabenstufe. */
+  routing: { simple: string; standard: string; complex: string };
+  /** Eigene Akzentfarbe (per Chat oder Einstellungen), null = Standard. */
+  accent: string | null;
+}
+
+export interface OpenFile {
+  path: string;
+  content: string;
+  saved: string;
+  /** Vergleich mit dem letzten Commit anzeigen. */
+  diff?: string | null;
+}
+
+export interface InstallState {
+  running: boolean;
+  lines: string[];
+  error?: string;
 }
 
 interface DraftConfig {
@@ -154,10 +191,38 @@ interface State {
   files: Record<string, string[]>;
   /** Im Hintergrund vorbereitete, noch leere Session je Projekt. */
   prepared: Record<string, string>;
+  install: InstallState;
+  recording: boolean;
+  /** Live-Transkript der laufenden Spracheingabe. */
+  transcript: string;
+  narration: { itemId: string | null; state: "idle" | "prep" | "speaking" };
+  indexing: Record<string, { done: number; total: number } | undefined>;
+  /** Text, den der Composer übernehmen soll (z. B. @Datei aus der Suche). */
+  composerInsert: { seq: number; text: string } | null;
+  newModels: CatalogModel[];
+  /** Eigene Schnellaktionen (per Chat angelegt). */
+  quickActions: Suggestion[];
+  terminalOpen: boolean;
+  editor: { files: OpenFile[]; active: string | null };
 }
 
 interface Actions {
   prepare(project: string): Promise<void>;
+  /** Vorbereitete Session verwerfen, z. B. weil jetzt ein Suchindex existiert. */
+  resetPrepared(project: string): void;
+  installVibe(): Promise<void>;
+  saveKey(key: string): Promise<{ valid: boolean; message: string }>;
+  startRecording(): Promise<void>;
+  stopRecording(): Promise<string>;
+  cancelRecording(): Promise<void>;
+  narrate(sessionId: string, itemId: string): Promise<void>;
+  stopNarration(): Promise<void>;
+  insertIntoComposer(text: string): void;
+  applyCustomization(c: { settings: Record<string, any>; css: string }): void;
+  openFile(path: string, diff?: boolean): Promise<void>;
+  closeFile(path: string): void;
+  saveFile(path: string): Promise<void>;
+  onNotification(method: string, params: any): void;
   connect(reuse?: boolean): Promise<void>;
   doLogin(): Promise<void>;
   signOut(): Promise<void>;
@@ -171,7 +236,7 @@ interface Actions {
   send(text: string, attachments: Attachment[]): Promise<void>;
   cancel(): Promise<void>;
   answerPermission(key: string, optionId: string | null): Promise<void>;
-  setOption(configId: string, value: string): Promise<void>;
+  setOption(configId: string, value: string, sessionId?: string): Promise<void>;
   loadFiles(cwd: string): Promise<string[]>;
   setView(view: State["view"], section?: string): void;
   togglePanel(tab?: PanelTab): void;
@@ -311,11 +376,69 @@ function applyFontSize(size: number) {
   document.documentElement.style.setProperty("--app-font-size", `${size}px`);
 }
 
+function applyAccent(accent: string | null) {
+  const root = document.documentElement.style;
+  if (accent) {
+    root.setProperty("--accent", accent);
+    root.setProperty("--accent-soft", `color-mix(in srgb, ${accent} 14%, var(--bg))`);
+  } else {
+    root.removeProperty("--accent");
+    root.removeProperty("--accent-soft");
+  }
+}
+
+function applyCss(css: string) {
+  let el = document.getElementById("brise-custom-css");
+  if (!el) {
+    el = document.createElement("style");
+    el.id = "brise-custom-css";
+    document.head.appendChild(el);
+  }
+  el.textContent = css;
+}
+
 // ---------- Store ----------
 
-const initialPrefs: Prefs = { theme: "system", fontSize: 14, notify: true, ...load<Partial<Prefs>>("prefs", {}) };
+const initialPrefs: Prefs = {
+  theme: "system",
+  fontSize: 14,
+  notify: true,
+  sttLanguage: "de",
+  autoNarrate: false,
+  embedModel: "codestral-embed",
+  agentSearch: true,
+  rea: true,
+  autoModel: true,
+  routing: { simple: "zai-glm-5-3-flash", standard: "mistral-medium-3.5", complex: "mistral-large-4" },
+  accent: null,
+  ...load<Partial<Prefs>>("prefs", {}),
+};
+
+/** Grobe Einstufung ohne Netz, falls die KI-Einstufung nicht antwortet. */
+function heuristicLevel(text: string): Routed["level"] {
+  const t = text.toLowerCase();
+  if (/(architektur|refactor|umbau|migr|sicherheit|security|performance|plan|design|warum.*fehler|debug|race|deadlock)/.test(t) || text.length > 1200) return "complex";
+  if (text.length < 140 && /(\?|erkl|was ist|wie heißt|umbenenn|format|tippfehler|typo)/.test(t)) return "simple";
+  return "standard";
+}
+
+/** Nimmt das gewünschte Modell, sonst das nächstbeste verfügbare. */
+function pickModel(level: Routed["level"], routing: Prefs["routing"], available: string[], needsVision: boolean): string | undefined {
+  const order: Record<Routed["level"], (keyof Prefs["routing"])[]> = {
+    simple: ["simple", "standard", "complex"],
+    standard: ["standard", "complex", "simple"],
+    complex: ["complex", "standard", "simple"],
+  };
+  const visionOk = (m: string) => !needsVision || !/glm-5-3(?!-flash)|codestral/.test(m);
+  for (const k of order[level]) {
+    const m = routing[k];
+    if (available.includes(m) && visionOk(m)) return m;
+  }
+  return available.find(visionOk);
+}
 applyTheme(initialPrefs.theme);
 applyFontSize(initialPrefs.fontSize);
+applyAccent(initialPrefs.accent);
 window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => applyTheme(useStore.getState().prefs.theme));
 
 let generation = 0;
@@ -350,12 +473,158 @@ export const useStore = create<State & Actions>((set, get) => {
     draft: {},
     files: {},
     prepared: {},
+    install: { running: false, lines: [] },
+    recording: false,
+    transcript: "",
+    narration: { itemId: null, state: "idle" },
+    indexing: {},
+    composerInsert: null,
+    newModels: [],
+    quickActions: [],
+    terminalOpen: false,
+    editor: { files: [], active: null },
+
+    async openFile(path, diff) {
+      const cwd = get().activeProject;
+      if (!cwd) return;
+      const open = get().editor.files.find((f) => f.path === path);
+      if (open && !diff) {
+        set((s) => ({ editor: { ...s.editor, active: path }, panel: "files", sidebarOpen: window.innerWidth >= 1400 && s.sidebarOpen }));
+        return;
+      }
+      try {
+        const content = await api.readFile(cwd, path);
+        const head = diff ? await api.gitShowHead(cwd, path).catch(() => "") : null;
+        set((s) => ({
+          panel: "files",
+          // Editor braucht Platz: in schmalen Fenstern die Seitenleiste einklappen.
+          sidebarOpen: window.innerWidth >= 1400 && s.sidebarOpen,
+          editor: {
+            active: path,
+            files: [...s.editor.files.filter((f) => f.path !== path), { path, content, saved: content, diff: head }],
+          },
+        }));
+      } catch (e) {
+        set({ error: String(e) });
+      }
+    },
+
+    closeFile(path) {
+      set((s) => {
+        const files = s.editor.files.filter((f) => f.path !== path);
+        return { editor: { files, active: s.editor.active === path ? (files[files.length - 1]?.path ?? null) : s.editor.active } };
+      });
+    },
+
+    async saveFile(path) {
+      const cwd = get().activeProject;
+      const file = get().editor.files.find((f) => f.path === path);
+      if (!cwd || !file) return;
+      await api.writeFile(cwd, path, file.content);
+      set((s) => ({ editor: { ...s.editor, files: s.editor.files.map((f) => (f.path === path ? { ...f, saved: f.content } : f)) } }));
+    },
+
+    resetPrepared(project) {
+      set((s) => {
+        const id = s.prepared[project];
+        const prepared = { ...s.prepared };
+        delete prepared[project];
+        const sessions = { ...s.sessions };
+        if (id && sessions[id] && sessions[id].items.length === 0) delete sessions[id];
+        return { prepared, sessions };
+      });
+      if (!get().activeSessionId) get().prepare(project);
+    },
+
+    async installVibe() {
+      set({ install: { running: true, lines: [] } });
+      try {
+        await api.installVibe();
+        set((s) => ({ install: { ...s.install, running: false } }));
+        await get().connect();
+      } catch (e) {
+        set((s) => ({ install: { ...s.install, running: false, error: String(e) } }));
+      }
+    },
+
+    async saveKey(key) {
+      const r = await api.saveApiKey(key);
+      if (r.valid) await get().connect();
+      return r;
+    },
+
+    async startRecording() {
+      // Vibe braucht für Sprache eine offene Session.
+      const project = get().activeProject;
+      if (!get().activeSessionId && project) await get().prepare(project);
+      set({ transcript: "" });
+      const r = await api.ext<{ ok: boolean; error?: string }>("voice/transcribeStart", { language: get().prefs.sttLanguage });
+      if (!r.ok) throw new Error(r.error ?? "Spracheingabe konnte nicht starten");
+      set({ recording: true });
+      // Nur für die Pegelanzeige; schlägt das fehl, läuft eine Ersatz-Animation.
+      api.meterStart().catch(() => {});
+    },
+
+    async stopRecording() {
+      api.meterStop().catch(() => {});
+      await api.ext("voice/transcribeStop");
+      // Letzte Textstücke kommen kurz nach dem Stopp.
+      await new Promise((r) => setTimeout(r, 400));
+      const text = get().transcript;
+      set({ recording: false, transcript: "" });
+      return text;
+    },
+
+    async cancelRecording() {
+      api.meterStop().catch(() => {});
+      await api.ext("voice/transcribeCancel");
+      set({ recording: false, transcript: "" });
+    },
+
+    async narrate(sessionId, itemId) {
+      const s = get().sessions[sessionId];
+      const idx = s?.items.findIndex((i) => i.id === itemId) ?? -1;
+      const item = s?.items[idx];
+      if (!s || !item || item.type !== "assistant") return;
+      const user = [...s.items.slice(0, idx)].reverse().find((i) => i.type === "user");
+      set({ narration: { itemId, state: "prep" } });
+      const r = await api.ext<{ ok: boolean; error?: string }>("voice/narrate", {
+        userMessage: user && user.type === "user" ? user.text : "",
+        assistantText: item.text,
+      });
+      if (!r.ok) {
+        set({ narration: { itemId: null, state: "idle" }, error: `Vorlesen fehlgeschlagen: ${r.error ?? "unbekannt"}` });
+      }
+    },
+
+    async stopNarration() {
+      await api.ext("voice/narrateCancel");
+      set({ narration: { itemId: null, state: "idle" } });
+    },
+
+    insertIntoComposer(text) {
+      set((s) => ({ composerInsert: { seq: (s.composerInsert?.seq ?? 0) + 1, text } }));
+    },
+
+    onNotification(method, params) {
+      const m = method.replace(/^_/, "");
+      if (m === "voice/transcriptionDelta") {
+        if (params?.error) set({ error: `Spracheingabe: ${params.error}`, recording: false });
+        else if (params?.text) set((s) => ({ transcript: s.transcript + params.text }));
+      } else if (m === "voice/narrationPrep") {
+        set((s) => ({ narration: { ...s.narration, state: "prep" } }));
+      } else if (m === "voice/narrationDone") {
+        set({ narration: { itemId: null, state: "idle" } });
+      } else if (m === "voice/narrationError") {
+        set({ narration: { itemId: null, state: "idle" }, error: `Vorlesen: ${params?.error ?? "fehlgeschlagen"}` });
+      }
+    },
 
     async prepare(project) {
       if (get().prepared[project] || get().phase !== "ready") return;
       set((s) => ({ prepared: { ...s.prepared, [project]: "…" } }));
       try {
-        const r = await api.newSession(project);
+        const r = await api.newSession(project, get().prefs.agentSearch, get().prefs.rea);
         const session = applySetup(emptySession(r.sessionId, project), r);
         set((s) => ({ sessions: { ...s.sessions, [r.sessionId]: session }, prepared: { ...s.prepared, [project]: r.sessionId } }));
         rememberTemplate(session);
@@ -375,7 +644,19 @@ export const useStore = create<State & Actions>((set, get) => {
       save("prefs", prefs);
       applyTheme(prefs.theme);
       applyFontSize(prefs.fontSize);
+      applyAccent(prefs.accent);
       set({ prefs });
+      // Aktuellen Stand für Vibe lesbar machen (brise_get_settings).
+      api.syncPrefs(prefs).catch(() => {});
+    },
+
+    applyCustomization(c) {
+      applyCss(c.css ?? "");
+      set({ quickActions: Array.isArray(c.settings?.quickActions) ? c.settings.quickActions : [] });
+      const overrides = c.settings?.overrides;
+      if (overrides && typeof overrides === "object" && Object.keys(overrides).length) {
+        get().setPrefs(overrides as Partial<Prefs>);
+      }
     },
 
     async connect(reuse = false) {
@@ -384,6 +665,8 @@ export const useStore = create<State & Actions>((set, get) => {
       set({ phase: "connecting", error: undefined });
       try {
         const info = await api.connect(reuse);
+        // Das Backend prüft vor dem Start von Vibe auf neue Modelle.
+        if (info.newModels?.length) set({ newModels: info.newModels });
         generation = info.generation;
         set({ connectInfo: info, auth: info.auth, phase: info.auth?.authenticated ? "ready" : "login" });
         if (info.auth?.authenticated) get().refreshIndex();
@@ -462,7 +745,7 @@ export const useStore = create<State & Actions>((set, get) => {
         activeProject: summary.cwd,
       }));
       try {
-        const r = await api.loadSession(summary.cwd, id);
+        const r = await api.loadSession(summary.cwd, id, get().prefs.agentSearch, get().prefs.rea);
         patchSession(id, (s) => ({ ...applySetup(s, r), replaying: false }));
         rememberTemplate(get().sessions[id]);
       } catch (e) {
@@ -479,7 +762,7 @@ export const useStore = create<State & Actions>((set, get) => {
         view: "chat",
       }));
       try {
-        await api.loadSession(cwd, childId);
+        await api.loadSession(cwd, childId, false, false);
         patchSession(childId, (s) => ({ ...s, replaying: false }));
       } catch (e) {
         patchSession(childId, (s) => ({ ...s, replaying: false }));
@@ -525,7 +808,7 @@ export const useStore = create<State & Actions>((set, get) => {
 
       if (!id) {
         try {
-          const r = await api.newSession(project);
+          const r = await api.newSession(project, get().prefs.agentSearch, get().prefs.rea);
           id = r.sessionId;
           const session = applySetup(emptySession(id, project), r);
           set((s) => ({ sessions: { ...s.sessions, [id!]: session }, activeSessionId: id }));
@@ -548,7 +831,9 @@ export const useStore = create<State & Actions>((set, get) => {
       for (const a of attachments) {
         if (a.kind === "file") {
           const abs = a.path.startsWith("/") || /^[A-Za-z]:/.test(a.path) ? a.path : `${project}/${a.path}`;
-          blocks.push({ type: "resource_link", uri: `file://${abs}`, name: a.name });
+          // Windows: C:\a\b → file:///C:/a/b
+          const uri = /^[A-Za-z]:/.test(abs) ? `file:///${abs.replace(/\\/g, "/")}` : `file://${abs}`;
+          blocks.push({ type: "resource_link", uri: encodeURI(uri), name: a.name });
         } else {
           try {
             const [mimeType, data] = await api.readImage(a.path);
@@ -560,12 +845,37 @@ export const useStore = create<State & Actions>((set, get) => {
       }
 
       const started = Date.now();
+      const userItemId = uid();
       patchSession(sid, (s) => ({
         ...s,
         running: true,
         turnStarted: started,
-        items: [...s.items, { type: "user", id: uid(), text, attachments }],
+        items: [...s.items, { type: "user", id: userItemId, text, attachments }],
       }));
+
+      // Auto-Modellwahl: Aufgabe einstufen und passendes Modell setzen.
+      const current = get().sessions[sid];
+      const modelOption = current?.config.find((o) => o.id === "model");
+      if (get().prefs.autoModel && modelOption?.options?.length && !text.startsWith("/")) {
+        const history = current.items
+          .filter((i) => i.type === "user")
+          .slice(-4, -1)
+          .map((i) => (i.type === "user" ? i.text : ""))
+          .join("\n");
+        const verdict = await api
+          .classifyTask(text, history)
+          .catch(() => ({ level: heuristicLevel(text), reason: "Schätzung ohne KI" }));
+        const available = modelOption.options.map((o) => o.value);
+        const model = pickModel(verdict.level, get().prefs.routing, available, attachments.some((a) => a.kind === "image"));
+        if (model) {
+          if (model !== modelOption.currentValue) await get().setOption("model", model, sid).catch(() => {});
+          const name = modelOption.options.find((o) => o.value === model)?.name ?? model;
+          patchSession(sid, (s) => ({
+            ...s,
+            items: s.items.map((i) => (i.id === userItemId && i.type === "user" ? { ...i, routed: { model: name, level: verdict.level, reason: verdict.reason } } : i)),
+          }));
+        }
+      }
       try {
         const res = await api.prompt(sid, blocks);
         pushItem(sid, {
@@ -575,6 +885,10 @@ export const useStore = create<State & Actions>((set, get) => {
           ms: Date.now() - started,
           tokens: res.usage?.totalTokens,
         });
+        if (get().prefs.autoNarrate && res.stopReason === "end_turn") {
+          const last = [...(get().sessions[sid]?.items ?? [])].reverse().find((i) => i.type === "assistant");
+          if (last) get().narrate(sid, last.id).catch(() => {});
+        }
         if (get().prefs.notify && document.hidden && "Notification" in window) {
           new Notification("Brise", { body: `${get().sessions[sid]?.title ?? "Session"} ist fertig.` });
         }
@@ -595,8 +909,8 @@ export const useStore = create<State & Actions>((set, get) => {
       await api.respondPermission(key, optionId);
     },
 
-    async setOption(configId, value) {
-      const id = get().activeSessionId;
+    async setOption(configId, value, sessionId) {
+      const id = sessionId ?? get().activeSessionId;
       const session = id ? get().sessions[id] : undefined;
       if (!session || session.readOnly) {
         set((s) => ({ draft: { ...s.draft, [configId]: value } }));
@@ -681,3 +995,12 @@ export const useStore = create<State & Actions>((set, get) => {
 
 export const useActiveSession = () =>
   useStore((s) => (s.activeSessionId ? s.sessions[s.activeSessionId] : undefined));
+
+// Nur in der Entwicklung: Zustand über Hot-Reloads des Stores hinweg behalten.
+if (import.meta.hot) {
+  const previous = import.meta.hot.data.state as Partial<State> | undefined;
+  if (previous) useStore.setState(previous);
+  import.meta.hot.dispose((data) => {
+    data.state = useStore.getState();
+  });
+}

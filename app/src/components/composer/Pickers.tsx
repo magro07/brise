@@ -1,8 +1,8 @@
-import { Brain, ChevronDown, Cpu, FilePen, Hand, Sparkles, Zap, type LucideIcon } from "lucide-react";
+import { Brain, ChevronDown, Cpu, FilePen, Hand, Sparkles, Wand2, Zap, type LucideIcon } from "lucide-react";
 import type { ConfigOption } from "../../lib/acp";
 import { useStore, type Session } from "../../lib/store";
 import { tokens } from "../../lib/format";
-import { Menu, MenuContent, MenuItem, MenuLabel, MenuTrigger, Ring, Tip, clsx } from "../ui";
+import { Menu, MenuContent, MenuItem, MenuLabel, MenuSeparator, MenuTrigger, Ring, Tip, clsx } from "../ui";
 
 export const MODE_INFO: Record<string, { label: string; description: string; icon: LucideIcon }> = {
   ask: { label: "Alles fragen", description: "Jede Aktion braucht deine Freigabe", icon: Hand },
@@ -85,25 +85,64 @@ export function ModePicker({ session }: { session?: Session }) {
 export function OptionPicker({ session, id }: { session?: Session; id: "model" | "thinking" }) {
   const { config, value } = useOptions(session);
   const setOption = useStore((s) => s.setOption);
+  const auto = useStore((s) => s.prefs.autoModel);
+  const setPrefs = useStore((s) => s.setPrefs);
   const option = config.find((o) => o.id === id);
   if (!option?.options?.length) return null;
   const current = value(id);
+  if (id === "model") {
+    const name = (v?: string) => option.options?.find((o) => o.value === v)?.name ?? v ?? "";
+    return (
+      <Menu>
+        <MenuTrigger asChild>
+          <button aria-label="Modell">
+            <PickerButton icon={auto ? Wand2 : Cpu} label={auto ? `Auto · ${name(current)}` : name(current)} />
+          </button>
+        </MenuTrigger>
+        <MenuContent side="top" className="w-72">
+          <MenuLabel>Modell</MenuLabel>
+          <MenuItem
+            icon={<Wand2 />}
+            checked={auto}
+            description="Brise stuft jede Aufgabe ein und wählt das passende Modell"
+            onSelect={() => setPrefs({ autoModel: true })}
+          >
+            Auto
+          </MenuItem>
+          <MenuSeparator />
+          {option.options.map((o) => (
+            <MenuItem
+              key={o.value}
+              checked={!auto && o.value === current}
+              description={o.description}
+              onSelect={() => {
+                setPrefs({ autoModel: false });
+                setOption("model", o.value);
+              }}
+            >
+              {o.name}
+            </MenuItem>
+          ))}
+        </MenuContent>
+      </Menu>
+    );
+  }
   const label = (v?: string) =>
     id === "thinking" ? (THINKING_LABEL[v ?? ""] ?? v ?? "") : (option.options?.find((o) => o.value === v)?.name ?? v ?? "");
   return (
     <Menu>
       <MenuTrigger asChild>
-        <button aria-label={id === "model" ? "Modell" : "Denkstufe"}>
-          <PickerButton icon={id === "model" ? Cpu : Brain} label={id === "thinking" ? `Denken: ${label(current)}` : label(current)} />
+        <button aria-label={(id as string) === "model" ? "Modell" : "Denkstufe"}>
+          <PickerButton icon={(id as string) === "model" ? Cpu : Brain} label={id === "thinking" ? `Denken: ${label(current)}` : label(current)} />
         </button>
       </MenuTrigger>
       <MenuContent side="top" className="w-64">
-        <MenuLabel>{id === "model" ? "Modell" : "Denkstufe"}</MenuLabel>
+        <MenuLabel>{(id as string) === "model" ? "Modell" : "Denkstufe"}</MenuLabel>
         {option.options.map((o) => (
           <MenuItem
             key={o.value}
             checked={o.value === current}
-            description={id === "model" ? o.description : undefined}
+            description={(id as string) === "model" ? o.description : undefined}
             onSelect={() => setOption(id, o.value)}
           >
             {label(o.value)}

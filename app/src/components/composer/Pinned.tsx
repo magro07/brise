@@ -12,6 +12,18 @@ const OPTION_LABEL: Record<string, string> = {
   reject_once: "Ablehnen",
 };
 
+/** Vibe schickt manche Optionen nur mit englischem Namen. */
+const NAME_LABEL: Record<string, string> = {
+  "Allow once": "Erlauben",
+  "Allow for remainder of this session": "Für diese Session erlauben",
+  "Always allow": "Immer erlauben",
+  "Allow this folder for this session": "Ordner für diese Session erlauben",
+  "Always allow this folder": "Ordner immer erlauben",
+  Deny: "Ablehnen",
+};
+
+const SCOPE_LABEL: Record<string, string> = { "outside workdir": "außerhalb des Projekts" };
+
 function scopeOf(o: PendingPermission["options"][number]) {
   const labels = (o._meta?.required_permissions ?? []).map((p) => p.label).filter(Boolean);
   return labels.length ? labels.join(", ") : null;
@@ -56,8 +68,12 @@ export function PermissionPrompt({ session, pending }: { session: Session; pendi
                 onClick={() => answer(pending.key, o.optionId)}
                 title={o.name}
               >
-                {OPTION_LABEL[o.optionId] ?? o.name}
-                {scope && <span className="font-mono text-[0.85em] opacity-70">{scope}</span>}
+                {OPTION_LABEL[o.optionId] ?? NAME_LABEL[o.name] ?? o.name}
+                {scope && (
+                  <span className="font-mono text-[0.85em] opacity-70">
+                    {Object.entries(SCOPE_LABEL).reduce((t, [en, de]) => t.replace(en, de), scope)}
+                  </span>
+                )}
               </Button>
             );
           })}

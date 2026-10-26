@@ -159,8 +159,9 @@ Warum so:
 | 1 ✅ | Spike: Rust-Konsolenprogramm spricht ACP mit `vibe-acp` (init, auth, prompt, Streaming, Permission) – siehe [spikes/acp-cli](spikes/acp-cli/README.md) | Protokoll verstanden, Risiken weg |
 | 2 ✅ | Tauri-Grundgerüst + Chatfenster + Streaming – siehe [app/](app/README.md) | erster sichtbarer Chat |
 | 3 ✅ | Approvals, Tool-Karten, Diffs (vorgezogen, zusammen mit 2 umgesetzt) | sicher benutzbar |
-| 4 | Onboarding mit Auto-Installation + Login | ohne Terminal startbar |
+| 4 ✅ | Onboarding mit Auto-Installation + Login (Browser oder Key), dazu Sprache (Voxtral) und semantische Suche (codestral-embed, auch als MCP-Werkzeug für Vibe) | ohne Terminal startbar |
 | 5 ✅ | Sessions, Projekte, Einstellungen – UI-Neubau im Stil von Claude Code/Codex (Projekt-Sidebar, Subagents, Kontext-Panel, Settings aus Vibe-Schema, Befehlspalette) | MVP fertig |
+| 5b ✅ | Auto-Modellwahl, Modellverwaltung (Large 4, GLM-5.3, Neu-Check), Skills (rea, ponytail, gauntlet-loop …), Terminal, Git-Panel, Monaco-Editor, Kontext-Aufschlüsselung, personalisierte Vorschläge | „wie Claude Code + Codex“ |
 | 6 | CI-Builds + Signierung (macOS-Notarisierung braucht Apple-Developer-Konto, 99 $/Jahr; Windows-Signierung optional) | Installer für alle OS |
 
 ---

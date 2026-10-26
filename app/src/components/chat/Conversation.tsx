@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { AlertTriangle, ArrowDown, Brain, CheckCircle2, ChevronRight, CircleSlash, FileText, Image, Info } from "lucide-react";
+import { AlertTriangle, ArrowDown, Brain, Check, Wand2, CheckCircle2, ChevronRight, CircleSlash, Copy, FileText, Image, Info, Square, Volume2 } from "lucide-react";
+import { useStore } from "../../lib/store";
 import type { Item, Session } from "../../lib/store";
 import { duration, tokens } from "../../lib/format";
-import { clsx } from "../ui";
+import { Spinner, Tip, clsx } from "../ui";
 import { Markdown } from "./Markdown";
 import { ToolGroup } from "./ToolCall";
 
@@ -86,6 +87,48 @@ function TurnFooter({ item }: { item: Extract<Item, { type: "turn" }> }) {
   );
 }
 
+const LEVEL_LABEL = { simple: "einfach", standard: "normal", complex: "komplex" } as const;
+
+function MessageActions({ sessionId, itemId, text }: { sessionId: string; itemId: string; text: string }) {
+  const narration = useStore((s) => s.narration);
+  const { narrate, stopNarration } = useStore.getState();
+  const [copied, setCopied] = useState(false);
+  const active = narration.itemId === itemId && narration.state !== "idle";
+  return (
+    <div className={clsx("mt-1 flex items-center gap-0.5 text-muted transition-opacity", active ? "opacity-100" : "opacity-0 group-hover/msg:opacity-100")}>
+      <Tip label="Kopieren">
+        <button
+          className="flex h-7 w-7 items-center justify-center rounded-md hover:bg-hover hover:text-fg"
+          onClick={() => {
+            navigator.clipboard.writeText(text);
+            setCopied(true);
+            setTimeout(() => setCopied(false), 1200);
+          }}
+          aria-label="Kopieren"
+        >
+          {copied ? <Check className="h-3.5 w-3.5 text-ok" /> : <Copy className="h-3.5 w-3.5" />}
+        </button>
+      </Tip>
+      <Tip label={active ? "Vorlesen stoppen" : "Vorlesen (Voxtral, als kurze Zusammenfassung)"}>
+        <button
+          className={clsx("flex h-7 items-center gap-1.5 rounded-md px-1.5 hover:bg-hover hover:text-fg", active && "text-accent")}
+          onClick={() => (active ? stopNarration() : narrate(sessionId, itemId))}
+          aria-label="Vorlesen"
+        >
+          {active ? (
+            <>
+              {narration.state === "prep" ? <Spinner /> : <Square className="h-3 w-3 fill-current" />}
+              <span className="text-[0.8em]">Liest vor …</span>
+            </>
+          ) : (
+            <Volume2 className="h-3.5 w-3.5" />
+          )}
+        </button>
+      </Tip>
+    </div>
+  );
+}
+
 export function Conversation({ session }: { session: Session }) {
   const scroller = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
@@ -107,7 +150,7 @@ export function Conversation({ session }: { session: Session }) {
   const lastIndex = blocks.length - 1;
 
   return (
-    <div className="relative min-h-0 flex-1">
+    <div data-brise="conversation" className="relative min-h-0 flex-1">
       <div
         ref={scroller}
         className="h-full overflow-y-auto"
@@ -133,8 +176,14 @@ export function Conversation({ session }: { session: Session }) {
               switch (item.type) {
                 case "user":
                   return (
-                    <div key={item.id} className="flex flex-col items-end gap-1.5 fade-in">
+                    <div key={item.id} data-brise="user-message" className="flex flex-col items-end gap-1.5 fade-in">
                       <div className="max-w-[85%] whitespace-pre-wrap rounded-2xl rounded-br-md bg-user px-4 py-2.5 selectable">{item.text}</div>
+                      {item.routed && (
+                        <span className="inline-flex items-center gap-1 text-[0.76em] text-muted" title={item.routed.reason}>
+                          <Wand2 className="h-3 w-3" /> Auto: {item.routed.model}
+                          <span className="opacity-70">· {LEVEL_LABEL[item.routed.level]}</span>
+                        </span>
+                      )}
                       {item.attachments && item.attachments.length > 0 && (
                         <div className="flex flex-wrap justify-end gap-1.5">
                           {item.attachments.map((a) => (
@@ -149,8 +198,9 @@ export function Conversation({ session }: { session: Session }) {
                   );
                 case "assistant":
                   return (
-                    <div key={item.id} className="fade-in">
+                    <div key={item.id} data-brise="assistant-message" className="group/msg fade-in">
                       <Markdown text={item.text} />
+                      {!live && <MessageActions sessionId={session.id} itemId={item.id} text={item.text} />}
                     </div>
                   );
                 case "thought":

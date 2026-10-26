@@ -103,12 +103,24 @@ pub fn spawn(
         None => None,
     };
 
-    let mut child = Command::new(program)
+    let mut command = Command::new(program);
+    // Von Brise mitgebrachtes Git (Windows) auch für Vibe sichtbar machen.
+    if let Some(extra) = crate::git::extra_path() {
+        let mut paths = vec![extra];
+        paths.extend(std::env::var_os("PATH").map(|p| std::env::split_paths(&p).collect::<Vec<_>>()).unwrap_or_default());
+        if let Ok(joined) = std::env::join_paths(paths) {
+            command.env("PATH", joined);
+        }
+    }
+    command
         .args(args)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(if tracer.is_some() { Stdio::piped() } else { Stdio::null() })
-        .kill_on_drop(true)
+        .kill_on_drop(true);
+    #[cfg(windows)]
+    command.creation_flags(0x0800_0000); // kein Konsolenfenster unter Windows
+    let mut child = command
         .spawn()
         .with_context(|| format!("Konnte {} nicht starten – ist Mistral Vibe installiert?", program.to_string_lossy()))?;
 

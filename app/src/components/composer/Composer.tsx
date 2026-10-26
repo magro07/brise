@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
-import { ArrowUp, AtSign, FileText, Image, Paperclip, Slash, Square, X } from "lucide-react";
+import { ArrowUp, AtSign, FileText, Image, Mic, Paperclip, Slash, Square, X } from "lucide-react";
 import { basename, useStore, type Attachment, type Session, type SlashCommand } from "../../lib/store";
-import { IconButton, clsx } from "../ui";
+import { IconButton, Tip, clsx } from "../ui";
+import { VoiceRecorder } from "./VoiceRecorder";
 import { ContextMeter, ModePicker, OptionPicker } from "./Pickers";
 
 const IMAGE_EXT = /\.(png|jpe?g|gif|webp)$/i;
@@ -50,6 +51,37 @@ export function Composer({ session, project }: { session?: Session; project: str
   const running = !!session?.running;
   const disabled = !!session?.replaying || !!session?.readOnly;
   const commands: SlashCommand[] = session?.commands.length ? session.commands : (templateCommands ?? []);
+  const recording = useStore((s) => s.recording);
+  const composerInsert = useStore((s) => s.composerInsert);
+  const { startRecording, stopRecording, cancelRecording, set: setStore } = useStore.getState();
+  const [voiceBusy, setVoiceBusy] = useState(false);
+
+  // Von außen eingefügter Text (z. B. Treffer der semantischen Suche).
+  useEffect(() => {
+    if (!composerInsert) return;
+    setText((t) => (t && !t.endsWith(" ") ? `${t} ` : t) + composerInsert.text);
+    const m = /^@(\S+)/.exec(composerInsert.text);
+    if (m) setAttachments((l) => (l.some((a) => a.path === m[1]) ? l : [...l, { kind: "file", path: m[1], name: basename(m[1]) }]));
+    ref.current?.focus();
+  }, [composerInsert?.seq]);
+
+  const toggleVoice = async () => {
+    if (voiceBusy) return;
+    setVoiceBusy(true);
+    try {
+      if (recording) {
+        const spoken = (await stopRecording()).trim();
+        if (spoken) setText((t) => (t.trim() ? `${t.trimEnd()} ${spoken}` : spoken));
+        ref.current?.focus();
+      } else {
+        await startRecording();
+      }
+    } catch (e) {
+      setStore({ error: String(e) });
+    } finally {
+      setVoiceBusy(false);
+    }
+  };
 
   useEffect(() => {
     loadFiles(project).then(setFiles);
@@ -148,7 +180,7 @@ export function Composer({ session, project }: { session?: Session; project: str
   };
 
   return (
-    <div className="@container relative">
+    <div data-brise="composer" className="@container relative">
       {suggestions.length > 0 && (
         <div className="absolute bottom-full left-0 right-0 mb-2 overflow-hidden rounded-xl border border-line bg-elev p-1 shadow-pop fade-in">
           <div className="flex items-center gap-1.5 px-2.5 pb-1 pt-1.5 text-[0.75em] font-medium uppercase tracking-wide text-muted">
@@ -196,7 +228,9 @@ export function Composer({ session, project }: { session?: Session; project: str
             ))}
           </div>
         )}
+        {recording && <VoiceRecorder onDone={toggleVoice} onCancel={() => cancelRecording()} />}
         <textarea
+          hidden={recording}
           ref={ref}
           value={text}
           rows={1}
@@ -234,6 +268,7 @@ export function Composer({ session, project }: { session?: Session; project: str
               submit();
             }
             if (e.key === "Escape" && running) cancel();
+            if (e.key === "Escape" && recording) cancelRecording();
           }}
           className="block max-h-[280px] w-full resize-none bg-transparent px-4 pb-2 pt-3.5 outline-none placeholder:text-muted focus-visible:outline-none"
         />
@@ -246,6 +281,19 @@ export function Composer({ session, project }: { session?: Session; project: str
           <OptionPicker session={session} id="thinking" />
           <div className="flex-1" />
           <ContextMeter session={session} />
+          <Tip label={recording ? "Aufnahme beenden und übernehmen" : "Spracheingabe (Voxtral)"}>
+            <button
+              onClick={toggleVoice}
+              disabled={disabled || voiceBusy}
+              aria-label="Spracheingabe"
+              className={clsx(
+                "flex h-8 w-8 shrink-0 items-center justify-center rounded-full transition disabled:opacity-40",
+                recording ? "bg-bad text-white shadow-[0_0_0_4px_color-mix(in_srgb,var(--bad)_25%,transparent)]" : "text-muted hover:bg-hover hover:text-fg",
+              )}
+            >
+              {recording ? <Square className="h-3 w-3 fill-current" /> : <Mic className="h-4 w-4" />}
+            </button>
+          </Tip>
           {running ? (
             <button
               onClick={() => cancel()}

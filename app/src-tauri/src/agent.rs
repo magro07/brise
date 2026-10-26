@@ -49,6 +49,8 @@ pub fn find_vibe_acp() -> Option<PathBuf> {
     [
         home.join(".local").join("bin").join(exe),
         home.join(".local").join("share").join("uv").join("tools").join("mistral-vibe").join("bin").join(exe),
+        // Von Brise selbst installiert (siehe installer.rs).
+        crate::installer::managed_bin_dir().join(exe),
     ]
     .into_iter()
     .find(|p| p.is_file())
@@ -58,6 +60,8 @@ pub fn find_vibe_acp() -> Option<PathBuf> {
 #[serde(rename_all = "camelCase")]
 pub struct ConnectInfo {
     generation: u64,
+    /// Neue Modelle bei Mistral seit dem letzten Start.
+    new_models: Value,
     agent_path: String,
     init: Value,
     auth: Value,
@@ -77,6 +81,13 @@ pub async fn agent_connect(app: AppHandle, state: State<'_, AgentState>, reuse: 
     }
     *state.info.lock().await = None;
     *state.conn.lock().await = None;
+
+    // Vor dem Start von Vibe: Standardmodelle und Skills eintragen, neue Modelle suchen.
+    let report = tokio::time::timeout(std::time::Duration::from_secs(10), crate::models::startup_check(app.clone())).await;
+    let new_models = match report {
+        Ok(Ok(r)) => serde_json::to_value(r).ok().map(|v| v["newModels"].clone()).unwrap_or(Value::Null),
+        _ => Value::Null,
+    };
     if let Some(mut old) = state.child.lock().await.take() {
         let _ = old.kill().await;
     }
@@ -108,7 +119,7 @@ pub async fn agent_connect(app: AppHandle, state: State<'_, AgentState>, reuse: 
     *state.conn.lock().await = Some(conn);
     *state.child.lock().await = Some(child);
 
-    let info = ConnectInfo { generation, agent_path: path.display().to_string(), init, auth };
+    let info = ConnectInfo { generation, new_models, agent_path: path.display().to_string(), init, auth };
     *state.info.lock().await = Some(info.clone());
     Ok(info)
 }
@@ -190,14 +201,60 @@ pub async fn sign_out(state: State<'_, AgentState>) -> CmdResult<Value> {
     call(&state, "_auth/status", json!({})).await
 }
 
-#[tauri::command]
-pub async fn new_session(state: State<'_, AgentState>, cwd: String) -> CmdResult<Value> {
-    call(&state, "session/new", json!({ "cwd": cwd, "mcpServers": [] })).await
+/// Umgebung für MCP-Server, die Vibe startet. Vibe reicht nur wenig durch;
+/// ohne diese Variablen fehlen Schlüsselbund (D-Bus), Datenordner und unter
+/// Windows grundlegende Systempfade. Schlüssel selbst werden nie übergeben.
+pub fn child_env() -> Vec<Value> {
+    [
+        "HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA", "PATH", "XDG_RUNTIME_DIR", "XDG_DATA_HOME",
+        "DBUS_SESSION_BUS_ADDRESS", "VIBE_HOME", "BRISE_DATA_DIR", "LANG",
+        // Windows
+        "SystemRoot", "SYSTEMDRIVE", "WINDIR", "TEMP", "TMP", "PATHEXT", "COMSPEC", "ProgramData", "ProgramFiles", "ALLUSERSPROFILE",
+        // macOS
+        "TMPDIR", "USER",
+    ]
+    .iter()
+    .filter_map(|k| std::env::var(k).ok().map(|v| json!({ "name": k, "value": v })))
+    .collect()
+}
+
+/// MCP-Server, die Brise jeder Session mitgibt: Selbstanpassung, semantische
+/// Suche (falls indexiert) und die REA-Werkzeuge (falls Node.js da ist).
+fn mcp_servers(cwd: &str, search: bool, rea: bool) -> Value {
+    let mut list: Vec<Value> = crate::customize::mcp_entry().into_iter().collect();
+    if search {
+        list.extend(crate::embeddings::mcp_entry(cwd));
+    }
+    if rea {
+        if let Some(npx) = crate::skills::find_npx() {
+            list.push(json!({ "name": "rea", "command": npx.display().to_string(), "args": ["-y", "rea-agents@latest", "mcp"], "env": child_env() }));
+        }
+    }
+    Value::Array(list)
 }
 
 #[tauri::command]
-pub async fn load_session(state: State<'_, AgentState>, cwd: String, session_id: String) -> CmdResult<Value> {
-    call(&state, "session/load", json!({ "cwd": cwd, "sessionId": session_id, "mcpServers": [] })).await
+pub async fn new_session(state: State<'_, AgentState>, cwd: String, search: Option<bool>, rea: Option<bool>) -> CmdResult<Value> {
+    let servers = mcp_servers(&cwd, search.unwrap_or(true), rea.unwrap_or(false));
+    call(&state, "session/new", json!({ "cwd": cwd, "mcpServers": servers })).await
+}
+
+#[tauri::command]
+pub async fn load_session(
+    state: State<'_, AgentState>,
+    cwd: String,
+    session_id: String,
+    search: Option<bool>,
+    rea: Option<bool>,
+) -> CmdResult<Value> {
+    let servers = mcp_servers(&cwd, search.unwrap_or(true), rea.unwrap_or(false));
+    call(&state, "session/load", json!({ "cwd": cwd, "sessionId": session_id, "mcpServers": servers })).await
+}
+
+/// Vibe-Erweiterungen (`_voice/…` usw.) direkt aufrufen.
+#[tauri::command]
+pub async fn ext(state: State<'_, AgentState>, method: String, params: Value) -> CmdResult<Value> {
+    call(&state, &format!("_{method}"), params).await
 }
 
 /// Ohne `cwd` liefert Vibe die Sessions aller Projekte.

@@ -60,6 +60,12 @@ export function toolIcon(t: ToolItem) {
 /** Kurzer, deutscher Titel: Vibes Titel ohne englische Verlaufsform. */
 export function toolTitle(t: ToolItem): { verb: string; target: string } {
   const title = t.title ?? "";
+  if (title.includes("semantic_code_search")) {
+    const q = (t.rawInput as { query?: string } | undefined)?.query;
+    return { verb: "Semantische Suche", target: q ? `„${q}“` : "" };
+  }
+  if (title === "Searching for relevant tools") return { verb: "Werkzeuge gesucht", target: "" };
+  if (/^Writing \d+ todos?$/.test(title)) return { verb: "Aufgabenliste aktualisiert", target: "" };
   const m = /^(Reading|Editing|Writing|Creating|Deleting|Searching|Listing|Fetching|Moving)\s+(.*)$/i.exec(title);
   const verbs: Record<string, string> = {
     reading: "Gelesen",
@@ -208,7 +214,7 @@ export function ToolGroup({ items, cwd, live }: { items: Item[]; cwd: string; li
   const lastRunning = [...plain].reverse().find((t) => t.status === "in_progress" || t.status === "pending");
 
   return (
-    <div className="space-y-1">
+    <div data-brise="tool-group" className="space-y-1">
       {collapsible && (
         <button
           className="flex h-7 items-center gap-2 rounded-md px-1.5 text-[0.9em] text-muted hover:bg-hover hover:text-fg"

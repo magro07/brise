@@ -32,6 +32,22 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "resources": [
+      "resources/skills/**/*"
+    ],
+    "macOS": {
+      "entitlements": "Entitlements.plist",
+      "minimumSystemVersion": "11.0"
+    },
+    "category": "DeveloperTool",
+    "shortDescription": "Desktop-App f\u00fcr Mistral Vibe",
+    "longDescription": "Brise ist eine inoffizielle Desktop-Oberfl\u00e4che f\u00fcr den Coding-Agenten Mistral Vibe.",
+    "copyright": "Apache-2.0",
+    "windows": {
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper"
+      }
+    }
   }
 }

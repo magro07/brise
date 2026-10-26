@@ -1,4 +1,5 @@
 import { Command } from "cmdk";
+import { shortcut } from "../../lib/platform";
 import * as Dialog from "@radix-ui/react-dialog";
 import { FolderOpen, Folder, MessageSquare, Moon, PanelRight, Settings, SquarePen, Sun } from "lucide-react";
 import { basename, useStore } from "../../lib/store";
@@ -47,13 +48,13 @@ export function CommandPalette() {
             <Command.List className="max-h-[420px] overflow-y-auto p-1.5">
               <Command.Empty className="px-4 py-8 text-center text-muted">Nichts gefunden.</Command.Empty>
               <Command.Group heading="Aktionen" className="[&_[cmdk-group-heading]]:px-2.5 [&_[cmdk-group-heading]]:py-1.5 [&_[cmdk-group-heading]]:text-[0.75em] [&_[cmdk-group-heading]]:uppercase [&_[cmdk-group-heading]]:text-muted">
-                <Item icon={<SquarePen />} hint="Strg+N" onSelect={run(() => newDraft())}>
+                <Item icon={<SquarePen />} hint={shortcut("N")} onSelect={run(() => newDraft())}>
                   Neue Session
                 </Item>
                 <Item icon={<FolderOpen />} onSelect={run(pickProject)}>
                   Projektordner öffnen …
                 </Item>
-                <Item icon={<Settings />} hint="Strg+," onSelect={run(() => setView("settings"))}>
+                <Item icon={<Settings />} hint={shortcut(",")} onSelect={run(() => setView("settings"))}>
                   Einstellungen
                 </Item>
                 {PANEL_TABS.map((t) => (
