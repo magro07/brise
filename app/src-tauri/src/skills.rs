@@ -150,3 +150,65 @@ pub fn find_npx() -> Option<PathBuf> {
 pub fn npx_available() -> bool {
     find_npx().is_some()
 }
+
+// ---------- Subagent-Profile ----------
+
+pub fn agents_dir() -> PathBuf {
+    data_dir().join("agents")
+}
+
+/// Schreibt Brises Subagent-Profile (explore, researcher) und trägt den
+/// Ordner in Vibes `agent_paths` ein. Ein eigenes Modell pro Subagent setzt
+/// Vibe derzeit nicht um (`active_model` wird für Subagents ignoriert).
+pub fn write_agent_profiles() -> CmdResult<bool> {
+    let dir = agents_dir();
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let m = "";
+    let explore = format!(
+        r#"# Von Brise verwaltet – Änderungen in Brise unter Einstellungen → Agents.
+display_name = "Explore"
+description = "Read-only subagent for codebase exploration (grep, read, semantic search)"
+safety = "safe"
+agent_type = "subagent"
+enabled_tools = ["grep", "read_file", "skill", "mcp_brise_search*"]
+system_prompt_id = "explore"
+{m}"#
+    );
+    let researcher = format!(
+        r#"# Von Brise verwaltet – Änderungen in Brise unter Einstellungen → Agents.
+display_name = "Researcher"
+description = "Read-only web research subagent: searches the web, reads primary sources and returns findings with URLs. Use one per sub-question; run several in parallel."
+safety = "safe"
+agent_type = "subagent"
+enabled_tools = ["web_search", "web_fetch", "read_file", "grep", "skill"]
+{m}instructions = """
+You research one well-defined question on the web.
+1. Run several targeted web searches (vary wording, include the current year for recent topics, try English and the user's language).
+2. Open the most authoritative sources with web_fetch (official docs, standards, papers, original announcements) – not only snippets.
+3. Cross-check every important claim with at least two independent sources; note disagreements and dates.
+4. Return concise findings as bullet points, each with the source URL and publication date, plus a short list of open questions and a confidence rating (high/medium/low).
+Never invent sources. Prefer recent information and say when something may be outdated.
+"""
+
+[tools.web_search]
+permission = "always"
+
+[tools.web_fetch]
+permission = "always"
+"#
+    );
+    std::fs::write(dir.join("explore.toml"), explore).map_err(|e| e.to_string())?;
+    std::fs::write(dir.join("researcher.toml"), researcher).map_err(|e| e.to_string())?;
+    let _ = std::fs::remove_file(dir.join(".model"));
+
+    let wanted = dir.display().to_string();
+    edit_config(|doc| {
+        let has = doc.get("agent_paths").and_then(Item::as_array).is_some_and(|a| a.iter().any(|v| v.as_str() == Some(wanted.as_str())));
+        if !has {
+            let mut arr = doc.get("agent_paths").and_then(Item::as_array).cloned().unwrap_or_else(Array::new);
+            arr.push(wanted.as_str());
+            doc.insert("agent_paths", Item::Value(TomlValue::Array(arr)));
+        }
+        Ok(())
+    })
+}

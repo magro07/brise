@@ -4,6 +4,7 @@ import { api, type GitStatus } from "../../lib/acp";
 import { useStore } from "../../lib/store";
 import { relativeTime } from "../../lib/format";
 import { Button, IconButton, Menu, MenuContent, MenuItem, MenuLabel, MenuSeparator, MenuTrigger, Spinner, clsx } from "../ui";
+import { askText, confirmAction } from "../../lib/dialogs";
 
 const STATUS_LABEL: Record<string, [string, string]> = {
   M: ["geändert", "text-warn"],
@@ -132,8 +133,8 @@ export function GitPanel({ cwd }: { cwd: string }) {
             <MenuSeparator />
             <MenuItem
               icon={<Plus />}
-              onSelect={() => {
-                const name = window.prompt("Name des neuen Branches:");
+              onSelect={async () => {
+                const name = await askText("Neuer Branch", "z. B. feature/login");
                 if (name?.trim()) run("branch", () => api.git(cwd, "create_branch", undefined, name.trim()));
               }}
             >
@@ -155,8 +156,8 @@ export function GitPanel({ cwd }: { cwd: string }) {
           label={status.upstream ? "Push" : "Push (Upstream anlegen)"}
           size="sm"
           disabled={!!busy}
-          onClick={() =>
-            window.confirm(status.upstream ? `Commits nach ${status.upstream} pushen?` : "Branch nach origin pushen und als Upstream setzen?") &&
+          onClick={async () =>
+            (await confirmAction(status.upstream ? `Commits nach ${status.upstream} pushen?` : "Branch nach origin pushen und als Upstream setzen?")) &&
             run("push", () => api.git(cwd, status.upstream ? "push" : "push_upstream"))
           }
         >
@@ -193,7 +194,9 @@ export function GitPanel({ cwd }: { cwd: string }) {
                 onDiscard={
                   f.index === "?"
                     ? undefined
-                    : () => window.confirm(`Änderungen an ${f.path} verwerfen? Das lässt sich nicht rückgängig machen.`) && run("discard", () => api.git(cwd, "discard", [f.path]))
+                    : async () =>
+                        (await confirmAction(`Änderungen an ${f.path} verwerfen? Das lässt sich nicht rückgängig machen.`, true)) &&
+                        run("discard", () => api.git(cwd, "discard", [f.path]))
                 }
                 onOpen={() => openFile(f.path, true)}
               />
@@ -218,7 +221,7 @@ export function GitPanel({ cwd }: { cwd: string }) {
                 onClick={() =>
                   run("msg", async () => {
                     if (!staged.length) await api.git(cwd, "stage_all");
-                    setMessage(await api.commitMessage(cwd));
+                    setMessage(await api.commitMessage(cwd, useStore.getState().prefs.assistModel));
                   })
                 }
               >

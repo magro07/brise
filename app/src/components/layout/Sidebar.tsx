@@ -18,6 +18,7 @@ import {
 import { basename, useStore, type Session } from "../../lib/store";
 import { relativeTime } from "../../lib/format";
 import { IconButton, Kbd, Logo, Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger, Spinner, clsx } from "../ui";
+import { confirmAction } from "../../lib/dialogs";
 
 const SHOWN_PER_PROJECT = 6;
 
@@ -47,7 +48,8 @@ export function Sidebar() {
     for (const s of Object.values(sessions)) {
       if (s.readOnly) continue;
       const summary = index.find((x) => x.sessionId === s.id);
-      if (!summary && s.items.length === 0) continue;
+      // Vorbereitete, noch leere Sessions nicht anzeigen.
+      if (s.items.length === 0 && !summary?.title) continue;
       seen.add(s.id);
       const list = map.get(s.cwd) ?? [];
       list.push({ id: s.id, title: s.title ?? summary?.title ?? "Neue Session", updatedAt: summary?.updatedAt ?? new Date().toISOString() });
@@ -88,9 +90,21 @@ export function Sidebar() {
 
       <div className="mt-3 flex items-center px-4 pb-1 text-[0.78em] font-medium uppercase tracking-wide text-muted">
         <span className="flex-1">Projekte</span>
-        <IconButton label="Projekt öffnen" size="sm" onClick={pickProject}>
-          <FolderPlus className="h-3.5 w-3.5" />
-        </IconButton>
+        <Menu>
+          <MenuTrigger asChild>
+            <button className="flex h-6 w-6 items-center justify-center rounded-md text-muted hover:bg-hover hover:text-fg" aria-label="Projekt hinzufügen" data-tour="add-project">
+              <FolderPlus className="h-3.5 w-3.5" />
+            </button>
+          </MenuTrigger>
+          <MenuContent align="end">
+            <MenuItem icon={<FolderPlus />} onSelect={() => set({ newProjectOpen: true })}>
+              Neues Projekt anlegen …
+            </MenuItem>
+            <MenuItem icon={<FolderOpen />} onSelect={pickProject}>
+              Vorhandenen Ordner öffnen …
+            </MenuItem>
+          </MenuContent>
+        </Menu>
       </div>
 
       {projects.length > 4 && (
@@ -174,8 +188,8 @@ export function Sidebar() {
                       active={s.id === activeSessionId && view === "chat"}
                       live={sessions[s.id]}
                       onClick={() => selectSession(s.id)}
-                      onDelete={() => {
-                        if (window.confirm(`Session „${s.title}“ endgültig löschen?`)) deleteSession(s.id);
+                      onDelete={async () => {
+                        if (await confirmAction(`Session „${s.title}“ endgültig löschen?`, true)) deleteSession(s.id);
                       }}
                     />
                   ))}
@@ -195,7 +209,7 @@ export function Sidebar() {
         })}
       </nav>
 
-      <div className="border-t border-line p-2">
+      <div className="border-t border-line p-2" data-tour="settings">
         <SideButton
           icon={<Settings className="h-4 w-4" />}
           onClick={() => setView(view === "settings" ? "chat" : "settings")}

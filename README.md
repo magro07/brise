@@ -40,6 +40,15 @@ Für Windows, macOS und Linux. Du brauchst weder Terminal noch API-Key, dein Mis
   - Werkzeug-Ergebnisse, Subagents, freier Platz
   - die größten Einzelposten
 - **Semantische Codesuche** mit `codestral-embed`, für dich im Panel und für Vibe als Werkzeug.
+- **Websuche bis Deep Research:**
+  - Vibe sucht nativ im Web.
+  - Der Skill `deep-research` zerlegt Fragen in Teilfragen und lässt Subagents parallel recherchieren.
+  - Er prüft Quellen gegeneinander und schreibt bei Bedarf einen belegten Bericht nach `research/`.
+- **Weitere Mistral-Modelle:**
+  - Codestral vervollständigt im Editor wie Copilot.
+  - Mistral OCR liest angehängte PDF-, Word- und PowerPoint-Dateien.
+  - Das Task-Modell (wählbar) stuft Aufgaben ein.
+- **Neue Projekte** legst du direkt in der App an, mit Git und README. Beim ersten Start führt eine Tour durch alle Bereiche.
 - **Sprache:** Spracheingabe mit Live-Wellenform und Wort-für-Wort-Transkript (Voxtral Realtime), Vorlesen von Antworten (Voxtral TTS).
 
 **Skills, die mitkommen**
@@ -58,13 +67,13 @@ Brise gibt jeder Session dafür den MCP-Server `brise-app` mit. Über dessen Wer
 
 ## Bilder
 
-| Startseite mit persönlichen Vorschlägen | Git und Editor |
+| Startseite mit persönlichen Vorschlägen | Freigabe, Diff und Aufgabenliste |
 |---|---|
-| ![Startseite](docs/screenshots/start.png) | ![Git und Editor](docs/screenshots/git-editor.png) |
-| **Kontext-Aufschlüsselung** | **Modelle und Auto-Wahl** |
-| ![Kontext](docs/screenshots/context.png) | ![Modelle](docs/screenshots/models.png) |
-| **Terminal** | **Dunkelmodus** |
-| ![Terminal](docs/screenshots/terminal.png) | ![Dunkel](docs/screenshots/dark.png) |
+| ![Startseite](docs/screenshots/start.png) | ![Freigabe](docs/screenshots/permission.png) |
+| **Editor mit Vergleich zum letzten Commit** | **Modelle und Auto-Wahl** |
+| ![Editor](docs/screenshots/git-editor.png) | ![Modelle](docs/screenshots/models.png) |
+| **Terminal** | **Websuche und Deep Research (dunkel)** |
+| ![Terminal](docs/screenshots/terminal.png) | ![Websuche](docs/screenshots/web-dark.png) |
 
 ## Installieren
 

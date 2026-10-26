@@ -8,6 +8,7 @@ import { VoiceRecorder } from "./VoiceRecorder";
 import { ContextMeter, ModePicker, OptionPicker } from "./Pickers";
 
 const IMAGE_EXT = /\.(png|jpe?g|gif|webp)$/i;
+const DOC_EXT = /\.(pdf|docx|pptx)$/i;
 
 type Suggestion =
   | { kind: "file"; value: string; label: string; detail: string }
@@ -119,7 +120,11 @@ export function Composer({ session, project }: { session?: Session; project: str
       ...list,
       ...paths
         .filter((p) => !list.some((a) => a.path === p))
-        .map((p) => ({ kind: IMAGE_EXT.test(p) ? ("image" as const) : ("file" as const), path: p, name: basename(p) })),
+        .map((p) => ({
+          kind: IMAGE_EXT.test(p) ? ("image" as const) : DOC_EXT.test(p) ? ("document" as const) : ("file" as const),
+          path: p,
+          name: basename(p),
+        })),
     ]);
 
   // Autovervollständigung für @Datei und /Befehl an der Cursorposition.
@@ -217,6 +222,7 @@ export function Composer({ session, project }: { session?: Session; project: str
               <span key={a.path} className="inline-flex h-7 items-center gap-1.5 rounded-lg border border-line bg-panel pl-2 pr-1 text-[0.84em]" title={a.path}>
                 {a.kind === "image" ? <Image className="h-3.5 w-3.5 text-muted" /> : <FileText className="h-3.5 w-3.5 text-muted" />}
                 <span className="max-w-[200px] truncate">{a.name}</span>
+                {a.kind === "document" && <span className="rounded bg-accent-soft px-1 text-[0.8em] text-accent" title="Wird mit Mistral OCR gelesen">OCR</span>}
                 <button
                   className="flex h-5 w-5 items-center justify-center rounded text-muted hover:bg-hover hover:text-fg"
                   onClick={() => setAttachments((l) => l.filter((x) => x.path !== a.path))}

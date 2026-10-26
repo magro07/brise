@@ -51,7 +51,7 @@ export function SidePanel({ session }: { session?: Session }) {
   const wide = panel === "files";
   const tools = panel === "git" || panel === "files";
   return (
-    <aside data-brise="side-panel" className={clsx("flex h-full shrink-0 flex-col border-l border-line bg-panel", wide ? "w-[min(820px,50vw)]" : "w-[min(420px,40vw)]")}>
+    <aside data-brise="side-panel" className={clsx("flex h-full shrink-0 flex-col border-l border-line bg-panel", wide ? "w-[min(900px,62vw)]" : "w-[min(420px,40vw)]")}>
       <div className="flex h-12 items-center gap-1 border-b border-line px-2">
         {PANEL_TABS.map((t) => (
           <button

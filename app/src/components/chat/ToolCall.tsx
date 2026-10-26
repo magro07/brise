@@ -225,17 +225,26 @@ export function ToolGroup({ items, cwd, live }: { items: Item[]; cwd: string; li
         </button>
       )}
       <div className={clsx(collapsible && "ml-3 border-l border-line pl-2")}>
-        {items.map((item) => {
+        {items.map((item, idx) => {
           if (item.type === "tool") {
             if (isSubagent(item)) return <SubagentCard key={item.id} tool={item} cwd={cwd} />;
             if (!expanded && item !== lastRunning) return null;
             return <ToolRow key={item.id} tool={item} cwd={cwd} />;
           }
           if (item.type === "decision" && expanded) {
+            // Gleiche Freigaben direkt hintereinander zu einer Zeile zusammenfassen.
+            const prev = items[idx - 1];
+            if (prev?.type === "decision" && prev.label === item.label && prev.allowed === item.allowed) return null;
+            let count = 1;
+            for (let k = idx + 1; k < items.length; k++) {
+              const next = items[k];
+              if (next.type === "decision" && next.label === item.label && next.allowed === item.allowed) count++;
+              else break;
+            }
             return (
               <div key={item.id} className={clsx("flex h-6 items-center gap-2 px-1.5 text-[0.84em]", item.allowed ? "text-ok" : "text-bad")}>
                 {item.allowed ? <ShieldCheck className="h-3.5 w-3.5" /> : <ShieldX className="h-3.5 w-3.5" />}
-                {item.label}
+                {count > 1 ? `${count}× ${item.label.charAt(0).toLowerCase()}${item.label.slice(1)}` : item.label}
               </div>
             );
           }

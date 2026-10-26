@@ -14,6 +14,8 @@ import { SidePanel } from "./components/panels/SidePanel";
 import { TerminalPanel } from "./components/tools/Terminal";
 import { SettingsView } from "./components/settings/Settings";
 import { DraftHero, NoProject, StartScreen } from "./components/screens/Screens";
+import { NewProjectDialog } from "./components/screens/NewProject";
+import { TextPrompt, Tour } from "./components/screens/Tour";
 
 /** Backend-Events abonnieren und einmal mit Vibe verbinden. */
 function useBackend() {
@@ -117,6 +119,15 @@ function Workspace() {
     if (project && !session && phase === "ready") prepare(project);
   }, [project, session, phase, prepare]);
 
+  // Beim ersten Mal durch die App führen.
+  useEffect(() => {
+    const st = useStore.getState();
+    if (project && phase === "ready" && !st.prefs.tourDone && st.tourStep == null) {
+      const t = setTimeout(() => useStore.setState({ tourStep: 0 }), 900);
+      return () => clearTimeout(t);
+    }
+  }, [project, phase]);
+
   if (!project) return <NoProject />;
   const pending = session?.pending[0];
   return (
@@ -160,6 +171,9 @@ export default function App() {
         </div>
       )}
       <CommandPalette />
+      <NewProjectDialog />
+      <TextPrompt />
+      <Tour />
     </TooltipProvider>
   );
 }

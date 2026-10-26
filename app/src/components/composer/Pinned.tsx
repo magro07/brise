@@ -19,6 +19,8 @@ const NAME_LABEL: Record<string, string> = {
   "Always allow": "Immer erlauben",
   "Allow this folder for this session": "Ordner für diese Session erlauben",
   "Always allow this folder": "Ordner immer erlauben",
+  "Allow these paths only for this session": "Pfade für diese Session erlauben",
+  "Always allow these paths": "Pfade immer erlauben",
   Deny: "Ablehnen",
 };
 
@@ -70,7 +72,7 @@ export function PermissionPrompt({ session, pending }: { session: Session; pendi
               >
                 {OPTION_LABEL[o.optionId] ?? NAME_LABEL[o.name] ?? o.name}
                 {scope && (
-                  <span className="font-mono text-[0.85em] opacity-70">
+                  <span className="max-w-[280px] truncate font-mono text-[0.85em] opacity-70" title={scope}>
                     {Object.entries(SCOPE_LABEL).reduce((t, [en, de]) => t.replace(en, de), scope)}
                   </span>
                 )}

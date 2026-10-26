@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
-import { ChevronRight, ExternalLink, File, Folder, RefreshCw, Save, X } from "lucide-react";
+import { ChevronRight, ExternalLink, File, FilePlus, Folder, FolderPlus, RefreshCw, Save, X } from "lucide-react";
 import { api } from "../../lib/acp";
 import { useStore } from "../../lib/store";
 import { Button, IconButton, Menu, MenuContent, MenuItem, MenuTrigger, clsx } from "../ui";
 import { CodeEditor } from "../tools/CodeEditor";
+import { askText, showError } from "../../lib/dialogs";
 
 interface Node {
   name: string;
@@ -79,7 +80,7 @@ export function FilesPanel({ cwd }: { cwd: string }) {
 
   return (
     <div className="flex h-full min-h-0">
-      <div className="flex w-56 shrink-0 flex-col border-r border-line">
+      <div className="flex w-48 shrink-0 flex-col border-r border-line">
         <div className="flex items-center gap-1 p-2">
           <input
             value={filter}
@@ -87,6 +88,40 @@ export function FilesPanel({ cwd }: { cwd: string }) {
             placeholder="Dateien filtern …"
             className="h-7 min-w-0 flex-1 rounded-md border border-line bg-bg px-2 text-[0.84em] outline-none focus:border-accent"
           />
+          <IconButton
+            label="Neue Datei"
+            size="sm"
+            onClick={async () => {
+              const name = await askText("Neue Datei", "z. B. src/neu.ts");
+              if (!name?.trim()) return;
+              try {
+                await api.createPath(cwd, name.trim(), false);
+                reload();
+                openFile(name.trim());
+              } catch (e) {
+                showError(String(e));
+              }
+            }}
+          >
+            <FilePlus className="h-3.5 w-3.5" />
+          </IconButton>
+          <IconButton
+            label="Neuer Ordner"
+            size="sm"
+            onClick={async () => {
+              const name = await askText("Neuer Ordner", "z. B. docs");
+              if (!name?.trim()) return;
+              try {
+                await api.createPath(cwd, name.trim(), true);
+                setOpen((s) => new Set([...s, name.trim()]));
+                reload();
+              } catch (e) {
+                showError(String(e));
+              }
+            }}
+          >
+            <FolderPlus className="h-3.5 w-3.5" />
+          </IconButton>
           <IconButton label="Neu laden" size="sm" onClick={reload}>
             <RefreshCw className="h-3.5 w-3.5" />
           </IconButton>

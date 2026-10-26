@@ -26,7 +26,8 @@ export interface DiffContent {
 }
 
 export interface Attachment {
-  kind: "file" | "image";
+  /** document = PDF/Office, wird per Mistral OCR in Text umgewandelt */
+  kind: "file" | "image" | "document";
   path: string;
   name: string;
 }
@@ -143,6 +144,12 @@ export interface Prefs {
   routing: { simple: string; standard: string; complex: string };
   /** Eigene Akzentfarbe (per Chat oder Einstellungen), null = Standard. */
   accent: string | null;
+  /** Modell für Brises Helfer: Einstufung, Vorschläge, Commit-Nachrichten. */
+  assistModel: string;
+  /** Codestral-Vervollständigung im Editor. */
+  fim: boolean;
+  /** Einführung schon gesehen. */
+  tourDone: boolean;
 }
 
 export interface OpenFile {
@@ -184,6 +191,9 @@ interface State {
   panel: PanelTab | null;
   sidebarOpen: boolean;
   paletteOpen: boolean;
+  newProjectOpen: boolean;
+  tourStep: number | null;
+  textPrompt: { title: string; placeholder: string; resolve: (v: string | null) => void } | null;
   prefs: Prefs;
   draft: DraftConfig;
   /** Modi und Optionen der zuletzt gesehenen Session – für Auswahlfelder vor dem ersten Prompt. */
@@ -411,6 +421,9 @@ const initialPrefs: Prefs = {
   autoModel: true,
   routing: { simple: "zai-glm-5-3-flash", standard: "mistral-medium-3.5", complex: "mistral-large-4" },
   accent: null,
+  assistModel: "mistral-small-latest",
+  fim: true,
+  tourDone: false,
   ...load<Partial<Prefs>>("prefs", {}),
 };
 
@@ -469,6 +482,9 @@ export const useStore = create<State & Actions>((set, get) => {
     panel: null,
     sidebarOpen: true,
     paletteOpen: false,
+    newProjectOpen: false,
+    tourStep: null,
+    textPrompt: null,
     prefs: initialPrefs,
     draft: {},
     files: {},
@@ -829,7 +845,15 @@ export const useStore = create<State & Actions>((set, get) => {
       const sid = id;
       const blocks: ContentBlock[] = [{ type: "text", text }];
       for (const a of attachments) {
-        if (a.kind === "file") {
+        if (a.kind === "document") {
+          // PDF/Office per Mistral OCR als Text mitgeben.
+          try {
+            const text = await api.ocrDocument(a.path);
+            blocks.push({ type: "resource", resource: { uri: `file://${a.path.replace(/\\/g, "/")}`, mimeType: "text/markdown", text } });
+          } catch (e) {
+            pushItem(sid, { type: "notice", id: uid(), text: `OCR für ${a.name}: ${e}`, tone: "warn" });
+          }
+        } else if (a.kind === "file") {
           const abs = a.path.startsWith("/") || /^[A-Za-z]:/.test(a.path) ? a.path : `${project}/${a.path}`;
           // Windows: C:\a\b → file:///C:/a/b
           const uri = /^[A-Za-z]:/.test(abs) ? `file:///${abs.replace(/\\/g, "/")}` : `file://${abs}`;
@@ -863,7 +887,7 @@ export const useStore = create<State & Actions>((set, get) => {
           .map((i) => (i.type === "user" ? i.text : ""))
           .join("\n");
         const verdict = await api
-          .classifyTask(text, history)
+          .classifyTask(text, history, get().prefs.assistModel)
           .catch(() => ({ level: heuristicLevel(text), reason: "Schätzung ohne KI" }));
         const available = modelOption.options.map((o) => o.value);
         const model = pickModel(verdict.level, get().prefs.routing, available, attachments.some((a) => a.kind === "image"));

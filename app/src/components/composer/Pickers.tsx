@@ -56,7 +56,7 @@ export function ModePicker({ session }: { session?: Session }) {
   return (
     <Menu>
       <MenuTrigger asChild>
-        <button aria-label="Freigabe-Modus">
+        <button aria-label="Freigabe-Modus" data-tour="mode">
           <PickerButton icon={info?.icon ?? Hand} label={info?.label ?? current} warn={current === "auto-approve"} />
         </button>
       </MenuTrigger>
@@ -95,7 +95,7 @@ export function OptionPicker({ session, id }: { session?: Session; id: "model" |
     return (
       <Menu>
         <MenuTrigger asChild>
-          <button aria-label="Modell">
+          <button aria-label="Modell" data-tour="model">
             <PickerButton icon={auto ? Wand2 : Cpu} label={auto ? `Auto · ${name(current)}` : name(current)} />
           </button>
         </MenuTrigger>

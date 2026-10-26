@@ -1,7 +1,7 @@
 import { Command } from "cmdk";
 import { shortcut } from "../../lib/platform";
 import * as Dialog from "@radix-ui/react-dialog";
-import { FolderOpen, Folder, MessageSquare, Moon, PanelRight, Settings, SquarePen, Sun } from "lucide-react";
+import { FolderOpen, FolderPlus, GraduationCap, Folder, MessageSquare, Moon, PanelRight, Settings, SquarePen, Sun } from "lucide-react";
 import { basename, useStore } from "../../lib/store";
 import { relativeTime } from "../../lib/format";
 import { pickProject } from "./Sidebar";
@@ -51,8 +51,14 @@ export function CommandPalette() {
                 <Item icon={<SquarePen />} hint={shortcut("N")} onSelect={run(() => newDraft())}>
                   Neue Session
                 </Item>
+                <Item icon={<FolderPlus />} onSelect={run(() => set({ newProjectOpen: true }))}>
+                  Neues Projekt anlegen …
+                </Item>
                 <Item icon={<FolderOpen />} onSelect={run(pickProject)}>
                   Projektordner öffnen …
+                </Item>
+                <Item icon={<GraduationCap />} onSelect={run(() => set({ tourStep: 0 }))}>
+                  Einführung starten
                 </Item>
                 <Item icon={<Settings />} hint={shortcut(",")} onSelect={run(() => setView("settings"))}>
                   Einstellungen

@@ -62,6 +62,7 @@ export interface PromptResult {
 
 export type ContentBlock =
   | { type: "text"; text: string }
+  | { type: "resource"; resource: { uri: string; mimeType: string; text: string } }
   | { type: "resource_link"; uri: string; name: string }
   | { type: "image"; mimeType: string; data: string };
 
@@ -109,9 +110,10 @@ export const api = {
   startupCheck: () => invoke<{ changed: boolean; newModels: CatalogModel[] }>("startup_check"),
   listSkills: (cwd?: string) => invoke<SkillInfo[]>("list_skills", { cwd: cwd ?? null }),
   npxAvailable: () => invoke<boolean>("npx_available"),
-  classifyTask: (text: string, history?: string) => invoke<{ level: "simple" | "standard" | "complex"; reason: string }>("classify_task", { text, history: history ?? null }),
-  projectSuggestions: (cwd: string, recent: string[], refresh = false) => invoke<Suggestion[]>("project_suggestions", { cwd, recent, refresh }),
-  commitMessage: (cwd: string) => invoke<string>("commit_message", { cwd }),
+  classifyTask: (text: string, history: string | undefined, model: string) =>
+    invoke<{ level: "simple" | "standard" | "complex"; reason: string }>("classify_task", { text, history: history ?? null, model }),
+  projectSuggestions: (cwd: string, recent: string[], model: string, refresh = false) => invoke<Suggestion[]>("project_suggestions", { cwd, recent, refresh, model }),
+  commitMessage: (cwd: string, model: string) => invoke<string>("commit_message", { cwd, model }),
   gitStatus: (cwd: string) => invoke<GitStatus>("git_status", { cwd }),
   gitDiff: (cwd: string, path: string, staged: boolean) => invoke<string>("git_diff", { cwd, path, staged }),
   gitShowHead: (cwd: string, path: string) => invoke<string>("git_show_head", { cwd, path }),
@@ -129,6 +131,11 @@ export const api = {
   externalEditors: () => invoke<{ id: string; name: string }[]>("external_editors"),
   openExternal: (editor: string, cwd: string, path?: string, line?: number) =>
     invoke<void>("open_in_external", { editor, cwd, path: path ?? null, line: line ?? null }),
+  fimComplete: (prefix: string, suffix: string) => invoke<string>("fim_complete", { prefix, suffix, model: null }),
+  ocrDocument: (path: string) => invoke<string>("ocr_document", { path }),
+  createProject: (parent: string, name: string, git: boolean, readme: boolean) => invoke<string>("create_project", { parent, name, git, readme }),
+  createPath: (cwd: string, path: string, dir: boolean) => invoke<void>("create_path", { cwd, path, dir }),
+  defaultProjectsDir: () => invoke<string>("default_projects_dir"),
   meterStart: () => invoke<void>("meter_start"),
   meterStop: () => invoke<void>("meter_stop"),
   readCustomization: () => invoke<{ settings: Record<string, unknown>; css: string }>("read_customization"),

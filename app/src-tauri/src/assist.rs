@@ -17,14 +17,14 @@ type CmdResult<T> = Result<T, String>;
 const FAST_MODEL: &str = "mistral-small-latest";
 
 /// Chat-Anfrage mit JSON-Antwort.
-async fn quick_json(system: &str, user: &str, timeout: u64) -> CmdResult<Value> {
+async fn quick_json(model: &str, system: &str, user: &str, timeout: u64) -> CmdResult<Value> {
     let key = read_key().ok_or("Kein Mistral-Schlüssel")?;
     let body: Value = reqwest::Client::new()
         .post(format!("{API_BASE}/chat/completions"))
         .bearer_auth(key)
         .timeout(Duration::from_secs(timeout))
         .json(&json!({
-            "model": FAST_MODEL,
+            "model": model,
             "temperature": 0.2,
             "response_format": { "type": "json_object" },
             "messages": [{ "role": "system", "content": system }, { "role": "user", "content": user }]
@@ -41,7 +41,7 @@ async fn quick_json(system: &str, user: &str, timeout: u64) -> CmdResult<Value> 
 
 /// Stuft eine Aufgabe für die Auto-Modellwahl ein: simple, standard oder complex.
 #[tauri::command]
-pub async fn classify_task(text: String, history: Option<String>) -> CmdResult<Value> {
+pub async fn classify_task(text: String, history: Option<String>, model: Option<String>) -> CmdResult<Value> {
     const SYSTEM: &str = "Du ordnest Aufgaben für einen Coding-Agenten einer Stufe zu, damit das passende Modell gewählt wird. \
         simple: kurze Fragen, Erklärungen, kleine lokale Änderungen, Umbenennungen, Formatierung. \
         standard: übliche Features, Bugfixes in wenigen Dateien, Tests schreiben. \
@@ -55,7 +55,7 @@ pub async fn classify_task(text: String, history: Option<String>) -> CmdResult<V
     }
     user.push_str("Neue Aufgabe:\n");
     user.push_str(&text.chars().take(4000).collect::<String>());
-    let v = quick_json(SYSTEM, &user, 6).await?;
+    let v = quick_json(model.as_deref().unwrap_or(FAST_MODEL), SYSTEM, &user, 6).await?;
     let level = match v["level"].as_str() {
         Some(l @ ("simple" | "standard" | "complex")) => l,
         _ => "standard",
@@ -128,7 +128,7 @@ fn cache_path(cwd: &str) -> PathBuf {
 /// Vier Vorschläge, zugeschnitten auf Projekt, Git-Stand und letzte Sessions.
 /// Zwischengespeichert, bis sich HEAD/Status ändert oder 12 Stunden vergehen.
 #[tauri::command]
-pub async fn project_suggestions(cwd: String, recent: Vec<String>, refresh: Option<bool>) -> CmdResult<Value> {
+pub async fn project_suggestions(cwd: String, recent: Vec<String>, refresh: Option<bool>, model: Option<String>) -> CmdResult<Value> {
     let root = PathBuf::from(&cwd);
     let state = git_output(&root, &["rev-parse", "HEAD"]).unwrap_or_default() + &git_output(&root, &["status", "--porcelain"]).unwrap_or_default();
     let fingerprint: String = Sha256::digest(state.as_bytes()).iter().take(8).map(|b| format!("{b:02x}")).collect();
@@ -149,7 +149,7 @@ pub async fn project_suggestions(cwd: String, recent: Vec<String>, refresh: Opti
         Keine allgemeinen Floskeln. Wiederhole keine Aufgaben aus den letzten Sessions. \
         Antworte als JSON: {\"suggestions\":[{\"title\":\"max. 4 Wörter\",\"description\":\"ein kurzer Satz\",\"prompt\":\"vollständige Anweisung an den Agenten auf Deutsch\",\"icon\":\"bug|test|docs|refactor|feature|explain|git|perf|security\"}]}";
     let user = format!("Projekt: {cwd}\n\n{brief}\n\nLetzte Sessions in diesem Projekt: {}", if recent.is_empty() { "keine".into() } else { recent.join("; ") });
-    let v = quick_json(SYSTEM, &user, 20).await?;
+    let v = quick_json(model.as_deref().unwrap_or(FAST_MODEL), SYSTEM, &user, 20).await?;
     let suggestions = v["suggestions"].clone();
     if !suggestions.is_array() {
         return Err("Keine Vorschläge erhalten".into());
@@ -161,7 +161,7 @@ pub async fn project_suggestions(cwd: String, recent: Vec<String>, refresh: Opti
 
 /// Formuliert eine Commit-Nachricht aus dem gestagten Diff.
 #[tauri::command]
-pub async fn commit_message(cwd: String) -> CmdResult<String> {
+pub async fn commit_message(cwd: String, model: Option<String>) -> CmdResult<String> {
     let root = PathBuf::from(&cwd);
     let mut diff = git_output(&root, &["diff", "--cached", "--stat"]).unwrap_or_default();
     diff.push_str("\n");
@@ -173,6 +173,6 @@ pub async fn commit_message(cwd: String) -> CmdResult<String> {
     const SYSTEM: &str = "Formuliere eine Git-Commit-Nachricht für den Diff. Halte dich an Sprache und Stil der bisherigen Commits \
         (falls vorhanden, sonst Deutsch): Betreffzeile im Imperativ, max. 72 Zeichen, optional Leerzeile und kurze Stichpunkte. \
         Antworte als JSON: {\"message\":\"...\"}";
-    let v = quick_json(SYSTEM, &format!("Bisherige Commits:\n{log}\n\nDiff:\n{diff}"), 20).await?;
+    let v = quick_json(model.as_deref().unwrap_or(FAST_MODEL), SYSTEM, &format!("Bisherige Commits:\n{log}\n\nDiff:\n{diff}"), 20).await?;
     v["message"].as_str().map(str::to_string).ok_or_else(|| "Keine Nachricht erhalten".into())
 }

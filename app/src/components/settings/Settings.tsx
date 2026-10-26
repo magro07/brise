@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { shortcut } from "../../lib/platform";
 import {
+  Globe,
   Sparkles,
   Plus,
   Wand2,
@@ -29,6 +30,7 @@ import { useStore, type Theme } from "../../lib/store";
 import { looksSecret, maskSecrets } from "../../lib/format";
 import { Button, Spinner, Switch, clsx } from "../ui";
 import { MODE_INFO } from "../composer/Pickers";
+import { confirmAction } from "../../lib/dialogs";
 
 const SECTIONS = [
   { id: "general", label: "Allgemein", icon: Palette },
@@ -37,6 +39,7 @@ const SECTIONS = [
   { id: "permissions", label: "Freigaben & Sicherheit", icon: ShieldCheck },
   { id: "agents", label: "Agents & Subagents", icon: Bot },
   { id: "skills", label: "Skills", icon: Sparkles },
+  { id: "web", label: "Websuche & Recherche", icon: Globe },
   { id: "voice", label: "Sprache", icon: AudioLines },
   { id: "embeddings", label: "Embeddings & Suche", icon: DatabaseZap },
   { id: "tools", label: "Werkzeuge & MCP", icon: Plug },
@@ -370,6 +373,17 @@ export function SettingsView() {
                   control={<Switch checked={prefs.notify} onChange={(v) => setPrefs({ notify: v })} />}
                 />
               </Card>
+              <Card title="Einführung">
+                <Row
+                  title="Tour durch Brise"
+                  description="Zeigt die wichtigsten Bereiche Schritt für Schritt."
+                  control={
+                    <Button size="sm" onClick={() => (setView("chat"), useStore.setState({ tourStep: 0 }))}>
+                      Tour starten
+                    </Button>
+                  }
+                />
+              </Card>
               <Card title="Tastenkürzel">
                 {[
                   ["Neue Session", shortcut("N")],
@@ -394,7 +408,7 @@ export function SettingsView() {
                   description={auth?.authenticated ? `Zugang über deinen Mistral-Plan (gespeichert: ${auth.authState === "os_keyring" ? "Schlüsselbund des Systems" : auth.authState})` : "Melde dich an, um Vibe zu nutzen."}
                   control={
                     auth?.signOutAvailable ? (
-                      <Button variant="danger" onClick={() => window.confirm("Wirklich abmelden? Der gespeicherte Schlüssel wird entfernt.") && signOut()}>
+                      <Button variant="danger" onClick={async () => (await confirmAction("Wirklich abmelden? Der gespeicherte Schlüssel wird entfernt.", true)) && signOut()}>
                         Abmelden
                       </Button>
                     ) : null
@@ -415,6 +429,8 @@ export function SettingsView() {
             <>
               <AutoModelCard />
               <ModelsCard onChange={() => setDirty(true)} />
+              <MoreMistralCard />
+              <EfficiencyCard values={values} write={write} />
               <Card title="Weitere Einstellungen">{SECTION_KEYS.models.map(field)}</Card>
             </>
           )}
@@ -495,7 +511,15 @@ export function SettingsView() {
             </>
           )}
 
-          {section === "agents" && <Card description="Subagents übernehmen Teilaufgaben mit eigenem Kontext, z. B. „explore“ zum Durchsuchen des Codes.">{SECTION_KEYS.agents.map(field)}</Card>}
+          {section === "agents" && (
+            <>
+              <Card description="Subagents übernehmen Teilaufgaben mit eigenem Kontext, z. B. „explore“ zum Durchsuchen des Codes oder „researcher“ für Webrecherche. Sie nutzen das Modell der Hauptsession – ein eigenes Modell pro Subagent unterstützt Vibe derzeit nicht.">
+                {SECTION_KEYS.agents.map(field)}
+              </Card>
+            </>
+          )}
+
+          {section === "web" && <WebCard values={values} write={write} />}
 
           {section === "tools" && (
             <>
@@ -544,7 +568,7 @@ function Allowlist({ values, write }: { values: Record<string, unknown>; write: 
           <div className="flex-1">
             <b className="text-bad">{secret.length} Einträge enthalten vermutlich Passwörter oder Tokens</b> im Klartext. Entfernen und die Zugangsdaten ändern.
           </div>
-          <Button variant="danger" size="sm" onClick={() => window.confirm(`${secret.length} Einträge entfernen?`) && remove(secret)}>
+          <Button variant="danger" size="sm" onClick={async () => (await confirmAction(`${secret.length} Einträge entfernen?`, true)) && remove(secret)}>
             Alle entfernen
           </Button>
         </div>
@@ -966,6 +990,125 @@ function SkillsView({ values, write }: { values: Record<string, unknown>; write:
           </Card>
         );
       })}
+    </>
+  );
+}
+
+function MoreMistralCard() {
+  const prefs = useStore((s) => s.prefs);
+  const setPrefs = useStore((s) => s.setPrefs);
+  return (
+    <Card title="Weitere Mistral-Modelle" description="Brise nutzt neben dem Chat-Modell gezielt spezialisierte Modelle – alles über deinen Mistral-Key.">
+      <Row
+        title="Codestral-Vervollständigung im Editor"
+        description="Grauer Vorschlag beim Tippen (Fill-in-the-Middle), Tab übernimmt."
+        control={<Switch checked={prefs.fim} onChange={(v) => setPrefs({ fim: v })} />}
+      />
+      <Row
+        title="Task-Modell"
+        description="Stuft Aufgaben für „Auto“ ein und schreibt persönliche Vorschläge und Commit-Nachrichten. Schnell und günstig ist hier wichtiger als klug."
+        control={
+          <select
+            value={prefs.assistModel}
+            onChange={(e) => setPrefs({ assistModel: e.target.value })}
+            className="h-8 min-w-[220px] rounded-lg border border-line bg-elev px-2 text-[0.92em] outline-none focus:border-accent"
+          >
+            <option value="mistral-small-latest">Mistral Small (empfohlen)</option>
+            <option value="ministral-8b-latest">Ministral 8B (schneller)</option>
+            <option value="ministral-3b-latest">Ministral 3B (am schnellsten)</option>
+            <option value="mistral-medium-latest">Mistral Medium (gründlicher)</option>
+          </select>
+        }
+      />
+      <Row title="Mistral OCR" description="PDF-, Word- und PowerPoint-Anhänge werden automatisch in Text umgewandelt, bevor Vibe sie liest." control={<Badge>automatisch</Badge>} />
+      <Row title="Voxtral" description="Spracheingabe (Realtime) und Vorlesen (TTS) – siehe Einstellungen → Sprache." control={<Badge>aktiv</Badge>} />
+      <Row title="Codestral Embed" description="Semantische Codesuche – siehe Einstellungen → Embeddings & Suche." control={<Badge>aktiv</Badge>} />
+    </Card>
+  );
+}
+
+const COMPACT_PRESETS = [
+  ["", "Vibe-Standard"],
+  ["300000", "Ausgewogen (300k)"],
+  ["150000", "Sparsam (150k)"],
+  ["80000", "Sehr sparsam (80k)"],
+];
+
+function EfficiencyCard({ values, write }: { values: Record<string, unknown>; write: (k: string[], v: unknown) => Promise<void> }) {
+  const current = values.auto_compact_threshold == null ? "" : String(values.auto_compact_threshold);
+  return (
+    <Card
+      title="Effizienz"
+      description="Weniger Kontext heißt schnellere und günstigere Antworten. Brise spart bereits durch Auto-Modellwahl, Prompt-Cache, semantische Suche statt Volltext-Lesen und Subagents, die nur Ergebnisse zurückgeben."
+    >
+      <Row
+        title="Automatisch komprimieren ab"
+        description="Wird der Verlauf größer, fasst Vibe ältere Teile zusammen."
+        control={
+          <select
+            value={COMPACT_PRESETS.some(([v]) => v === current) ? current : "custom"}
+            onChange={(e) => write(["auto_compact_threshold"], e.target.value ? Number(e.target.value) : null)}
+            className="h-8 min-w-[200px] rounded-lg border border-line bg-elev px-2 text-[0.92em] outline-none focus:border-accent"
+          >
+            {COMPACT_PRESETS.map(([v, l]) => (
+              <option key={v} value={v}>
+                {l}
+              </option>
+            ))}
+            {!COMPACT_PRESETS.some(([v]) => v === current) && <option value="custom">{current} Tokens</option>}
+          </select>
+        }
+      />
+      <Row
+        title="Knapper Arbeitsstil (ponytail)"
+        description="Der Skill ponytail hält Änderungen und Antworten minimal. Vibe nutzt ihn bei passenden Aufgaben selbst – oder du schreibst /ponytail."
+        control={<Badge>Skill</Badge>}
+      />
+    </Card>
+  );
+}
+
+function WebCard({ values, write }: { values: Record<string, unknown>; write: (k: string[], v: unknown) => Promise<void> }) {
+  const tools = (values.tools ?? {}) as Record<string, Record<string, unknown>>;
+  const searchAlways = tools.web_search?.permission === "always";
+  const fetchAlways = tools.web_fetch?.permission === "always";
+  const searchModel = (tools.web_search?.model as string | undefined) ?? "";
+  return (
+    <>
+      <Card
+        title="Websuche"
+        description="Vibe sucht über Mistrals Websuche und liest Seiten mit web_fetch. Die Subagents „researcher“ dürfen das ohne Rückfrage – sie lesen nur."
+      >
+        <Row
+          title="Websuche ohne Rückfrage"
+          description="Sonst fragt Vibe vor jeder Suche in der Hauptsession."
+          control={<Switch checked={searchAlways} onChange={(v) => write(["tools", "web_search", "permission"], v ? "always" : null)} />}
+        />
+        <Row
+          title="Webseiten lesen ohne Rückfrage"
+          description="web_fetch lädt Seiten nur lesend; Ziele außerhalb der Allowlist fragt Vibe sonst nach."
+          control={<Switch checked={fetchAlways} onChange={(v) => write(["tools", "web_fetch", "permission"], v ? "always" : null)} />}
+        />
+        <Row
+          title="Modell für die Websuche"
+          control={
+            <select
+              value={searchModel}
+              onChange={(e) => write(["tools", "web_search", "model"], e.target.value || null)}
+              className="h-8 min-w-[220px] rounded-lg border border-line bg-elev px-2 text-[0.92em] outline-none focus:border-accent"
+            >
+              <option value="">Vibe-Standard (mit Such-Werkzeugen)</option>
+              <option value="mistral-medium-latest">Mistral Medium</option>
+              <option value="mistral-large-4">Mistral Large 4</option>
+              <option value="mistral-small-latest">Mistral Small (schnell)</option>
+            </select>
+          }
+        />
+      </Card>
+      <Card title="Deep Research" description="Der mitgelieferte Skill „deep-research“ wählt die Tiefe selbst: schnelle Antwort mit Quellen, gründlicher Vergleich oder ein vollständiger Bericht mit parallelen Recherche-Subagents.">
+        <Row title={<code className="font-mono">/deep-research &lt;Frage&gt;</code>} description="Direkt aufrufen – oder einfach „recherchiere …“ schreiben." control={<Badge>Skill</Badge>} />
+        <Row title="Berichte" description="Ausführliche Recherchen landen als Markdown unter research/ im Projekt, mit Quellenliste und Vertrauensstufe." control={<Badge>research/*.md</Badge>} />
+      </Card>
     </>
   );
 }

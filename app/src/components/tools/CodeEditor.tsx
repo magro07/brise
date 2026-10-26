@@ -1,5 +1,7 @@
 import { useEffect, useRef } from "react";
 import type * as Monaco from "monaco-editor";
+import { api } from "../../lib/acp";
+import { useStore } from "../../lib/store";
 
 // Monaco (der Editor von VS Code) wird erst geladen, wenn er gebraucht wird.
 let monacoPromise: Promise<typeof Monaco> | null = null;
@@ -27,9 +29,37 @@ function loadMonaco() {
     const ts = (monaco.languages as unknown as { typescript?: { typescriptDefaults: { setDiagnosticsOptions(o: object): void }; javascriptDefaults: { setDiagnosticsOptions(o: object): void } } }).typescript;
     ts?.typescriptDefaults.setDiagnosticsOptions({ noSemanticValidation: true, noSyntaxValidation: false });
     ts?.javascriptDefaults.setDiagnosticsOptions({ noSemanticValidation: true, noSyntaxValidation: false });
+    registerCodestral(monaco);
     return monaco;
   })();
   return monacoPromise;
+}
+
+/** Codestral (Fill-in-the-Middle) als Inline-Vorschlag – Tab übernimmt. */
+function registerCodestral(monaco: typeof Monaco) {
+  const provider: Monaco.languages.InlineCompletionsProvider = {
+    async provideInlineCompletions(model, position, _context, token) {
+      if (!useStore.getState().prefs.fim) return { items: [] };
+      // Kurz warten: beim schnellen Tippen keine Anfrage pro Taste.
+      await new Promise((r) => setTimeout(r, 280));
+      if (token.isCancellationRequested) return { items: [] };
+      const full = model.getFullModelRange();
+      const prefix = model.getValueInRange({ startLineNumber: 1, startColumn: 1, endLineNumber: position.lineNumber, endColumn: position.column }).slice(-6000);
+      const suffix = model.getValueInRange({ startLineNumber: position.lineNumber, startColumn: position.column, endLineNumber: full.endLineNumber, endColumn: full.endColumn }).slice(0, 2500);
+      if (!prefix.trim()) return { items: [] };
+      try {
+        const text = await api.fimComplete(prefix, suffix);
+        if (token.isCancellationRequested || !text.trim()) return { items: [] };
+        return {
+          items: [{ insertText: text, range: new monaco.Range(position.lineNumber, position.column, position.lineNumber, position.column) }],
+        };
+      } catch {
+        return { items: [] };
+      }
+    },
+    disposeInlineCompletions() {},
+  };
+  for (const lang of monaco.languages.getLanguages()) monaco.languages.registerInlineCompletionsProvider(lang.id, provider);
 }
 
 const LANG: Record<string, string> = {
@@ -59,6 +89,7 @@ const OPTIONS = {
   renderWhitespace: "selection" as const,
   smoothScrolling: true,
   padding: { top: 8 },
+  inlineSuggest: { enabled: true },
 };
 
 /** Monaco-Editor; mit `original` als Vergleichsansicht (letzter Commit ↔ jetzt). */

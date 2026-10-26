@@ -7,6 +7,7 @@ mod customize;
 mod embeddings;
 mod files;
 mod meter;
+mod mistral;
 mod models;
 mod skills;
 mod terminal;
@@ -143,6 +144,11 @@ pub fn run() {
             files::write_project_file,
             files::external_editors,
             files::open_in_external,
+            mistral::fim_complete,
+            mistral::ocr_document,
+            files::create_project,
+            files::create_path,
+            files::default_projects_dir,
             meter::meter_start,
             meter::meter_stop,
             customize::read_customization,

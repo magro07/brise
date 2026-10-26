@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { AlertTriangle, BookOpen, Bug, CheckCircle2, Download, FileSearch, FolderOpen, Gauge, GitBranch, Globe, KeyRound, LogIn, RefreshCw, Rocket, ShieldCheck, Sparkles, TestTube2, Wand2 } from "lucide-react";
+import { AlertTriangle, BookOpen, Bug, CheckCircle2, Download, FileSearch, FolderOpen, FolderPlus, Gauge, GitBranch, Globe, KeyRound, LogIn, RefreshCw, Rocket, ShieldCheck, Sparkles, TestTube2, Wand2 } from "lucide-react";
 import { api, type Suggestion } from "../../lib/acp";
 import { basename, useStore } from "../../lib/store";
 import { Button, Logo, Spinner, clsx } from "../ui";
@@ -224,7 +224,7 @@ export function DraftHero({ project }: { project: string }) {
     setLoading(true);
     const recent = index.filter((x) => x.cwd === project).slice(0, 8).map((x) => x.title ?? "").filter(Boolean);
     try {
-      const list = await api.projectSuggestions(project, recent, refresh);
+      const list = await api.projectSuggestions(project, recent, useStore.getState().prefs.assistModel, refresh);
       setSuggestions(list.slice(0, 4));
       setPersonal(true);
     } catch {
@@ -289,10 +289,15 @@ export function NoProject() {
     <div className="flex flex-1 flex-col items-center justify-center px-6" data-tauri-drag-region>
       <Logo size={56} />
       <h1 className="mt-5 text-[1.7em] font-semibold tracking-tight">Willkommen bei Brise</h1>
-      <p className="mt-1 text-muted">Wähle einen Projektordner, in dem Vibe arbeiten soll.</p>
-      <Button variant="primary" size="lg" className="mt-6" onClick={pickProject}>
-        <FolderOpen className="h-4 w-4" /> Projektordner öffnen
-      </Button>
+      <p className="mt-1 text-muted">Leg ein neues Projekt an oder öffne einen vorhandenen Ordner.</p>
+      <div className="mt-6 flex gap-2">
+        <Button variant="primary" size="lg" onClick={() => useStore.getState().set({ newProjectOpen: true })}>
+          <FolderPlus className="h-4 w-4" /> Neues Projekt
+        </Button>
+        <Button size="lg" onClick={pickProject}>
+          <FolderOpen className="h-4 w-4" /> Ordner öffnen
+        </Button>
+      </div>
       {projects.length > 0 && (
         <div className="mt-8 w-full max-w-[460px]">
           <div className="mb-1.5 text-[0.78em] font-medium uppercase tracking-wide text-muted">Zuletzt</div>

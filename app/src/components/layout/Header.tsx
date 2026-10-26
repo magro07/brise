@@ -3,6 +3,7 @@ import { shortcut } from "../../lib/platform";
 import { basename, useStore, type Session } from "../../lib/store";
 import { IconButton, Menu, MenuContent, MenuItem, MenuTrigger, Tip, clsx } from "../ui";
 import { PANEL_TABS, changedFiles, subagents } from "../panels/SidePanel";
+import { confirmAction } from "../../lib/dialogs";
 
 export function Header({ session }: { session?: Session }) {
   const project = useStore((s) => s.activeProject);
@@ -65,7 +66,7 @@ export function Header({ session }: { session?: Session }) {
               <MenuItem
                 icon={<Trash2 />}
                 danger
-                onSelect={() => window.confirm("Diese Session endgültig löschen?") && deleteSession(session.id)}
+                onSelect={async () => (await confirmAction("Diese Session endgültig löschen?", true)) && deleteSession(session.id)}
               >
                 Session löschen
               </MenuItem>
