@@ -1,0 +1,388 @@
+@import "tailwindcss";
+@import "@fontsource-variable/inter";
+@import "@fontsource-variable/jetbrains-mono";
+
+/* Farbwerte als Variablen, damit Hell/Dunkel über data-theme umschaltet. */
+:root {
+  --bg: #ffffff;
+  --sidebar: #f6f6f4;
+  --panel: #fbfbfa;
+  --elev: #ffffff;
+  --hover: #efefec;
+  --active: #e7e6e2;
+  --line: #e6e5e1;
+  --line-strong: #d6d4ce;
+  --fg: #1d1c1a;
+  --fg-2: #4a4844;
+  --muted: #85827b;
+  --accent: #3d6ef0;
+  --accent-fg: #ffffff;
+  --accent-soft: #eaf0fe;
+  --ok: #17803d;
+  --ok-soft: #e7f5ec;
+  --warn: #a35a00;
+  --warn-soft: #fdf3e2;
+  --bad: #c4352b;
+  --bad-soft: #fceceb;
+  --code: #f4f4f2;
+  --user: #f1f0ed;
+  --shadow: 0 1px 2px rgb(0 0 0 / 0.04), 0 2px 8px rgb(0 0 0 / 0.04);
+  --shadow-lg: 0 8px 30px rgb(0 0 0 / 0.12), 0 2px 6px rgb(0 0 0 / 0.06);
+  color-scheme: light;
+}
+
+:root[data-theme="dark"] {
+  --bg: #1b1b1a;
+  --sidebar: #141413;
+  --panel: #181817;
+  --elev: #242422;
+  --hover: #262624;
+  --active: #2e2e2b;
+  --line: #2c2b29;
+  --line-strong: #3a3936;
+  --fg: #ecebe7;
+  --fg-2: #c3c1bb;
+  --muted: #8f8c85;
+  --accent: #6d93ff;
+  --accent-fg: #0d1430;
+  --accent-soft: #1f2a48;
+  --ok: #5ad083;
+  --ok-soft: #173322;
+  --warn: #f2b25c;
+  --warn-soft: #3a2c14;
+  --bad: #ff7b70;
+  --bad-soft: #3d1e1b;
+  --code: #222220;
+  --user: #2a2a27;
+  --shadow: 0 1px 2px rgb(0 0 0 / 0.3);
+  --shadow-lg: 0 10px 40px rgb(0 0 0 / 0.5);
+  color-scheme: dark;
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-sidebar: var(--sidebar);
+  --color-panel: var(--panel);
+  --color-elev: var(--elev);
+  --color-hover: var(--hover);
+  --color-active: var(--active);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-fg: var(--fg);
+  --color-fg-2: var(--fg-2);
+  --color-muted: var(--muted);
+  --color-accent: var(--accent);
+  --color-accent-fg: var(--accent-fg);
+  --color-accent-soft: var(--accent-soft);
+  --color-ok: var(--ok);
+  --color-ok-soft: var(--ok-soft);
+  --color-warn: var(--warn);
+  --color-warn-soft: var(--warn-soft);
+  --color-bad: var(--bad);
+  --color-bad-soft: var(--bad-soft);
+  --color-code: var(--code);
+  --color-user: var(--user);
+  --font-sans: "Inter Variable", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono Variable", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --shadow-soft: var(--shadow);
+  --shadow-pop: var(--shadow-lg);
+}
+
+@layer base {
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-sans);
+  font-size: var(--app-font-size, 14px);
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+  user-select: none;
+  cursor: default;
+}
+
+/* Text im Chat und in Eingaben bleibt markierbar. */
+.selectable,
+textarea,
+input,
+pre,
+code {
+  user-select: text;
+  cursor: auto;
+}
+
+button {
+  cursor: default;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--line-strong);
+  border-radius: 10px;
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+}
+
+/* ---------- Markdown ---------- */
+
+.prose-chat {
+  line-height: 1.65;
+}
+
+.prose-chat > :first-child {
+  margin-top: 0;
+}
+
+.prose-chat > :last-child {
+  margin-bottom: 0;
+}
+
+.prose-chat p,
+.prose-chat ul,
+.prose-chat ol,
+.prose-chat pre,
+.prose-chat table,
+.prose-chat blockquote {
+  margin: 0.7em 0;
+}
+
+.prose-chat ul,
+.prose-chat ol {
+  padding-left: 1.4em;
+}
+
+.prose-chat ul {
+  list-style: disc;
+}
+
+.prose-chat ol {
+  list-style: decimal;
+}
+
+.prose-chat li {
+  margin: 0.2em 0;
+}
+
+.prose-chat h1,
+.prose-chat h2,
+.prose-chat h3,
+.prose-chat h4 {
+  font-weight: 650;
+  line-height: 1.3;
+  margin: 1.2em 0 0.5em;
+}
+
+.prose-chat h1 {
+  font-size: 1.35em;
+}
+
+.prose-chat h2 {
+  font-size: 1.2em;
+}
+
+.prose-chat h3 {
+  font-size: 1.05em;
+}
+
+.prose-chat a {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.prose-chat strong {
+  font-weight: 650;
+}
+
+.prose-chat :not(pre) > code {
+  font-family: var(--font-mono);
+  font-size: 0.86em;
+  background: var(--code);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 0.05em 0.35em;
+}
+
+.prose-chat pre {
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+  line-height: 1.55;
+  background: var(--code);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 12px 14px;
+  overflow-x: auto;
+}
+
+.prose-chat pre code {
+  background: none;
+  padding: 0;
+}
+
+.prose-chat blockquote {
+  border-left: 3px solid var(--line-strong);
+  padding-left: 12px;
+  color: var(--fg-2);
+}
+
+.prose-chat table {
+  border-collapse: collapse;
+  font-size: 0.92em;
+  display: block;
+  overflow-x: auto;
+}
+
+.prose-chat th,
+.prose-chat td {
+  border: 1px solid var(--line);
+  padding: 5px 10px;
+  text-align: left;
+}
+
+.prose-chat th {
+  background: var(--panel);
+  font-weight: 600;
+}
+
+.prose-chat hr {
+  border: none;
+  border-top: 1px solid var(--line);
+  margin: 1.2em 0;
+}
+
+/* ---------- Syntax-Highlighting (highlight.js), an die Themes angepasst ---------- */
+
+.hljs-comment,
+.hljs-quote {
+  color: var(--muted);
+  font-style: italic;
+}
+
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-built_in,
+.hljs-type {
+  color: #a626a4;
+}
+
+.hljs-string,
+.hljs-attr,
+.hljs-symbol,
+.hljs-bullet,
+.hljs-addition {
+  color: #2f8a3e;
+}
+
+.hljs-number,
+.hljs-literal,
+.hljs-variable,
+.hljs-template-variable {
+  color: #b35c00;
+}
+
+.hljs-title,
+.hljs-section,
+.hljs-function .hljs-title {
+  color: #3d6ef0;
+}
+
+.hljs-deletion {
+  color: var(--bad);
+}
+
+:root[data-theme="dark"] .hljs-keyword,
+:root[data-theme="dark"] .hljs-selector-tag,
+:root[data-theme="dark"] .hljs-built_in,
+:root[data-theme="dark"] .hljs-type {
+  color: #d18cf2;
+}
+
+:root[data-theme="dark"] .hljs-string,
+:root[data-theme="dark"] .hljs-attr,
+:root[data-theme="dark"] .hljs-symbol,
+:root[data-theme="dark"] .hljs-bullet,
+:root[data-theme="dark"] .hljs-addition {
+  color: #8fd18f;
+}
+
+:root[data-theme="dark"] .hljs-number,
+:root[data-theme="dark"] .hljs-literal,
+:root[data-theme="dark"] .hljs-variable {
+  color: #f0a75a;
+}
+
+:root[data-theme="dark"] .hljs-title,
+:root[data-theme="dark"] .hljs-section {
+  color: #82a8ff;
+}
+
+/* ---------- Animationen ---------- */
+
+@keyframes pulse-dot {
+  0%,
+  100% {
+    opacity: 0.3;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+.pulse-dot {
+  animation: pulse-dot 1.2s ease-in-out infinite;
+}
+
+@keyframes shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+.shimmer-text {
+  background: linear-gradient(90deg, var(--muted) 30%, var(--fg) 50%, var(--muted) 70%);
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: shimmer 2.4s linear infinite;
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.fade-in {
+  animation: fade-in 0.18s ease-out;
+}

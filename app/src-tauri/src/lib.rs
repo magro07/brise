@@ -1,4 +1,5 @@
 mod agent;
+mod config;
 mod rpc;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -20,6 +21,13 @@ pub fn run() {
             agent::cancel,
             agent::set_mode,
             agent::respond_permission,
+            agent::set_config_option,
+            agent::config_schema,
+            agent::delete_session,
+            config::read_config,
+            config::write_config_value,
+            config::list_project_files,
+            config::read_image,
         ])
         .run(tauri::generate_context!())
         .expect("Brise konnte nicht gestartet werden");

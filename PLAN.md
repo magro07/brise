@@ -160,7 +160,7 @@ Warum so:
 | 2 ✅ | Tauri-Grundgerüst + Chatfenster + Streaming – siehe [app/](app/README.md) | erster sichtbarer Chat |
 | 3 ✅ | Approvals, Tool-Karten, Diffs (vorgezogen, zusammen mit 2 umgesetzt) | sicher benutzbar |
 | 4 | Onboarding mit Auto-Installation + Login | ohne Terminal startbar |
-| 5 | Sessions, Projekte, Einstellungen | MVP fertig |
+| 5 ✅ | Sessions, Projekte, Einstellungen – UI-Neubau im Stil von Claude Code/Codex (Projekt-Sidebar, Subagents, Kontext-Panel, Settings aus Vibe-Schema, Befehlspalette) | MVP fertig |
 | 6 | CI-Builds + Signierung (macOS-Notarisierung braucht Apple-Developer-Konto, 99 $/Jahr; Windows-Signierung optional) | Installer für alle OS |
 
 ---

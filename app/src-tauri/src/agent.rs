@@ -24,6 +24,8 @@ pub struct AgentState {
     permissions: Arc<Mutex<HashMap<String, Value>>>,
     /// Zählt Verbindungen, damit ein altes `acp:closed` die neue nicht beendet.
     generation: AtomicU64,
+    /// Letzte erfolgreiche Verbindung – ein Neuladen der Oberfläche übernimmt sie.
+    info: AsyncMutex<Option<ConnectInfo>>,
 }
 
 async fn connection(state: &AgentState) -> CmdResult<Connection> {
@@ -52,7 +54,7 @@ pub fn find_vibe_acp() -> Option<PathBuf> {
     .find(|p| p.is_file())
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct ConnectInfo {
     generation: u64,
@@ -62,7 +64,18 @@ pub struct ConnectInfo {
 }
 
 #[tauri::command]
-pub async fn agent_connect(app: AppHandle, state: State<'_, AgentState>) -> CmdResult<ConnectInfo> {
+pub async fn agent_connect(app: AppHandle, state: State<'_, AgentState>, reuse: bool) -> CmdResult<ConnectInfo> {
+    if reuse {
+        let alive = match state.child.lock().await.as_mut() {
+            Some(child) => matches!(child.try_wait(), Ok(None)),
+            None => false,
+        };
+        if let (true, Some(mut info)) = (alive, state.info.lock().await.clone()) {
+            info.auth = call(&state, "_auth/status", json!({})).await.unwrap_or(info.auth);
+            return Ok(info);
+        }
+    }
+    *state.info.lock().await = None;
     *state.conn.lock().await = None;
     if let Some(mut old) = state.child.lock().await.take() {
         let _ = old.kill().await;
@@ -95,7 +108,9 @@ pub async fn agent_connect(app: AppHandle, state: State<'_, AgentState>) -> CmdR
     *state.conn.lock().await = Some(conn);
     *state.child.lock().await = Some(child);
 
-    Ok(ConnectInfo { generation, agent_path: path.display().to_string(), init, auth })
+    let info = ConnectInfo { generation, agent_path: path.display().to_string(), init, auth };
+    *state.info.lock().await = Some(info.clone());
+    Ok(info)
 }
 
 /// Leitet alles, was der Agent von sich aus schickt, an die Oberfläche weiter.
@@ -185,15 +200,41 @@ pub async fn load_session(state: State<'_, AgentState>, cwd: String, session_id:
     call(&state, "session/load", json!({ "cwd": cwd, "sessionId": session_id, "mcpServers": [] })).await
 }
 
+/// Ohne `cwd` liefert Vibe die Sessions aller Projekte.
 #[tauri::command]
-pub async fn list_sessions(state: State<'_, AgentState>, cwd: String) -> CmdResult<Value> {
-    call(&state, "session/list", json!({ "cwd": cwd })).await
+pub async fn list_sessions(state: State<'_, AgentState>, cwd: Option<String>) -> CmdResult<Value> {
+    let params = match cwd {
+        Some(cwd) => json!({ "cwd": cwd }),
+        None => json!({}),
+    };
+    call(&state, "session/list", params).await
+}
+
+/// `prompt` sind fertige ACP-Content-Blöcke (Text, resource_link, image).
+#[tauri::command]
+pub async fn prompt(state: State<'_, AgentState>, session_id: String, prompt: Vec<Value>) -> CmdResult<Value> {
+    call(&state, "session/prompt", json!({ "sessionId": session_id, "prompt": prompt })).await
 }
 
 #[tauri::command]
-pub async fn prompt(state: State<'_, AgentState>, session_id: String, text: String) -> CmdResult<Value> {
-    call(&state, "session/prompt", json!({ "sessionId": session_id, "prompt": [{ "type": "text", "text": text }] }))
+pub async fn set_config_option(
+    state: State<'_, AgentState>,
+    session_id: String,
+    config_id: String,
+    value: Value,
+) -> CmdResult<Value> {
+    call(&state, "session/set_config_option", json!({ "sessionId": session_id, "configId": config_id, "value": value }))
         .await
+}
+
+#[tauri::command]
+pub async fn config_schema(state: State<'_, AgentState>) -> CmdResult<Value> {
+    call(&state, "_config/schema", json!({})).await
+}
+
+#[tauri::command]
+pub async fn delete_session(state: State<'_, AgentState>, session_id: String) -> CmdResult<Value> {
+    call(&state, "_session/delete", json!({ "sessionId": session_id })).await
 }
 
 #[tauri::command]
