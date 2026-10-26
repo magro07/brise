@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { AlertTriangle, ArrowDown, Brain, Check, Wand2, CheckCircle2, ChevronRight, CircleSlash, Copy, FileText, Image, Info, Square, Volume2 } from "lucide-react";
+import { AlertTriangle, ArrowDown, Brain, Check, Wand2, CheckCircle2, ChevronRight, CircleSlash, Copy, FileText, Image, Info, Scale, Square, Volume2 } from "lucide-react";
 import { useStore } from "../../lib/store";
 import type { Item, Session } from "../../lib/store";
 import { duration, tokens } from "../../lib/format";
 import { Spinner, Tip, clsx } from "../ui";
 import { Markdown } from "./Markdown";
 import { ToolGroup } from "./ToolCall";
+import { CouncilItemCard } from "./Council";
+import { askAgentForCouncil } from "../../lib/council";
 
 type Block = { kind: "item"; item: Item } | { kind: "tools"; id: string; items: Item[] };
 
@@ -94,6 +96,8 @@ function MessageActions({ sessionId, itemId, text }: { sessionId: string; itemId
   const { narrate, stopNarration } = useStore.getState();
   const [copied, setCopied] = useState(false);
   const active = narration.itemId === itemId && narration.state !== "idle";
+  const councilOn = useStore((s) => s.prefs.council.mode !== "off");
+  const busy = useStore((s) => !!s.sessions[sessionId]?.running || !!s.sessions[sessionId]?.readOnly);
   return (
     <div className={clsx("mt-1 flex items-center gap-0.5 text-muted transition-opacity", active ? "opacity-100" : "opacity-0 group-hover/msg:opacity-100")}>
       <Tip label="Kopieren">
@@ -125,6 +129,19 @@ function MessageActions({ sessionId, itemId, text }: { sessionId: string; itemId
           )}
         </button>
       </Tip>
+      {councilOn && (
+        <Tip label="Mit Council prüfen: andere Modelle sehen sich die Änderungen an">
+          <button
+            className="flex h-7 items-center gap-1.5 rounded-md px-1.5 hover:bg-hover hover:text-fg disabled:opacity-40"
+            disabled={busy}
+            onClick={() => askAgentForCouncil(sessionId)}
+            aria-label="Mit Council prüfen"
+          >
+            <Scale className="h-3.5 w-3.5" />
+            <span className="text-[0.8em]">Mit Council prüfen</span>
+          </button>
+        </Tip>
+      )}
     </div>
   );
 }
@@ -222,6 +239,8 @@ export function Conversation({ session }: { session: Session }) {
                   );
                 case "turn":
                   return <TurnFooter key={item.id} item={item} />;
+                case "council":
+                  return <CouncilItemCard key={item.id} item={item} sessionId={session.id} />;
                 default:
                   return null;
               }

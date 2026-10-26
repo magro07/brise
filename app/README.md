@@ -32,6 +32,7 @@ src-tauri/src/
   terminal.rs            eingebautes Terminal (PTY)
   files.rs               Dateien für den Editor, externe Editoren (VS Code & Co.)
   customize.rs           Selbstanpassung per Chat: MCP-Server brise-app, Live-Übernahme
+  council.rs             Model Council: andere Modelle um Rat fragen, MCP-Server brise-council
   meter.rs               Mikrofonpegel für die Wellen-Animation (cpal, nur Messung)
   usage.rs               Nutzungsjournal, Preistabelle, Import aus Vibes Session-Logs
   selftest.rs            `brise --self-test` für die CI auf allen Systemen
@@ -186,6 +187,31 @@ Jede Session bekommt den MCP-Server `brise-app` (`brise --mcp-app`). Seine Werkz
 Die Werkzeuge schreiben nach `<Datenordner>/custom/`. Brise beobachtet den Ordner
 und übernimmt Änderungen sofort. Der mitgelieferte Skill `brise-anpassen` erklärt
 Vibe, wann und wie er die Werkzeuge nutzt.
+
+## Model Council
+
+Der Agent kann andere Modelle um Rat fragen (Konzept: `docs/adr/0003-model-council.md`).
+Jede Session bekommt dazu den MCP-Server `brise-council` (`brise --mcp-council <ordner>`):
+
+| Werkzeug | Was es tut |
+|---|---|
+| `council_review` | Review von `git_diff`/`diff`/`files`: Befunde mit Schweregrad, `Datei:Zeile`, Übereinstimmung |
+| `council_debug` | Fehlerbild → priorisierte Hypothesen mit Prüfschritt |
+| `council_verify` | Behauptung „ist erledigt“ + Belege → bestätigt, Einwände oder unklar (Mehrheit) |
+| `council_result` | wartet auf einen Lauf, der nach 50 s noch nicht fertig war (Vibe bricht MCP-Aufrufe nach 60 s ab) |
+
+- Standard: drei Meinungen (Mistral Large 4, GLM-5.3, Codestral bzw. Magistral) parallel in
+  den Rollen Gutachter, Bug-Jäger, Skeptiker. Mistral Large 4 führt als Vorsitz zusammen,
+  sonst gruppiert Brise selbst. Dateien liest der Server nur innerhalb des Projektordners.
+- Im Chat erscheint jeder Aufruf als Karte mit Modellen, Ergebnis, aufklappbaren
+  Einzelurteilen, Dauer, Tokens und Kosten. „Mit Council prüfen“ steht unter jeder Antwort
+  (bittet den Agenten) und im Git-Panel (prüft den aktuellen Diff direkt).
+- Einstellungen → Council: automatisch / nur auf Wunsch / aus, Modelle je Rolle, Anzahl,
+  Vorsitz, Denkaufwand, Zeitlimit und Tageslimit (Standard 2 €).
+- Läufe: `<Datenordner>/council/runs/`, Tageskosten: `council/journal.jsonl`. Jeder
+  Modellaufruf landet zusätzlich im Usage-Journal (`usage/JJJJ-MM.jsonl`, `kind: "council"`).
+- Der Skill `council` erklärt dem Agenten, wann er das Council einbezieht und wie er
+  Befunde abarbeitet.
 
 ## Plattformen
 

@@ -3,6 +3,7 @@ mod assist;
 mod git;
 mod config;
 mod credentials;
+mod council;
 mod customize;
 mod embeddings;
 mod files;
@@ -24,6 +25,10 @@ pub fn run_self_test() -> i32 {
     #[cfg(unix)]
     adopt_shell_path();
     selftest::run()
+}
+
+pub fn run_mcp_council(cwd: String) {
+    council::run_mcp_server(cwd);
 }
 
 pub fn run_mcp_app() {
@@ -164,6 +169,10 @@ pub fn run() {
             usage::usage_save_prices,
             usage::usage_model_prices,
             usage::usage_import,
+            council::council_start,
+            council::council_run,
+            council::council_find,
+            council::council_today,
         ])
         .run(tauri::generate_context!())
         .expect("Brise konnte nicht gestartet werden");

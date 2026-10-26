@@ -5,6 +5,7 @@ import { useStore } from "../../lib/store";
 import { relativeTime } from "../../lib/format";
 import { Button, IconButton, Menu, MenuContent, MenuItem, MenuLabel, MenuSeparator, MenuTrigger, Spinner, clsx } from "../ui";
 import { askText, confirmAction } from "../../lib/dialogs";
+import { CouncilDiffButton } from "../settings/CouncilSettings";
 
 const STATUS_LABEL: Record<string, [string, string]> = {
   M: ["geändert", "text-warn"],
@@ -234,6 +235,7 @@ export function GitPanel({ cwd }: { cwd: string }) {
             </div>
           </div>
         )}
+        {status.files.length > 0 && <CouncilDiffButton cwd={cwd} />}
 
         {log.length > 0 && (
           <Section title="Verlauf">

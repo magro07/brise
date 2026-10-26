@@ -69,7 +69,9 @@ export type Item =
   | ToolItem
   | { type: "decision"; id: string; toolCallId: string; allowed: boolean; label: string }
   | { type: "notice"; id: string; text: string; tone: "info" | "warn" | "error" }
-  | { type: "turn"; id: string; stopReason: string; ms: number; tokens?: number };
+  | { type: "turn"; id: string; stopReason: string; ms: number; tokens?: number }
+  /** Council direkt aus der Oberfläche (z. B. Git-Panel), nicht über den Agenten. */
+  | { type: "council"; id: string; tool: string; cwd: string; startedAt: number; runId?: string; error?: string };
 
 export interface PendingPermission {
   key: string;
@@ -169,7 +171,36 @@ export interface Prefs {
   fim: boolean;
   /** Einführung schon gesehen. */
   tourDone: boolean;
+  /** Model Council (liest auch der MCP-Server brise-council, siehe council.rs). */
+  council: CouncilPrefs;
 }
+
+export interface CouncilPrefs {
+  /** auto = Agent fragt von sich aus, request = nur auf Wunsch, off = kein Council */
+  mode: "auto" | "request" | "off";
+  review: string[];
+  debug: string[];
+  verify: string[];
+  /** Führt die Urteile zusammen; leer = Brise gruppiert selbst. */
+  chair: string;
+  opinions: number;
+  /** 0 = ohne Limit */
+  dailyLimitEur: number;
+  timeoutSecs: number;
+  effort: "low" | "high";
+}
+
+export const COUNCIL_DEFAULTS: CouncilPrefs = {
+  mode: "auto",
+  review: ["mistral-large-4", "zai-glm-5-3", "codestral-latest"],
+  debug: ["magistral-medium-latest", "mistral-large-4", "zai-glm-5-3"],
+  verify: ["mistral-large-4", "zai-glm-5-3", "mistral-medium-3.5"],
+  chair: "mistral-large-4",
+  opinions: 3,
+  dailyLimitEur: 2,
+  timeoutSecs: 120,
+  effort: "low",
+};
 
 export interface OpenFile {
   path: string;
@@ -460,8 +491,10 @@ const initialPrefs: Prefs = {
   autoBaseModel: "glm-5-3",
   fim: true,
   tourDone: false,
+  council: COUNCIL_DEFAULTS,
   ...load<Partial<Prefs>>("prefs", {}),
 };
+initialPrefs.council = { ...COUNCIL_DEFAULTS, ...initialPrefs.council };
 
 /** Grobe Einstufung ohne Netz, falls die KI-Einstufung nicht antwortet. */
 function heuristicLevel(text: string): Routed["level"] {

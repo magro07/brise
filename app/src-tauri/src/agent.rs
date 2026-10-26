@@ -218,10 +218,11 @@ pub fn child_env() -> Vec<Value> {
     .collect()
 }
 
-/// MCP-Server, die Brise jeder Session mitgibt: Selbstanpassung, semantische
+/// MCP-Server, die Brise jeder Session mitgibt: Selbstanpassung, Council, semantische
 /// Suche (falls indexiert) und die REA-Werkzeuge (falls Node.js da ist).
 fn mcp_servers(cwd: &str, search: bool, rea: bool) -> Value {
     let mut list: Vec<Value> = crate::customize::mcp_entry().into_iter().collect();
+    list.extend(crate::council::mcp_entry(cwd));
     if search {
         list.extend(crate::embeddings::mcp_entry(cwd));
     }
