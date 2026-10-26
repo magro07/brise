@@ -29,7 +29,7 @@ import {
   FlaskConical,
 } from "lucide-react";
 import { CouncilSettings } from "./CouncilSettings";
-import { api, type CatalogModel, type ConfigFile, type IndexStatus, type JsonSchema, type SkillInfo } from "../../lib/acp";
+import { api, type CatalogModel, type ConfigFile, type ConfigOption, type IndexStatus, type JsonSchema, type SkillInfo } from "../../lib/acp";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { tokens } from "../../lib/format";
 import { useStore, type Theme } from "../../lib/store";
@@ -784,10 +784,13 @@ const LEVELS = [
   ["complex", "Komplexe Aufgaben", "Architektur, große Refactorings, schwierige Fehler"],
 ] as const;
 
+/** Stabile Referenz: ein neues `[]` im Selektor ließe Zustand endlos neu rendern. */
+const NO_OPTIONS: NonNullable<ConfigOption["options"]> = [];
+
 function AutoModelCard() {
   const prefs = useStore((s) => s.prefs);
   const setPrefs = useStore((s) => s.setPrefs);
-  const options = useStore((s) => s.template?.config.find((o) => o.id === "model")?.options ?? []);
+  const options = useStore((s) => s.template?.config.find((o) => o.id === "model")?.options ?? NO_OPTIONS);
   return (
     <Card
       title="Auto"
@@ -864,7 +867,7 @@ function AutoModelCard() {
 
 function ModelsCard({ onChange }: { onChange: () => void }) {
   const project = useStore((s) => s.activeProject);
-  const available = useStore((s) => s.template?.config.find((o) => o.id === "model")?.options ?? []);
+  const available = useStore((s) => s.template?.config.find((o) => o.id === "model")?.options ?? NO_OPTIONS);
   const [configured, setConfigured] = useState<{ alias: string; name: string; displayName: string | null }[]>([]);
   const [catalog, setCatalog] = useState<CatalogModel[] | null>(null);
   const [error, setError] = useState<string | null>(null);
