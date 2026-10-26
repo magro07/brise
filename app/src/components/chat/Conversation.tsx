@@ -3,7 +3,7 @@ import { AlertTriangle, ArrowDown, Brain, Check, Wand2, CheckCircle2, ChevronRig
 import { useStore } from "../../lib/store";
 import { useVoiceAvailable } from "../../lib/backends";
 import type { Item, Session } from "../../lib/store";
-import { duration, tokens } from "../../lib/format";
+import { duration, latency, tokens } from "../../lib/format";
 import { Spinner, Tip, clsx } from "../ui";
 import { Markdown } from "./Markdown";
 import { ToolGroup } from "./ToolCall";
@@ -84,6 +84,18 @@ function TurnFooter({ item }: { item: Extract<Item, { type: "turn" }> }) {
         <>
           <span>·</span>
           <span>{tokens(item.tokens)} Tokens</span>
+        </>
+      )}
+      {item.ttftMs != null && (
+        <>
+          <span>·</span>
+          <span title="Zeit vom Senden bis zum ersten Token">erstes Token nach {latency(item.ttftMs)}</span>
+        </>
+      )}
+      {item.tps != null && (
+        <>
+          <span>·</span>
+          <span title="Output-Tokens je Sekunde Generierungszeit (ohne Werkzeuge)">{item.tps.toLocaleString("de-DE", { maximumFractionDigits: 0 })} t/s</span>
         </>
       )}
     </div>

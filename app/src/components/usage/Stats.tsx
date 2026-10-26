@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { basename, useStore } from "../../lib/store";
 import { tokens } from "../../lib/format";
 import { clsx } from "../ui";
+import { Performance } from "./Performance";
 import { category, eur, useUsage, usageApi, type UsageRecord } from "./usage";
 import "./usage.css";
 
@@ -209,6 +210,11 @@ export function Stats() {
   const buckets = useMemo(() => groupBy(view.list, group, metric), [view.list, group, metric]);
   const topSessions = useMemo(() => groupBy(view.list, "session", "cost").slice(0, 8), [view.list]);
   const topProjects = useMemo(() => groupBy(view.list, "project", "cost").slice(0, 8), [view.list]);
+  const timeline = useMemo(() => {
+    const { bins, find } = makeBins(period, view.list);
+    const index = new Map(bins.map((b, i) => [b, i]));
+    return { labels: bins.map((b) => b.label), binOf: (ts: number) => index.get(find(ts)!) ?? -1 };
+  }, [period, view.list]);
   const maxBin = Math.max(...view.bins.map((b) => b.total), 0);
   const color = (i: number) => (i < SERIES ? `var(--series-${i + 1})` : "var(--series-other)");
   const hovered = hover != null ? view.bins[hover] : null;
@@ -324,6 +330,8 @@ export function Stats() {
             <TopList title="Teuerste Sessions" buckets={topSessions} onOpen={(key) => (useStore.getState().setView("chat"), useStore.getState().openTab(key))} />
             <TopList title="Teuerste Projekte" buckets={topProjects} />
           </div>
+
+          <Performance records={view.list} bins={timeline.labels} binOf={timeline.binOf} />
 
           <div className="mt-4 rounded-xl border border-line bg-elev p-4">
             <div className="mb-2 flex items-center text-[0.8em]">

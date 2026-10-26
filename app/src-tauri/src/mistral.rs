@@ -2,7 +2,7 @@
 //! Inline-Vervollständigung im Editor (FIM) und Mistral OCR für Dokumente.
 
 use std::path::Path;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use base64::Engine;
 use serde_json::{json, Value};
@@ -21,6 +21,7 @@ fn client() -> reqwest::Client {
 pub async fn fim_complete(prefix: String, suffix: String, model: Option<String>, cwd: Option<String>) -> CmdResult<String> {
     let key = read_key().ok_or("Kein Mistral-Schlüssel")?;
     let model = model.unwrap_or_else(|| "codestral-latest".into());
+    let started = Instant::now();
     let body: Value = client()
         .post(format!("{API_BASE}/fim/completions"))
         .bearer_auth(key)
@@ -40,7 +41,7 @@ pub async fn fim_complete(prefix: String, suffix: String, model: Option<String>,
         .json()
         .await
         .map_err(|e| e.to_string())?;
-    crate::usage::record(Record::new("fim", "Vervollständigung", &model).project(cwd.as_deref()).tokens(&body));
+    crate::usage::record(Record::new("fim", "Vervollständigung", &model).project(cwd.as_deref()).tokens(&body).timed(started, None));
     Ok(body["choices"][0]["message"]["content"].as_str().unwrap_or_default().to_string())
 }
 
@@ -68,6 +69,7 @@ pub async fn ocr_document(path: String, cwd: Option<String>) -> CmdResult<String
     } else {
         json!({ "type": "document_url", "document_url": data })
     };
+    let started = Instant::now();
     let resp = client()
         .post(format!("{API_BASE}/ocr"))
         .bearer_auth(key)
@@ -83,7 +85,7 @@ pub async fn ocr_document(path: String, cwd: Option<String>) -> CmdResult<String
     }
     let mut rec = Record::new("ocr", "OCR", body["model"].as_str().unwrap_or("mistral-ocr-latest")).project(cwd.as_deref());
     rec.pages = body["usage_info"]["pages_processed"].as_u64().unwrap_or_else(|| body["pages"].as_array().map_or(0, |p| p.len() as u64));
-    crate::usage::record(rec);
+    crate::usage::record(rec.timed(started, None));
     let pages: Vec<String> = body["pages"]
         .as_array()
         .into_iter()

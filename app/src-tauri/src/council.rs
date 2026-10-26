@@ -150,29 +150,13 @@ fn append_line(path: &Path, line: &Value) {
     let _ = std::fs::OpenOptions::new().create(true).append(true).open(path).and_then(|mut f| f.write_all(format!("{line}\n").as_bytes()));
 }
 
-/// Jahr und Monat (UTC) für den Dateinamen des Usage-Journals.
-fn year_month(ms: u64) -> (i64, u32) {
-    let z = (ms / 86_400_000) as i64 + 719_468;
-    let era = z.div_euclid(146_097);
-    let doe = z - era * 146_097;
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let month = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
-    (yoe + era * 400 + i64::from(month <= 2), month)
-}
-
-/// Meldet einen Modellaufruf ins Usage-Journal (`usage/JJJJ-MM.jsonl`, Format
-/// von `usage.rs`). Sobald `usage::record` im Hauptzweig ist, kann diese
-/// Funktion darauf umgestellt werden.
-fn report_usage(feature: &str, model: &str, input: u64, output: u64, project: &str) {
-    if input + output == 0 {
-        return;
-    }
-    let ts = now_ms();
-    let (y, m) = year_month(ts);
-    let line = json!({ "ts": ts, "kind": "council", "feature": feature, "model": model, "input": input, "output": output, "project": project });
-    append_line(&data_dir().join("usage").join(format!("{y:04}-{m:02}.jsonl")), &line);
+/// Meldet einen Modellaufruf ins Usage-Journal, mit Dauer und t/s (ohne Stream
+/// über die ganze Dauer gerechnet).
+fn report_usage(feature: &str, model: &str, a: &Answer, project: &str) {
+    let mut rec = crate::usage::Record::new("council", feature, model).project(Some(project));
+    rec.input = a.input;
+    rec.output = a.output;
+    crate::usage::record(rec.perf(a.took, None, a.took));
 }
 
 // ---------- Kontext aus dem Projekt ----------
@@ -470,6 +454,8 @@ struct Answer {
     json: Value,
     input: u64,
     output: u64,
+    /// Dauer des erfolgreichen Versuchs (ohne Wiederholung).
+    took: Duration,
 }
 
 /// `reasoning_effort` je Modell: Mistral-Modelle kennen nur high/none, GLM
@@ -495,8 +481,9 @@ async fn ask(client: &reqwest::Client, key: &str, model: &str, system: &str, use
     }
     let started = Instant::now();
     let mut retried = false;
-    let body = loop {
+    let (body, took) = loop {
         let left = timeout.saturating_sub(started.elapsed().as_secs()).max(5);
+        let attempt = Instant::now();
         let resp = client
             .post(format!("{API_BASE}/chat/completions"))
             .bearer_auth(key)
@@ -508,7 +495,7 @@ async fn ask(client: &reqwest::Client, key: &str, model: &str, system: &str, use
         let status = resp.status();
         let reply: Value = resp.json().await.map_err(|e| if e.is_timeout() { format!("keine Antwort nach {timeout} s") } else { e.to_string() })?;
         if status.is_success() {
-            break reply;
+            break (reply, attempt.elapsed());
         }
         let msg = reply["message"].as_str().or(reply["detail"].as_str()).map(str::to_string).unwrap_or_else(|| reply.to_string());
         // Unbekannter Denkaufwand: einmal ohne versuchen.
@@ -523,7 +510,7 @@ async fn ask(client: &reqwest::Client, key: &str, model: &str, system: &str, use
     let output = body["usage"]["completion_tokens"].as_u64().unwrap_or(0);
     let text = message_text(&body);
     match parse_json(&text) {
-        Some(json) => Ok(Answer { json, input, output }),
+        Some(json) => Ok(Answer { json, input, output, took }),
         None if body["choices"][0]["finish_reason"] == "length" => Err(format!("Antwort abgeschnitten ({output} Tokens, meist Gedankengang)")),
         None => Err(format!("kein gültiges JSON ({} Zeichen Antwort)", text.len())),
     }
@@ -912,8 +899,8 @@ async fn execute(run: Run, context: String, plan: Vec<(String, &'static str, &'s
                     op.input = a.input;
                     op.output = a.output;
                     op.cost_eur = cost(&model, a.input, a.output);
+                    report_usage(&feature, &model, &a, &project);
                     op.result = a.json;
-                    report_usage(&feature, &model, a.input, a.output, &project);
                 }
                 Err(e) => {
                     op.status = "fehler".into();
@@ -954,7 +941,7 @@ async fn execute(run: Run, context: String, plan: Vec<(String, &'static str, &'s
                     chair.input = a.input;
                     chair.output = a.output;
                     chair.cost_eur = cost(&cfg.chair, a.input, a.output);
-                    report_usage(&feature, &cfg.chair, a.input, a.output, &project);
+                    report_usage(&feature, &cfg.chair, &a, &project);
                     match finish_chair(tool, a.json, &ok) {
                         Some(merged) => {
                             chair.status = "fertig".into();

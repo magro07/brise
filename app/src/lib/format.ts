@@ -21,6 +21,13 @@ export function duration(ms: number): string {
   return `${Math.floor(s / 60)} min ${s % 60} s`;
 }
 
+/** Kurze Wartezeiten: „640 ms“, „1,4 s“, „12 s“. */
+export function latency(ms: number): string {
+  if (ms < 1000) return `${Math.round(ms)} ms`;
+  if (ms < 10_000) return `${(ms / 1000).toFixed(1).replace(".", ",")} s`;
+  return duration(ms);
+}
+
 export function short(value: unknown, max = 400): string {
   const s = typeof value === "string" ? value : JSON.stringify(value, null, 2);
   return s && s.length > max ? `${s.slice(0, max)}…` : (s ?? "");

@@ -21,6 +21,7 @@ const FAST_MODEL: &str = "mistral-small-latest";
 /// `feature` und `cwd` landen im Nutzungsjournal.
 async fn quick_json(model: &str, system: &str, user: &str, timeout: u64, feature: &str, cwd: Option<&str>) -> CmdResult<Value> {
     let key = read_key().ok_or("Kein Mistral-Schlüssel")?;
+    let started = std::time::Instant::now();
     let body: Value = reqwest::Client::new()
         .post(format!("{API_BASE}/chat/completions"))
         .bearer_auth(key)
@@ -37,7 +38,7 @@ async fn quick_json(model: &str, system: &str, user: &str, timeout: u64, feature
         .json()
         .await
         .map_err(|e| e.to_string())?;
-    crate::usage::record(crate::usage::Record::new("assist", feature, model).project(cwd).tokens(&body));
+    crate::usage::record(crate::usage::Record::new("assist", feature, model).project(cwd).tokens(&body).timed(started, None));
     let text = body["choices"][0]["message"]["content"].as_str().ok_or_else(|| format!("Unerwartete Antwort: {body}"))?;
     serde_json::from_str(text).map_err(|e| format!("Kein gültiges JSON: {e}"))
 }

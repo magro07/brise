@@ -28,6 +28,12 @@ export interface UsageRecord {
   account?: string;
   /** vibe, brise (direkt an die API), später weitere. */
   backend?: string;
+  /** Anbieter, falls nicht Mistral (z. B. `cortecs`). */
+  provider?: string;
+  /** Leistung: Gesamtdauer, Zeit bis zum ersten Token (nur gestreamt), Output-Tokens je Sekunde. */
+  durationMs?: number;
+  ttftMs?: number;
+  outputTps?: number;
   cost: number;
   saving: number;
   priced: boolean;
@@ -70,7 +76,7 @@ export interface PriceTable {
 export const usageApi = {
   overview: (from: number, to: number) =>
     invoke<{ records: UsageRecord[]; settings: UsageSettings; pricesStand: string; journalDir: string }>("usage_overview", { from, to }),
-  turn: (report: Record<string, unknown>) => invoke<{ costEur: number }>("usage_turn", { report }),
+  turn: (report: Record<string, unknown>) => invoke<{ costEur: number; outputTps?: number | null }>("usage_turn", { report }),
   baseline: (session: string, input: number, cached: number, output: number) => invoke<void>("usage_baseline", { session, input, cached, output }),
   record: (entry: Partial<UsageRecord>) => invoke<void>("usage_record", { entry: { ts: 0, input: 0, output: 0, ...entry } }),
   saveSettings: (settings: UsageSettings) => invoke<void>("usage_save_settings", { settings }),
@@ -216,18 +222,81 @@ function lastTurnTools(s: Session): ToolItem[] {
   return s.items.slice(start + 1).filter((i): i is ToolItem => i.type === "tool");
 }
 
+// ---------- Leistung je Turn ----------
+
+export interface TurnPerf {
+  /** Senden bis zum ersten Text- oder Gedanken-Chunk. */
+  ttftMs?: number;
+  durationMs: number;
+  /** Zeit, in der das Modell sichtbar erzeugte – ohne Werkzeuge und Vorlauf weiterer Aufrufe. */
+  generationMs: number;
+}
+
+const perf: Record<string, { sent: number; first?: number; last: number; lastKind?: string; generation: number }> = {};
+
+/** Abstand zwischen zwei Chunks, ab dem das Modell nicht mehr gestreamt, sondern gewartet hat. */
+const CHUNK_GAP = 2000;
+/** Längste Zeit, die das Erzeugen der Argumente eines Werkzeugaufrufs zählen darf. */
+const TOOL_GAP = 30_000;
+
+/** Ab dem Absenden des Prompts messen. */
+export function perfStart(sid: string) {
+  const now = Date.now();
+  perf[sid] = { sent: now, last: now, generation: 0 };
+}
+
+/**
+ * Verfolgt die `session/update`-Ereignisse eines laufenden Turns. Generierungszeit
+ * sind Abstände zwischen Chunks (und bis zu einem direkt folgenden Werkzeugaufruf);
+ * Werkzeuglaufzeit und der Vorlauf bis zum ersten Token jedes weiteren Modellaufrufs
+ * zählen nicht.
+ */
+export function perfEvent(sid: string, u: { sessionUpdate?: string; content?: { type?: string; text?: string } }) {
+  const p = perf[sid];
+  if (!p) return;
+  const now = Date.now();
+  const gap = now - p.last;
+  const kind = u.sessionUpdate;
+  const afterChunk = p.lastKind === "chunk" || p.lastKind === "tool_call";
+  if (kind === "agent_message_chunk" || kind === "agent_thought_chunk") {
+    if (!u.content?.text) return;
+    if (p.first == null) p.first = now;
+    else if (afterChunk && gap < CHUNK_GAP) p.generation += gap;
+    p.last = now;
+    p.lastKind = "chunk";
+  } else if (kind === "tool_call") {
+    if (p.first == null) p.first = now;
+    else if (afterChunk) p.generation += Math.min(gap, TOOL_GAP);
+    p.last = now;
+    p.lastKind = "tool_call";
+  } else if (kind === "tool_call_update") {
+    p.last = now;
+    p.lastKind = "tool";
+  }
+}
+
+/** Messung beenden; `undefined`, wenn der Turn nicht gemessen wurde. */
+export function perfFinish(sid: string): TurnPerf | undefined {
+  const p = perf[sid];
+  if (!p) return undefined;
+  delete perf[sid];
+  return { ttftMs: p.first != null ? p.first - p.sent : undefined, durationMs: Date.now() - p.sent, generationMs: p.generation };
+}
+
 /**
  * Meldet einen fertigen Turn. Vibe zählt je Session kumuliert; `res` ist
  * `PromptResponse.usage`, der Stand aus `usage_update` kommt manchmal erst danach.
+ * Liefert die Output-Tokens je Sekunde, sobald die Tokens des Turns feststehen.
  */
-export async function reportTurn(sid: string, res?: { inputTokens?: number; outputTokens?: number; cachedReadTokens?: number } | null) {
+export async function reportTurn(sid: string, res?: { inputTokens?: number; outputTokens?: number; cachedReadTokens?: number } | null, timing?: TurnPerf) {
   await new Promise((r) => setTimeout(r, 600));
   const s = useStore.getState().sessions[sid];
   if (!s || s.readOnly) return;
   const c = cumulative(s);
   const tools = lastTurnTools(s);
   const model = s.config.find((o) => o.id === "model")?.currentValue;
-  await usageApi
+  const subagents = tools.filter((t) => t.meta?.agent || t.meta?.task || t.meta?.child_session_id).length;
+  const result = await usageApi
     .turn({
       session: sid,
       project: s.cwd,
@@ -236,12 +305,18 @@ export async function reportTurn(sid: string, res?: { inputTokens?: number; outp
       input: Math.max(c.input, res?.inputTokens ?? 0),
       cached: Math.max(c.cached, res?.cachedReadTokens ?? 0),
       output: Math.max(c.output, res?.outputTokens ?? 0),
-      subagents: tools.filter((t) => t.meta?.agent || t.meta?.task || t.meta?.child_session_id).length,
+      subagents,
       toolCalls: tools.length,
       webSearches: tools.filter(isWebSearch).length,
+      backend: s.backend,
+      ttftMs: timing?.ttftMs,
+      durationMs: timing?.durationMs,
+      // Subagents erzeugen Tokens, deren Chunks hier nicht ankommen – t/s wäre zu hoch.
+      generationMs: timing && timing.generationMs > 0 && !subagents ? timing.generationMs : undefined,
     })
-    .catch((e) => console.warn("Nutzung:", e));
+    .catch((e) => (console.warn("Nutzung:", e), null));
   scheduleRefresh(0);
+  return result;
 }
 
 const TTS_MODEL = "voxtral-mini-tts-latest";

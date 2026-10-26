@@ -671,20 +671,31 @@ async fn serve(mut sock: tokio::net::TcpStream) -> Result<(), String> {
     }
     let _ = sock.flush().await;
     let _ = sock.shutdown().await;
+    let first = meter.first;
     if status.is_success() && req.path.ends_with("/chat/completions") {
         if let Some(usage) = meter.finish() {
-            journal(&UsageEntry::new("chat", "Chat (Vibe)", &model).usage(&usage).ms(started.elapsed()));
+            journal(&UsageEntry::new("chat", "Chat (Vibe)", &model).usage(&usage).timed(started, first));
         }
     }
     Ok(())
 }
 
-/// Sucht im (gestreamten) Antworttext das letzte `usage`-Objekt.
+/// Sucht im (gestreamten) Antworttext das letzte `usage`-Objekt und merkt sich,
+/// wann das erste Token (Text, Gedankengang oder Werkzeugaufruf) kam.
 #[derive(Default)]
 struct UsageScanner {
     line: Vec<u8>,
     whole: Vec<u8>,
     last: Option<Value>,
+    first: Option<Instant>,
+}
+
+/// Enthält ein Stream-Chunk erzeugte Tokens? Der erste Chunk trägt oft nur die Rolle.
+fn has_token(v: &Value) -> bool {
+    let d = &v["choices"][0]["delta"];
+    ["content", "reasoning_content", "reasoning"].iter().any(|k| d[*k].as_str().is_some_and(|t| !t.is_empty()))
+        || d["tool_calls"].as_array().is_some_and(|a| !a.is_empty())
+        || d["content"].as_array().is_some_and(|a| !a.is_empty())
 }
 
 impl UsageScanner {
@@ -697,6 +708,9 @@ impl UsageScanner {
                 let line = std::mem::take(&mut self.line);
                 if let Some(data) = line.strip_prefix(b"data:") {
                     if let Ok(v) = serde_json::from_slice::<Value>(data.trim_ascii()) {
+                        if self.first.is_none() && has_token(&v) {
+                            self.first = Some(Instant::now());
+                        }
                         if v["usage"].is_object() {
                             self.last = Some(v["usage"].clone());
                         }
@@ -734,8 +748,13 @@ pub struct UsageEntry {
     output: u64,
     calls: u64,
     cost_eur: f64,
-    #[serde(skip_serializing_if = "is_zero")]
-    ms: u64,
+    /// Leistung, Felder wie `usage::Record`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    duration_ms: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ttft_ms: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    output_tps: Option<f64>,
 }
 
 fn is_zero(v: &u64) -> bool {
@@ -756,8 +775,12 @@ impl UsageEntry {
         self
     }
 
-    fn ms(mut self, d: Duration) -> Self {
-        self.ms = d.as_millis() as u64;
+    /// `first`: erstes Token im Stream; ohne Stream zählt die ganze Dauer als Generierung.
+    fn timed(mut self, started: Instant, first: Option<Instant>) -> Self {
+        let end = Instant::now();
+        self.duration_ms = Some(end.duration_since(started).as_millis() as u64);
+        self.ttft_ms = first.map(|f| f.duration_since(started).as_millis() as u64);
+        self.output_tps = crate::usage::tokens_per_second(self.output, end.duration_since(first.unwrap_or(started)));
         self
     }
 }
@@ -819,13 +842,12 @@ pub async fn decide(feature: &str, input: &str, questions: Value, model: Option<
     let resp = client().post(format!("{API_BASE}/decisions")).bearer_auth(key).timeout(timeout).json(&body).send().await.map_err(|e| e.to_string())?;
     let status = resp.status();
     let v: Value = resp.json().await.map_err(|e| e.to_string())?;
-    let elapsed = started.elapsed();
     if !status.is_success() {
         let msg = v["error"]["message"].as_str().or(v["error"].as_str()).or(v["detail"].as_str()).map(str::to_string).unwrap_or_else(|| v.to_string());
         return Err(format!("Cortecs Decisions ({status}): {msg}"));
     }
-    let entry = UsageEntry::new("assist", feature, &model).usage(&v["usage"]).ms(elapsed);
-    let cost_eur = entry.cost_eur;
+    let entry = UsageEntry::new("assist", feature, &model).usage(&v["usage"]).timed(started, None);
+    let (cost_eur, entry_ms) = (entry.cost_eur, entry.duration_ms.unwrap_or(0));
     journal(&entry);
     let answers = v["answers"]
         .as_array()
@@ -833,7 +855,7 @@ pub async fn decide(feature: &str, input: &str, questions: Value, model: Option<
         .flatten()
         .filter_map(|a| Some((a["name"].as_str()?.to_string(), a.clone())))
         .collect();
-    Ok(Decided { answers, ms: elapsed.as_millis() as u64, cost_eur, model })
+    Ok(Decided { answers, ms: entry_ms, cost_eur, model })
 }
 
 /// Wahrscheinlichkeiten einer `choice`-Antwort als Objekt `{wert: p}`.
@@ -948,7 +970,7 @@ pub async fn chat_json(feature: &str, system: &str, user: &str, model: Option<&s
     if !status.is_success() {
         return Err(format!("Cortecs ({status}): {}", v["error"]["message"].as_str().unwrap_or("")));
     }
-    journal(&UsageEntry::new("assist", feature, &model).usage(&v["usage"]).ms(started.elapsed()));
+    journal(&UsageEntry::new("assist", feature, &model).usage(&v["usage"]).timed(started, None));
     let text = v["choices"][0]["message"]["content"].as_str().ok_or_else(|| format!("Unerwartete Antwort: {v}"))?;
     let text = text.trim().trim_start_matches("```json").trim_start_matches("```").trim_end_matches("```").trim();
     serde_json::from_str(text).map_err(|e| format!("Kein gültiges JSON: {e}"))
@@ -985,6 +1007,14 @@ mod tests {
         assert_eq!(u["prompt_tokens"], 12);
         let e = UsageEntry::new("chat", "Chat", "glm-5.3").usage(&u);
         assert_eq!((e.input, e.output), (12, 3));
+        // Rolle allein ist noch kein Token, Gedankengang schon.
+        let mut s = UsageScanner::default();
+        s.feed(b"data: {\"choices\":[{\"delta\":{\"role\":\"assistant\",\"content\":\"\"}}]}\n\n");
+        assert!(s.first.is_none());
+        s.feed(b"data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"Hm\"}}]}\n\n");
+        assert!(s.first.is_some());
+        let e = UsageEntry::new("chat", "Chat", "glm-5.3").usage(&u).timed(Instant::now(), None);
+        assert!(e.duration_ms.is_some() && e.ttft_ms.is_none());
     }
 
     #[test]

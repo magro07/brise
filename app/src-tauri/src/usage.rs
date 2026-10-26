@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::Mutex;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -113,6 +113,15 @@ pub struct Record {
     /// Vom Anbieter gemeldete Kosten in € – haben Vorrang vor der Preistabelle.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cost_eur: Option<f64>,
+    /// Leistung: Gesamtdauer des Aufrufs bzw. Turns (`ms` = altes Cortecs-Feld).
+    #[serde(skip_serializing_if = "Option::is_none", alias = "ms")]
+    pub duration_ms: Option<u64>,
+    /// Zeit vom Absenden bis zum ersten Token – nur bei gestreamten Antworten bekannt.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ttft_ms: Option<u64>,
+    /// Output-Tokens je Sekunde Generierungszeit (ab dem ersten Token, ohne Stream die ganze Dauer).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub output_tps: Option<f64>,
 }
 
 impl Record {
@@ -138,6 +147,27 @@ impl Record {
         self.cached = u["prompt_tokens_details"]["cached_tokens"].as_u64().or(u["cached_tokens"].as_u64()).unwrap_or(0);
         self
     }
+
+    /// Misst einen Aufruf bis jetzt: `started` beim Absenden, `first` beim ersten
+    /// Token (nur bei Streams). Nach `tokens()` aufrufen, weil t/s die Ausgabe braucht.
+    pub fn timed(self, started: Instant, first: Option<Instant>) -> Self {
+        let end = Instant::now();
+        let generation = end.duration_since(first.unwrap_or(started));
+        self.perf(end.duration_since(started), first.map(|f| f.duration_since(started)), generation)
+    }
+
+    pub fn perf(mut self, duration: Duration, ttft: Option<Duration>, generation: Duration) -> Self {
+        self.duration_ms = Some(duration.as_millis() as u64);
+        self.ttft_ms = ttft.map(|t| t.as_millis() as u64);
+        self.output_tps = tokens_per_second(self.output, generation);
+        self
+    }
+}
+
+/// Unter 50 ms Generierungszeit ist die Rate nur Rauschen.
+pub fn tokens_per_second(output: u64, generation: Duration) -> Option<f64> {
+    let secs = generation.as_secs_f64();
+    (output > 0 && secs >= 0.05).then(|| (output as f64 / secs * 10.0).round() / 10.0)
 }
 
 /// Fingerabdruck des aktuellen Schlüssels (`key-` + 8 Hex-Zeichen von SHA-256).
@@ -363,6 +393,13 @@ pub struct TurnReport {
     subagents: Option<u64>,
     web_searches: Option<u64>,
     tool_calls: Option<u64>,
+    /// Agent-Backend der Session (vibe, claude, …).
+    backend: Option<String>,
+    /// Messung in der Oberfläche: Senden bis erster Chunk, ganzer Turn und die
+    /// Zeit, in der das Modell tatsächlich Text bzw. Werkzeugaufrufe erzeugte.
+    ttft_ms: Option<u64>,
+    duration_ms: Option<u64>,
+    generation_ms: Option<u64>,
 }
 
 /// Stand vor dem ersten Turn merken, damit geladene Sessions ihren alten
@@ -397,12 +434,17 @@ pub fn usage_turn(report: TurnReport) -> CmdResult<Value> {
         save_totals(&map)?;
         delta
     };
-    // Turns über Cortecs-Modelle erfasst cortecs.rs selbst (mit exakten Kosten).
+    let output_tps = report.generation_ms.and_then(|g| tokens_per_second(delta.output, Duration::from_millis(g)));
+    // Turns über Cortecs-Modelle erfasst cortecs.rs selbst (mit exakten Kosten und Messwerten je Aufruf).
     if report.model.starts_with("cortecs") {
-        return Ok(json!({ "input": delta.input, "cached": delta.cached, "output": delta.output, "costEur": 0.0, "viaCortecs": true }));
+        return Ok(json!({ "input": delta.input, "cached": delta.cached, "output": delta.output, "costEur": 0.0, "viaCortecs": true, "outputTps": output_tps }));
     }
     let subagents = report.subagents.unwrap_or(0);
-    let mut rec = Record::new("chat", if subagents > 0 { "Chat mit Subagents" } else { "Chat" }, &report.model).project(report.project.as_deref()).backend("vibe");
+    let backend = report.backend.as_deref().filter(|b| !b.is_empty()).unwrap_or("vibe");
+    let mut rec = Record::new("chat", if subagents > 0 { "Chat mit Subagents" } else { "Chat" }, &report.model).project(report.project.as_deref()).backend(backend);
+    rec.ttft_ms = report.ttft_ms;
+    rec.duration_ms = report.duration_ms;
+    rec.output_tps = output_tps;
     rec.turns = 1;
     rec.tool_calls = report.tool_calls.unwrap_or(0);
     rec.session = Some(report.session.clone());
@@ -422,7 +464,7 @@ pub fn usage_turn(report: TurnReport) -> CmdResult<Value> {
         s.estimated = true;
         record(s);
     }
-    Ok(json!({ "input": delta.input, "cached": delta.cached, "output": delta.output, "costEur": cost }))
+    Ok(json!({ "input": delta.input, "cached": delta.cached, "output": delta.output, "costEur": cost, "outputTps": output_tps }))
 }
 
 /// Sonstige Vorgänge aus der Oberfläche (Spracheingabe, Vorlesen).
@@ -751,5 +793,22 @@ mod tests {
         assert!(priced);
         assert!((cost - (0.6 * 1.275 + 0.4 * 0.1275 + 0.1 * 6.375)).abs() < 1e-9);
         assert!((saving - 0.4 * (1.275 - 0.1275)).abs() < 1e-9);
+    }
+
+    #[test]
+    fn performance_fields() {
+        // Alte Einträge ohne Messwerte und alte Cortecs-Einträge mit `ms` bleiben lesbar.
+        let old: Record = serde_json::from_str(r#"{"ts":1,"kind":"chat","feature":"Chat","model":"m","input":5}"#).unwrap();
+        assert!(old.duration_ms.is_none() && old.ttft_ms.is_none() && old.output_tps.is_none());
+        let cortecs: Record = serde_json::from_str(r#"{"ts":1,"kind":"assist","feature":"x","model":"cortecs/m","provider":"cortecs","calls":1,"costEur":0.1,"ms":840}"#).unwrap();
+        assert_eq!(cortecs.duration_ms, Some(840));
+        let mut r = Record::new("assist", "Test", "m");
+        r.output = 200;
+        let r = r.perf(Duration::from_millis(2500), Some(Duration::from_millis(500)), Duration::from_secs(2));
+        assert_eq!((r.duration_ms, r.ttft_ms, r.output_tps), (Some(2500), Some(500), Some(100.0)));
+        let line = serde_json::to_string(&r).unwrap();
+        assert!(line.contains(r#""ttftMs":500"#) && line.contains(r#""outputTps":100.0"#) && line.contains(r#""durationMs":2500"#));
+        assert_eq!(tokens_per_second(0, Duration::from_secs(1)), None);
+        assert_eq!(tokens_per_second(10, Duration::from_millis(10)), None);
     }
 }

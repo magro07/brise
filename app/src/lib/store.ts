@@ -20,7 +20,7 @@ import { load, save } from "./persist";
 import { cortecs } from "./cortecs";
 import { promptWithReserve } from "./accounts";
 import type { Suggestion } from "./acp";
-import { budgetModel, reportTurn } from "../components/usage/usage";
+import { budgetModel, perfEvent, perfFinish, perfStart, reportTurn, type TurnPerf } from "../components/usage/usage";
 import { isDesignPath } from "./design";
 
 // ---------- Modell ----------
@@ -77,7 +77,7 @@ export type Item =
   | ToolItem
   | { type: "decision"; id: string; toolCallId: string; allowed: boolean; label: string }
   | { type: "notice"; id: string; text: string; tone: "info" | "warn" | "error" }
-  | { type: "turn"; id: string; stopReason: string; ms: number; tokens?: number }
+  | { type: "turn"; id: string; stopReason: string; ms: number; tokens?: number; ttftMs?: number; tps?: number }
   /** Council direkt aus der Oberfläche (z. B. Git-Panel), nicht über den Agenten. */
   | { type: "council"; id: string; tool: string; cwd: string; startedAt: number; runId?: string; error?: string };
 
@@ -1328,6 +1328,9 @@ export const useStore = create<State & Actions>((set, get) => {
       }
 
       let turnUsage: PromptResult["usage"];
+      let timing: TurnPerf | undefined;
+      const turnItemId = uid();
+      perfStart(sid);
       try {
         const res = await promptWithReserve({ id: sid, cwd: get().sessions[sid]?.cwd ?? project }, blocks, {
           search: get().prefs.agentSearch,
@@ -1335,12 +1338,14 @@ export const useStore = create<State & Actions>((set, get) => {
           notice: (text, tone) => pushItem(sid, { type: "notice", id: uid(), text, tone }),
         });
         turnUsage = res.usage;
+        timing = perfFinish(sid);
         pushItem(sid, {
           type: "turn",
-          id: uid(),
+          id: turnItemId,
           stopReason: res.stopReason,
           ms: Date.now() - started,
           tokens: res.usage?.totalTokens,
+          ttftMs: timing?.ttftMs,
         });
         if (get().prefs.autoNarrate && res.stopReason === "end_turn") {
           const last = [...(get().sessions[sid]?.items ?? [])].reverse().find((i) => i.type === "assistant");
@@ -1353,7 +1358,11 @@ export const useStore = create<State & Actions>((set, get) => {
         pushItem(sid, { type: "notice", id: uid(), text: String(e), tone: "error" });
       } finally {
         patchSession(sid, (s) => ({ ...s, running: false, turnStarted: undefined }));
-        reportTurn(sid, turnUsage);
+        timing ??= perfFinish(sid);
+        reportTurn(sid, turnUsage, timing).then((r) => {
+          const tps = r?.outputTps;
+          if (tps) patchSession(sid, (s) => ({ ...s, items: s.items.map((i) => (i.id === turnItemId && i.type === "turn" ? { ...i, tps } : i)) }));
+        });
         get().refreshIndex();
       }
     },
@@ -1408,7 +1417,10 @@ export const useStore = create<State & Actions>((set, get) => {
       patchSession(sessionId, (s) => applyUpdate(s, update));
       const s = get().sessions[sessionId];
       if (s && update.sessionUpdate === "available_commands_update") rememberTemplate(s);
-      if (s?.running) steerThinking(sessionId, update);
+      if (s?.running) {
+        perfEvent(sessionId, update);
+        steerThinking(sessionId, update);
+      }
     },
 
     onPermission(key, request) {
