@@ -10,7 +10,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type { PermissionRequest } from "./acp";
 import { load, save } from "./persist";
-import { useStore, type Item, type Session } from "./store";
+import { basename, useStore, type Item, type Session } from "./store";
 
 export type CollabRole = "viewer" | "collaborator" | "approver";
 
@@ -31,6 +31,68 @@ export interface Participant {
   name: string;
   role: CollabRole;
   online: boolean;
+  /** Auch Mitglied eines gemeinsamen Teams. */
+  team?: boolean;
+  /** Nutzung auf dem Abo des Hosts, heute. */
+  prompts?: number;
+  tokens?: number;
+}
+
+/** Was Gäste auf dem Abo des Hosts dürfen. */
+export interface Policy {
+  guestPrompts: boolean;
+  dailyPrompts: number | null;
+  dailyTokens: number | null;
+}
+
+/** Wessen Abo eine geteilte Session nutzt. */
+export interface BilledTo {
+  id: string;
+  name: string;
+  plan: string | null;
+}
+
+/** Agent-Backends (heute nur Vibe, später z. B. Claude Code über ACP). */
+export const BACKEND_LABEL: Record<string, string> = { vibe: "Mistral Vibe", "claude-code": "Claude Code" };
+
+export interface TeamSession {
+  sessionId: string;
+  title: string | null;
+  project: string | null;
+  backend: string;
+  billedTo: BilledTo;
+  policy: Policy;
+  link: string;
+  running: boolean;
+  participants: number;
+}
+
+export interface Member {
+  id: string;
+  name: string;
+  backends: { id: string; label?: string; plan?: string | null; active?: boolean }[];
+  sessions: TeamSession[];
+  online: boolean;
+}
+
+export interface TeamProject {
+  id: string;
+  name: string;
+  repo?: string;
+  note?: string;
+  addedBy?: string;
+}
+
+export interface TeamView {
+  id: string;
+  name: string;
+  relay: string;
+  link: string;
+  connected: boolean;
+  error: string | null;
+  me: string;
+  members: Member[];
+  projects: TeamProject[];
 }
 
 export interface Queued {
@@ -50,8 +112,13 @@ export interface HostView {
   participants: Participant[];
   queue: Queued[];
   defaultRole: CollabRole;
+  teamRole: CollabRole;
   showOutputs: boolean;
   expires: number | null;
+  backend: string;
+  billedTo: BilledTo;
+  team: string | null;
+  policy: Policy;
 }
 
 export interface GuestState {
@@ -67,6 +134,9 @@ export interface GuestState {
   queue: Queued[];
   myRole: CollabRole | null;
   ended?: boolean;
+  backend?: string;
+  billedTo?: BilledTo;
+  policy?: Policy;
 }
 
 export interface CollabPrefs {
@@ -83,6 +153,17 @@ export interface CollabPrefs {
   expiresMinutes: number;
   /** Gast-Prompts automatisch ausführen, sobald die Session frei ist. */
   autoRun: boolean;
+  /** Eigenes Abo, wie es andere sehen (z. B. „Mistral Vibe Pro“). */
+  plan: string;
+  /** Rolle für Mitglieder gemeinsamer Teams. */
+  teamRole: CollabRole;
+  /** Gäste dürfen Prompts auf mein Abo schicken. */
+  guestPrompts: boolean;
+  /** Tageslimits je Gast, 0 = ohne. */
+  dailyPrompts: number;
+  dailyTokens: number;
+  /** Geteilte Sessions in diesem Team zeigen ("" = keinem). */
+  shareTeam: string;
 }
 
 const defaultPrefs: CollabPrefs = {
@@ -94,15 +175,24 @@ const defaultPrefs: CollabPrefs = {
   showOutputs: false,
   expiresMinutes: 24 * 60,
   autoRun: false,
+  plan: "",
+  teamRole: "collaborator",
+  guestPrompts: true,
+  dailyPrompts: 0,
+  dailyTokens: 0,
+  shareTeam: "",
 };
 
 interface CollabStore {
   prefs: CollabPrefs;
   hosts: Record<string, HostView>;
   guests: Record<string, GuestState>;
+  teams: Record<string, TeamView>;
   /** Teilen-Dialog für diese Session offen. */
   shareFor: string | null;
   joinOpen: boolean;
+  /** Team-Dialog (anlegen, beitreten, einladen). */
+  teamOpen: boolean;
   setPrefs(p: Partial<CollabPrefs>): void;
 }
 
@@ -110,8 +200,10 @@ export const useCollab = create<CollabStore>((set, get) => ({
   prefs: { ...defaultPrefs, ...load<Partial<CollabPrefs>>("collab", {}) },
   hosts: {},
   guests: {},
+  teams: {},
   shareFor: null,
   joinOpen: false,
+  teamOpen: false,
   setPrefs(p) {
     const prefs = { ...get().prefs, ...p };
     save("collab", prefs);
@@ -186,12 +278,12 @@ function hostName() {
 
 /** Gast-Prompt aus der Warteschlange ausführen – mit den Rechten des Hosts. */
 export async function runQueued(sessionId: string, id: string) {
-  const item = await invoke<Queued | null>("collab_queue_take", { sessionId, id });
+  const item = await invoke<Queued | null>("collab_queue_take", { sessionId, id, run: true });
   if (item) await useStore.getState().send(item.text, [], { sessionId, author: item.author });
 }
 
 export async function dropQueued(sessionId: string, id: string) {
-  await invoke("collab_queue_take", { sessionId, id });
+  await invoke("collab_queue_take", { sessionId, id, run: false });
 }
 
 const autoRunning: Record<string, boolean> = {};
@@ -210,8 +302,17 @@ function maybeRun(sessionId: string) {
     .finally(() => (autoRunning[sessionId] = false));
 }
 
+export const policyFromPrefs = (p: CollabPrefs): Policy => ({
+  guestPrompts: p.guestPrompts,
+  dailyPrompts: p.dailyPrompts > 0 ? p.dailyPrompts : null,
+  dailyTokens: p.dailyTokens > 0 ? p.dailyTokens : null,
+});
+
+export const planLabel = () => useCollab.getState().prefs.plan.trim() || "Mistral-Plan";
+
 export async function share(sessionId: string) {
-  const { prefs } = useCollab.getState();
+  const { prefs, teams } = useCollab.getState();
+  const session = useStore.getState().sessions[sessionId];
   const view = await invoke<HostView>("collab_share", {
     sessionId,
     options: {
@@ -221,11 +322,17 @@ export async function share(sessionId: string) {
       defaultRole: prefs.defaultRole,
       showOutputs: prefs.showOutputs,
       expiresMinutes: prefs.expiresMinutes || null,
+      backend: "vibe",
+      plan: planLabel(),
+      title: session?.title ?? null,
+      project: session ? basename(session.cwd) : null,
+      team: teams[prefs.shareTeam] ? prefs.shareTeam : null,
+      teamRole: prefs.teamRole,
+      policy: policyFromPrefs(prefs),
     },
   });
   useCollab.setState((s) => ({ hosts: { ...s.hosts, [sessionId]: view } }));
   // Gast-Prompts laufen mit den Rechten des Hosts: deshalb jede Aktion fragen.
-  const session = useStore.getState().sessions[sessionId];
   if (session && session.currentMode !== "ask" && session.modes.some((m) => m.id === "ask")) {
     await useStore.getState().setOption("mode", "ask", sessionId).catch(() => {});
   }
@@ -247,6 +354,62 @@ export const setRole = (sessionId: string, participant: string, role: CollabRole
   invoke("collab_set_role", { sessionId, participant, role });
 export const removeParticipant = (sessionId: string, participant: string) => invoke("collab_remove", { sessionId, participant });
 export const setDefaultRole = (sessionId: string, role: CollabRole) => invoke("collab_set_default_role", { sessionId, role });
+export const setPolicy = (sessionId: string, policy: Policy) => invoke("collab_set_policy", { sessionId, policy });
+
+// ---------- Teams ----------
+
+export async function createTeam(name: string) {
+  const { prefs } = useCollab.getState();
+  const team = await invoke<TeamView>("collab_team_create", {
+    name,
+    relay: prefs.mode === "relay" ? prefs.relayUrl : null,
+    lanPort: prefs.lanPort,
+  });
+  useCollab.setState((s) => ({ teams: { ...s.teams, [team.id]: team } }));
+  if (!prefs.shareTeam) useCollab.getState().setPrefs({ shareTeam: team.id });
+  pushProfile(true);
+  return team;
+}
+
+export async function joinTeam(link: string) {
+  const team = await invoke<TeamView>("collab_team_join", { link: link.trim() });
+  useCollab.setState((s) => ({ teams: { ...s.teams, [team.id]: team } }));
+  if (!useCollab.getState().prefs.shareTeam) useCollab.getState().setPrefs({ shareTeam: team.id });
+  pushProfile(true);
+  return team;
+}
+
+export async function leaveTeam(teamId: string) {
+  await invoke("collab_team_leave", { teamId });
+  useCollab.setState((s) => {
+    const teams = { ...s.teams };
+    delete teams[teamId];
+    return { teams };
+  });
+  if (useCollab.getState().prefs.shareTeam === teamId) useCollab.getState().setPrefs({ shareTeam: "" });
+}
+
+export const setTeamProjects = (teamId: string, projects: TeamProject[]) => invoke("collab_team_projects", { teamId, projects });
+
+/** Einer im Team geteilten Session beitreten (Link aus der Ankündigung). */
+export async function joinTeamSession(entry: TeamSession) {
+  const room = /^brise:\/\/join\/([^?#]+)/.exec(entry.link)?.[1];
+  const existing = room && useCollab.getState().guests[room];
+  if (existing) return useStore.getState().openTab(existing.sessionId);
+  await join(entry.link);
+}
+
+let lastProfile = "";
+/** Name und Abos an die Teams melden (nur bei Änderung). */
+function pushProfile(force = false) {
+  const { prefs } = useCollab.getState();
+  const auth = useStore.getState().auth;
+  const backends = [{ id: "vibe", label: BACKEND_LABEL.vibe, plan: auth?.authenticated ? planLabel() : null, active: !!auth?.authenticated }];
+  const profile = JSON.stringify({ name: prefs.name.trim() || "Ohne Namen", backends });
+  if (profile === lastProfile && !force) return;
+  lastProfile = profile;
+  invoke("collab_team_profile", JSON.parse(profile)).catch(() => {});
+}
 
 // ---------- Gast ----------
 
@@ -381,12 +544,18 @@ function onGuestEvent(room: string, sessionId: string, body: any) {
       const participants: Participant[] = body.participants ?? [];
       const g = useCollab.getState().guests[room];
       const myRole = participants.find((p) => p.id === g?.me)?.role ?? null;
-      patchGuest(room, () => ({ participants, hostName: body.host?.name, myRole }));
+      patchGuest(room, () => ({ participants, hostName: body.host?.name, myRole, backend: body.backend, billedTo: body.billedTo, policy: body.policy }));
       patchSession(sessionId, (s) => ({ ...s, guest: { room, host: body.host?.name ?? "Host", role: myRole, ended: s.guest?.ended } }));
       break;
     }
     case "queue":
       patchGuest(room, () => ({ queue: body.items ?? [] }));
+      break;
+    case "rejected":
+      // Nur an den Absender gerichtet: Abo-Regeln oder Tageslimit des Hosts.
+      if (body.to === useCollab.getState().guests[room]?.me) {
+        pushItem(sessionId, { type: "notice", id: cid(), text: `Nicht angenommen: ${body.reason ?? "abgelehnt"}`, tone: "warn" });
+      }
       break;
     case "ended":
       patchGuest(room, () => ({ ended: true }));
@@ -454,6 +623,8 @@ export function initCollab(): () => void {
     listen<{ room: string; connected: boolean; error: string | null }>("collab:guest-status", (e) =>
       patchGuest(e.payload.room, () => ({ connected: e.payload.connected, error: e.payload.error })),
     ),
+    // Team
+    listen<TeamView>("collab:team", (e) => useCollab.setState((s) => ({ teams: { ...s.teams, [e.payload.id]: e.payload } }))),
   ];
 
   // Prompts, Turn-Enden und Hinweise entstehen im Store, nicht bei Vibe.
@@ -474,10 +645,20 @@ export function initCollab(): () => void {
         }
       }
       if (old.running && !cur.running) maybeRun(sessionId);
+      if (cur.title !== old.title) invoke("collab_session_meta", { sessionId, title: cur.title ?? null }).catch(() => {});
     }
+    if (st.auth !== prev.auth) pushProfile();
     // Zurück im eigenen Projekt, sobald keine Gast-Session mehr aktiv ist.
     if (st.activeSessionId !== prev.activeSessionId && prev.activeSessionId && prev.sessions[prev.activeSessionId]?.guest) restoreProject();
   });
+
+  const unsubscribePrefs = useCollab.subscribe((st, prev) => {
+    if (st.prefs.name !== prev.prefs.name || st.prefs.plan !== prev.prefs.plan) pushProfile();
+  });
+  pushProfile(true);
+  invoke<TeamView[]>("collab_teams")
+    .then((list) => useCollab.setState({ teams: Object.fromEntries(list.map((t) => [t.id, t])) }))
+    .catch(() => {});
 
   // Nach einem Neuladen der Oberfläche laufen Freigaben im Backend weiter.
   invoke<{ hosts: HostView[] }>("collab_status")
@@ -486,6 +667,7 @@ export function initCollab(): () => void {
 
   return () => {
     unsubscribe();
+    unsubscribePrefs();
     unlisten.forEach((p) => p.then((f) => f()));
   };
 }

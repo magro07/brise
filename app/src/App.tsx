@@ -20,6 +20,7 @@ import { TextPrompt, Tour } from "./components/screens/Tour";
 import { initCollab } from "./lib/collab";
 import { ShareDialog } from "./components/collab/ShareDialog";
 import { JoinDialog } from "./components/collab/JoinDialog";
+import { TeamDialog } from "./components/collab/TeamDialog";
 import { GuestPane } from "./components/collab/GuestComposer";
 
 /** Backend-Events abonnieren und einmal mit Vibe verbinden. */
@@ -212,6 +213,7 @@ export default function App() {
       <TextPrompt />
       <ShareDialog />
       <JoinDialog />
+      <TeamDialog />
       <Tour />
     </TooltipProvider>
   );

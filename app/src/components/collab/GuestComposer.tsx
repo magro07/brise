@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { ArrowUp, Eye, Hourglass, ShieldQuestion, Square, WifiOff } from "lucide-react";
 import type { Session } from "../../lib/store";
-import { ROLE_LABEL, guestCancel, guestPrompt, useCollab } from "../../lib/collab";
+import { BACKEND_LABEL, ROLE_LABEL, guestCancel, guestPrompt, useCollab } from "../../lib/collab";
 import { PermissionPrompt } from "../composer/Pinned";
 import { IconButton, clsx } from "../ui";
 
@@ -24,7 +24,14 @@ export function GuestPane({ session }: { session: Session }) {
   const [error, setError] = useState<string | null>(null);
   const ref = useRef<HTMLTextAreaElement>(null);
   const mine = guest?.queue.filter((q) => q.authorId === guest.me) ?? [];
-  const canWrite = role === "collaborator" || role === "approver";
+  const allowed = guest?.policy?.guestPrompts !== false;
+  const canWrite = (role === "collaborator" || role === "approver") && allowed;
+  const meUsage = guest?.participants.find((p) => p.id === guest.me);
+  const limit = guest?.policy?.dailyPrompts;
+  const billing = guest?.billedTo
+    ? `${BACKEND_LABEL[guest.backend ?? "vibe"] ?? guest.backend} auf dem Abo von ${guest.billedTo.name}` +
+      (limit ? ` · heute ${meUsage?.prompts ?? 0} von ${limit} Prompts` : "")
+    : null;
 
   useEffect(() => {
     const el = ref.current;
@@ -76,7 +83,8 @@ export function GuestPane({ session }: { session: Session }) {
           />
           <div className="flex items-center gap-2 px-3 pb-2 pt-1 text-[0.82em] text-muted">
             <span className="flex-1">
-              Rolle {role ? ROLE_LABEL[role] : "…"} · Prompts landen in der Warteschlange von {session.guest?.host ?? "dem Host"}
+              Rolle {role ? ROLE_LABEL[role] : "…"} · Warteschlange von {session.guest?.host ?? "dem Host"}
+              {billing && <> · {billing}</>}
             </span>
             {session.running && (
               <IconButton label="Turn abbrechen" onClick={() => guestCancel(room)}>
@@ -99,7 +107,10 @@ export function GuestPane({ session }: { session: Session }) {
         </div>
       ) : (
         <Note icon={<Eye />}>
-          Du schaust zu{role ? ` (Rolle ${ROLE_LABEL[role]})` : ""}. Zum Mitschreiben muss {session.guest?.host ?? "der Host"} dich zum Mitarbeiter machen.
+          {!allowed
+            ? `Du schaust zu. ${session.guest?.host ?? "Der Host"} lässt in dieser Session keine Prompts auf sein Abo zu.`
+            : `Du schaust zu${role ? ` (Rolle ${ROLE_LABEL[role]})` : ""}. Zum Mitschreiben muss ${session.guest?.host ?? "der Host"} dich zum Mitarbeiter machen.`}
+          {billing && <span className="block text-[0.9em]">{billing}</span>}
         </Note>
       )}
     </div>

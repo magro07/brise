@@ -1,6 +1,7 @@
 # Kollaborationsprotokoll (v1)
 
-Stand: Stufen D1 (Live ansehen) und D2 (Mitarbeiten) aus `PLAN-v2.md`.
+Stand: Stufen D1 (Live ansehen) und D2 (Mitarbeiten) aus `PLAN-v2.md`, dazu Teile
+von D3/D5: Teams mit Präsenz, Sessions der anderen und gemeinsamer Projektliste.
 
 ## Grundsatz
 
@@ -31,12 +32,20 @@ brise://join/<raum>?relay=<url>&exp=<unix-sekunden>#<schlüssel>.<host-id>
 | `relay` | WebSocket-Adresse des Relays (`ws://…` oder `wss://…`), prozentkodiert. |
 | `exp` | optional, Ablauf des Links. Danach nimmt der Host keine neuen Teilnehmer an. |
 | `schlüssel` | 32 Zufallsbytes, base64url. Symmetrischer Raumschlüssel. |
-| `host-id` | öffentlicher Ed25519-Schlüssel des Hosts, base64url. |
+| `host-id` | öffentlicher Ed25519-Schlüssel des Hosts (seine Identität), base64url. |
 
 Schlüssel und Host-ID stehen im **Fragment** (nach `#`). Das Relay bekommt nur
-`GET /ws/<raum>` zu sehen. Raumschlüssel und Host-Signaturschlüssel erzeugt der
-Host für jede Freigabe neu und hält sie nur im Arbeitsspeicher. Wer den Link
-hat, kann mitlesen: Er ist wie ein Passwort zu behandeln.
+`GET /ws/<raum>` zu sehen. Den Raumschlüssel erzeugt der Host für jede Freigabe
+neu und hält ihn nur im Arbeitsspeicher. Wer den Link hat, kann mitlesen: Er ist
+wie ein Passwort zu behandeln.
+
+## Identität
+
+Jede Brise-Installation hat eine feste Ed25519-Identität. Ihr öffentlicher
+Schlüssel ist die Teilnehmer-ID. Seed und Team-Schlüssel liegen im Schlüsselbund
+(Dienst `dev.brise.app`), ersatzweise in `<Datenordner>/collab.json` mit Rechten
+nur für den Nutzer. So erkennt ein Host Teammitglieder wieder und gibt ihnen die
+Team-Rolle.
 
 ## Relay
 
@@ -65,8 +74,6 @@ sig      = Ed25519(absender, "brise-collab-v1:" + raum + ":" + body)
   Raumschlüssel und könnten verschlüsseln, aber nicht als Host signieren.
 - Gäste akzeptieren nur Nachrichten, deren `from` der Host-ID aus dem Link
   entspricht. Der Host ordnet Gast-Nachrichten über `from` einem Teilnehmer zu.
-- Gast-Identitäten sind Ed25519-Schlüssel, die jede Brise-Instanz beim Start
-  neu erzeugt (nur im Arbeitsspeicher).
 
 ## Rollen
 
@@ -76,7 +83,8 @@ sig      = Ed25519(absender, "brise-collab-v1:" + raum + ":" + body)
 | `collaborator` (Mitarbeiter) | zusätzlich Prompts in die Warteschlange des Hosts stellen, den laufenden Turn abbrechen |
 | `approver` (Freigeber) | zusätzlich Freigabe-Anfragen entscheiden |
 
-Neue Teilnehmer bekommen die Standardrolle der Freigabe (Standard: Betrachter).
+Neue Teilnehmer bekommen die Standardrolle der Freigabe (Standard: Betrachter),
+Mitglieder eines gemeinsamen Teams die Team-Rolle (Standard: Mitarbeiter).
 Der Host verkündet Rollen mit der signierten Nachricht `roster`. Durchgesetzt
 werden sie **beim Host**: Er verwirft Nachrichten, die die Rolle des Absenders
 nicht erlaubt. „Freigabe entziehen“ entfernt einen Teilnehmer und verwirft
@@ -100,12 +108,13 @@ Ereignisse nur in aufsteigender Reihenfolge und erst nach einem Snapshot.
 |---|---|---|
 | `snapshot` | `session: {title, cwd, running, elapsed, currentMode, plan, usage, items, pending}` | vollständiger Stand der Session (Store-Format). Kommt nach jedem `hello`. |
 | `update` | `update` | ein ACP-`session/update` von Vibe, unverändert (Text, Gedanken, Werkzeugaufrufe, Plan, Nutzung, Titel …) |
-| `prompt` | `text, author, attachments?` | ein Turn beginnt (Prompt des Hosts oder ausgeführter Gast-Prompt) |
-| `turn_end` | `stopReason, ms, tokens?` | der Turn ist zu Ende |
+| `prompt` | `text, author, attachments?, backend, billedTo` | ein Turn beginnt (Prompt des Hosts oder ausgeführter Gast-Prompt) |
+| `turn_end` | `stopReason, ms, tokens?, backend, billedTo` | der Turn ist zu Ende |
 | `notice` | `text, tone` | Hinweis in der Konversation (Fehler, „Anna hat freigegeben“) |
 | `permission` | `key, request: {toolCall, options}` | Vibe bittet um Freigabe |
 | `permission_closed` | `key, optionId` | Freigabe entschieden oder abgebrochen |
-| `roster` | `host: {id, name}, participants: [{id, name, role, online}], expires` | Teilnehmer und Rollen |
+| `roster` | `host: {id, name}, participants: [{id, name, role, online, prompts, tokens}], expires, backend, billedTo, policy` | Teilnehmer, Rollen, Abo-Regeln, Nutzung heute |
+| `rejected` | `to, ref, reason` | Gast-Prompt abgelehnt (Abo-Regeln, Tageslimit, Warteschlange voll); nur für `to` gedacht |
 | `queue` | `items: [{id, author, authorId, text}]` | Warteschlange der Gast-Prompts |
 | `ended` | – | der Host hat die Freigabe beendet |
 
@@ -121,6 +130,47 @@ Jede Gast-Nachricht hat eine zufällige `id`. Der Host verwirft doppelte IDs.
 | `prompt` | `text` | Mitarbeiter | Prompt in die Warteschlange (max. 20 Einträge, 50 000 Zeichen) |
 | `cancel` | – | Mitarbeiter | laufenden Turn abbrechen |
 | `decide` | `key, optionId` | Freigeber | Freigabe-Anfrage entscheiden (`optionId: null` = abbrechen) |
+
+## Agent-Backend und Abo
+
+Jede geteilte Session trägt:
+
+| Feld | Bedeutung |
+|---|---|
+| `backend` | Agent-Backend der Session, heute `vibe`, künftig z. B. `claude-code` (über ACP) |
+| `billedTo` | `{id, name, plan}`: wessen Abo bzw. Kontingent die Session nutzt – immer der Host |
+| `policy` | `{guestPrompts, dailyPrompts, dailyTokens}`: was Gäste auf dieses Abo dürfen |
+
+Der Host legt fest, ob Gäste überhaupt Prompts auf sein Abo schicken dürfen und
+mit welchen Tageslimits je Gast (Prompts und/oder Tokens, Zählung pro Kalendertag
+UTC). Abgelehnte Prompts beantwortet er mit `rejected`. Wer kein eigenes Abo hat,
+arbeitet so in den Sessions anderer mit.
+
+Für die Usage-Anzeige (Paket B) meldet Rust beim Host nach jedem Turn das Tauri-Event
+`collab:usage` mit `{sessionId, backend, billedTo, authorId, authorName, tokens}`.
+`authorId` ist `null` bei eigenen Prompts des Hosts.
+
+## Teams
+
+Ein Team ist ein dauerhafter Raum auf dem Relay mit eigenem Schlüssel:
+
+```
+brise://team/<team-id>?relay=<url>&name=<name>#<team-schlüssel>
+```
+
+Wer den Link hat, gehört dazu. Team-ID und Schlüssel speichert jedes Mitglied
+(siehe Identität), Brise verbindet beim Start alle Teams. Frames wie oben,
+signiert mit der eigenen Identität, AAD mit der Team-ID.
+
+| `t` | Felder | Bedeutung |
+|---|---|---|
+| `announce` | `id, name, backends: [{id, label, plan, active}], sessions: [{sessionId, title, project, backend, billedTo, policy, link, running, participants}]` | alle 25 s und bei Änderungen. Nach 75 s Stille gilt ein Mitglied als abwesend. |
+| `projects` | `id, items: [{id, name, repo?, note?, addedBy?}], at` | gemeinsame Projektliste, der neueste Stand (`at`) gewinnt |
+| `bye` | `id` | Mitglied verlässt das Team |
+
+In `sessions` steht der Beitritts-Link der geteilten Session. Teammitglieder
+treten mit einem Klick bei; der Host erkennt sie an der Identität und gibt ihnen
+die Team-Rolle. Projekte enthalten nur Name und Git-Adresse, keine Dateien.
 
 ## Was Gäste sehen
 
@@ -162,3 +212,6 @@ Anhänge erscheinen nur mit Namen, ohne Pfad.
 - `brise://`-Links werden noch nicht vom System geöffnet, sie werden eingefügt.
 - Präsenz beschränkt sich auf online/abwesend. „Tippt gerade“ und Kommentare
   folgen mit D3.
+- Teams haben keinen Admin: Wer den Team-Link hat, ist Mitglied. Zum Ausschluss
+  ein neues Team anlegen.
+- Ein Team über das LAN-Relay ist nur erreichbar, solange Brise beim Anleger läuft.

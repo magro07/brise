@@ -1,7 +1,7 @@
 import { Command } from "cmdk";
 import { shortcut } from "../../lib/platform";
 import * as Dialog from "@radix-ui/react-dialog";
-import { FolderOpen, FolderPlus, GraduationCap, Folder, LogIn, MessageSquare, Moon, PanelRight, Settings, SquarePen, Sun } from "lucide-react";
+import { FolderOpen, FolderPlus, GraduationCap, Folder, LogIn, MessageSquare, Moon, PanelRight, Settings, SquarePen, Sun, Users } from "lucide-react";
 import { useCollab } from "../../lib/collab";
 import { basename, useStore } from "../../lib/store";
 import { relativeTime } from "../../lib/format";
@@ -60,6 +60,9 @@ export function CommandPalette() {
                 </Item>
                 <Item icon={<LogIn />} onSelect={run(() => useCollab.setState({ joinOpen: true }))}>
                   Einer Session beitreten …
+                </Item>
+                <Item icon={<Users />} onSelect={run(() => useCollab.setState({ teamOpen: true }))}>
+                  Team anlegen oder beitreten …
                 </Item>
                 <Item icon={<GraduationCap />} onSelect={run(() => set({ tourStep: 0 }))}>
                   Einführung starten

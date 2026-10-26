@@ -1,12 +1,16 @@
-//! Kollaboration: Sessions teilen (Host) und geteilten Sessions beitreten (Gast).
+//! Kollaboration: Sessions teilen (Host), geteilten Sessions beitreten (Gast)
+//! und Teams (Präsenz, Sessions der anderen, gemeinsame Projekte).
 //!
-//! Der Agent läuft nur beim Host. Dieses Modul transportiert verschlüsselte
-//! Nachrichten über ein Relay (oder Brises eingebautes LAN-Relay) und setzt
-//! die Rollen durch. Welche Ereignisse gespiegelt werden, entscheidet die
+//! Ein Agent läuft immer nur beim Host, mit dessen Abo. Dieses Modul
+//! transportiert verschlüsselte Nachrichten über ein Relay (oder Brises
+//! eingebautes LAN-Relay), setzt Rollen und Abo-Regeln durch und zählt die
+//! Nutzung pro Gast. Welche Ereignisse gespiegelt werden, entscheidet die
 //! Oberfläche (`src/lib/collab.ts`); Protokoll in `docs/collab-protocol.md`.
 
 mod crypto;
 mod link;
+mod secrets;
+pub mod team;
 mod transport;
 
 use std::collections::{BTreeMap, HashMap, VecDeque};
@@ -15,9 +19,9 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
-use crypto::{Identity, b64, random};
+use crypto::{Identity, b64, random, unb64};
 use link::Link;
 use transport::Transport;
 
@@ -39,6 +43,29 @@ pub enum Role {
     Approver,
 }
 
+/// Was Gäste auf dem Abo des Hosts dürfen.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Policy {
+    /// Prompts von Gästen laufen auf dem Abo des Hosts. Aus: nur zusehen.
+    #[serde(default = "yes")]
+    guest_prompts: bool,
+    /// Höchstens so viele ausgeführte Prompts je Gast und Tag.
+    daily_prompts: Option<u32>,
+    /// Höchstens so viele Tokens je Gast und Tag.
+    daily_tokens: Option<u64>,
+}
+
+fn yes() -> bool {
+    true
+}
+
+impl Default for Policy {
+    fn default() -> Self {
+        Self { guest_prompts: true, daily_prompts: None, daily_tokens: None }
+    }
+}
+
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Participant {
@@ -46,8 +73,26 @@ pub struct Participant {
     name: String,
     role: Role,
     online: bool,
+    /// Auch Mitglied eines gemeinsamen Teams.
+    team: bool,
+    /// Nutzung auf dem Abo des Hosts, heute.
+    prompts: u32,
+    tokens: u64,
+    #[serde(skip)]
+    day: u64,
     #[serde(skip)]
     last_seen: Option<Instant>,
+}
+
+impl Participant {
+    fn roll_day(&mut self) {
+        let today = unix_now() / 86_400;
+        if self.day != today {
+            self.day = today;
+            self.prompts = 0;
+            self.tokens = 0;
+        }
+    }
 }
 
 #[derive(Clone, Serialize)]
@@ -57,6 +102,14 @@ pub struct Queued {
     author: String,
     author_id: String,
     text: String,
+}
+
+fn default_backend() -> String {
+    "vibe".into()
+}
+
+fn default_team_role() -> Role {
+    Role::Collaborator
 }
 
 #[derive(Deserialize)]
@@ -70,6 +123,24 @@ pub struct ShareOptions {
     /// Werkzeug-Ausgaben (z. B. gelesene Dateien) an Gäste schicken.
     show_outputs: bool,
     expires_minutes: Option<u64>,
+    /// Agent-Backend der Session, z. B. `vibe` oder `claude-code`.
+    #[serde(default = "default_backend")]
+    backend: String,
+    /// Abo, auf dem die Session läuft (Anzeige), z. B. „Mistral Vibe Pro“.
+    #[serde(default)]
+    plan: Option<String>,
+    #[serde(default)]
+    title: Option<String>,
+    #[serde(default)]
+    project: Option<String>,
+    /// Session im Team ankündigen (Team-ID).
+    #[serde(default)]
+    team: Option<String>,
+    /// Rolle für Mitglieder gemeinsamer Teams.
+    #[serde(default = "default_team_role")]
+    team_role: Role,
+    #[serde(default)]
+    policy: Policy,
 }
 
 #[derive(Clone, Serialize)]
@@ -84,8 +155,13 @@ pub struct HostView {
     participants: Vec<Participant>,
     queue: Vec<Queued>,
     default_role: Role,
+    team_role: Role,
     show_outputs: bool,
     expires: Option<u64>,
+    backend: String,
+    billed_to: Value,
+    team: Option<String>,
+    policy: Policy,
 }
 
 #[derive(Clone, Serialize)]
@@ -113,8 +189,19 @@ struct Host {
     blocked: Vec<String>,
     queue: Vec<Queued>,
     default_role: Role,
+    team_role: Role,
     show_outputs: bool,
     lan: bool,
+    backend: String,
+    plan: Option<String>,
+    title: Option<String>,
+    project: Option<String>,
+    team: Option<String>,
+    policy: Policy,
+    /// Gast-Prompt, der gerade gestartet wird bzw. läuft (für die Nutzung).
+    next_author: Option<String>,
+    running_author: Option<String>,
+    running: bool,
     /// Zuletzt gesehene Nachrichten-IDs gegen doppelt eingespielte Frames.
     seen: VecDeque<String>,
 }
@@ -136,10 +223,13 @@ struct Lan {
 }
 
 struct Inner {
-    /// Identität dieser Brise-Instanz als Gast (nur im Arbeitsspeicher).
+    /// Identität dieser Brise-Installation (dauerhaft, siehe secrets.rs).
     me: Identity,
+    /// Name und Agent-Backends samt Abo, von der Oberfläche gesetzt.
+    profile: Value,
     hosts: HashMap<String, Host>,
     guests: HashMap<String, Guest>,
+    teams: HashMap<String, team::Team>,
     lan: Option<Lan>,
 }
 
@@ -147,8 +237,29 @@ pub struct CollabState(Arc<Mutex<Inner>>);
 
 impl Default for CollabState {
     fn default() -> Self {
-        Self(Arc::new(Mutex::new(Inner { me: Identity::generate(), hosts: HashMap::new(), guests: HashMap::new(), lan: None })))
+        let stored = secrets::load();
+        let me = match stored.seed.as_deref().and_then(unb64::<32>) {
+            Some(seed) => Identity::from_seed(seed),
+            None => {
+                let me = Identity::generate();
+                secrets::save(&secrets::Secrets { seed: Some(b64(&me.seed())), teams: stored.teams.clone() });
+                me
+            }
+        };
+        Self(Arc::new(Mutex::new(Inner {
+            me,
+            profile: json!({ "name": "", "backends": [] }),
+            hosts: HashMap::new(),
+            guests: HashMap::new(),
+            teams: HashMap::new(),
+            lan: None,
+        })))
     }
+}
+
+/// Beim Start: gespeicherte Teams verbinden.
+pub fn start(app: &AppHandle) {
+    team::start(app.clone(), app.state::<CollabState>().0.clone());
 }
 
 fn unix_now() -> u64 {
@@ -199,6 +310,11 @@ impl Host {
         self.transport.send(crypto::seal(&self.link.key, &self.link.room, &self.me, &body));
     }
 
+    /// Wessen Abo die Session nutzt – für Anzeige und Usage pro Person.
+    fn billed_to(&self) -> Value {
+        json!({ "id": self.me.id(), "name": self.name, "plan": self.plan })
+    }
+
     fn view(&self) -> HostView {
         HostView {
             session_id: self.session_id.clone(),
@@ -210,22 +326,73 @@ impl Host {
             participants: self.participants.values().cloned().collect(),
             queue: self.queue.clone(),
             default_role: self.default_role,
+            team_role: self.team_role,
             show_outputs: self.show_outputs,
             expires: self.link.expires,
+            backend: self.backend.clone(),
+            billed_to: self.billed_to(),
+            team: self.team.clone(),
+            policy: self.policy.clone(),
         }
     }
 
-    /// Rollen gehen signiert an alle – Gäste richten ihre Oberfläche danach.
+    /// Eintrag für die Team-Ankündigung (inklusive Beitritts-Link).
+    fn team_entry(&self) -> Value {
+        json!({
+            "sessionId": self.session_id,
+            "title": self.title,
+            "project": self.project,
+            "backend": self.backend,
+            "billedTo": self.billed_to(),
+            "policy": self.policy,
+            "link": self.link.to_url(),
+            "running": self.running,
+            "participants": self.participants.values().filter(|p| p.online).count(),
+        })
+    }
+
+    /// Rollen und Abo-Regeln gehen signiert an alle – Gäste richten ihre Oberfläche danach.
     fn send_roster(&mut self) {
-        let participants: Vec<Value> =
-            self.participants.values().map(|p| json!({ "id": p.id, "name": p.name, "role": p.role, "online": p.online })).collect();
-        let host = json!({ "id": self.me.id(), "name": self.name });
-        self.send(json!({ "t": "roster", "host": host, "participants": participants, "expires": self.link.expires }));
+        let participants: Vec<Value> = self
+            .participants
+            .values()
+            .map(|p| json!({ "id": p.id, "name": p.name, "role": p.role, "online": p.online, "prompts": p.prompts, "tokens": p.tokens }))
+            .collect();
+        let body = json!({
+            "t": "roster",
+            "host": { "id": self.me.id(), "name": self.name },
+            "participants": participants,
+            "expires": self.link.expires,
+            "backend": self.backend,
+            "billedTo": self.billed_to(),
+            "policy": self.policy,
+        });
+        self.send(body);
     }
 
     fn send_queue(&mut self) {
         let items: Vec<Value> = self.queue.iter().map(|q| json!({ "id": q.id, "author": q.author, "authorId": q.author_id, "text": q.text })).collect();
         self.send(json!({ "t": "queue", "items": items }));
+    }
+
+    /// Darf dieser Gast jetzt noch einen Prompt auf das Abo des Hosts stellen?
+    fn prompt_refusal(&mut self, from: &str) -> Option<String> {
+        if !self.policy.guest_prompts {
+            return Some(format!("{} lässt in dieser Session keine Prompts von Gästen auf sein Abo zu.", self.name));
+        }
+        if self.queue.len() >= MAX_QUEUE {
+            return Some("Die Warteschlange ist voll.".into());
+        }
+        let queued = self.queue.iter().filter(|q| q.author_id == from).count() as u32;
+        let p = self.participants.get_mut(from)?;
+        p.roll_day();
+        if let Some(max) = self.policy.daily_prompts.filter(|max| p.prompts + queued >= *max) {
+            return Some(format!("Tageslimit erreicht: {max} {} pro Tag auf dem Abo von {}.", if max == 1 { "Prompt" } else { "Prompts" }, self.name));
+        }
+        if let Some(max) = self.policy.daily_tokens.filter(|max| p.tokens >= *max) {
+            return Some(format!("Tageslimit erreicht: {max} Tokens pro Tag auf dem Abo von {}.", self.name));
+        }
+        None
     }
 }
 
@@ -240,8 +407,10 @@ fn emit_guest_status(app: &AppHandle, room: &str, guest: &Guest) {
 /// Nachricht eines Gasts beim Host.
 fn host_frame(app: &AppHandle, inner: &Mutex<Inner>, session_id: &str, frame: &[u8]) {
     let mut g = inner.lock().unwrap();
-    let Some(h) = g.hosts.get_mut(session_id) else { return };
+    let Some(h) = g.hosts.get(session_id) else { return };
     let Some((from, body)) = crypto::open(&h.link.key, &h.link.room, frame) else { return };
+    let in_team = team::is_member(&g, &from);
+    let Some(h) = g.hosts.get_mut(session_id) else { return };
     // Eigene Frames kommen beim Neuverbinden aus dem Puffer des Relays zurück.
     if from == h.me.id() || h.blocked.contains(&from) {
         return;
@@ -262,12 +431,17 @@ fn host_frame(app: &AppHandle, inner: &Mutex<Inner>, session_id: &str, frame: &[
         if !known && h.link.expires.is_some_and(|e| unix_now() > e) {
             return;
         }
-        let role = h.default_role;
+        // Teammitglieder erkennt der Host an ihrer festen Identität.
+        let role = if in_team { h.team_role } else { h.default_role };
         let p = h.participants.entry(from.clone()).or_insert_with(|| Participant {
             id: from.clone(),
             name: String::new(),
             role,
             online: true,
+            team: in_team,
+            prompts: 0,
+            tokens: 0,
+            day: unix_now() / 86_400,
             last_seen: None,
         });
         p.name = clean_name(&body["name"]);
@@ -278,6 +452,7 @@ fn host_frame(app: &AppHandle, inner: &Mutex<Inner>, session_id: &str, frame: &[
         emit_host(app, h);
         // Die Oberfläche schickt daraufhin einen Snapshot der Session.
         let _ = app.emit("collab:snapshot-request", json!({ "sessionId": session_id }));
+        team::announce_all(&mut g);
         return;
     }
     let Some(p) = h.participants.get_mut(&from) else { return };
@@ -290,14 +465,19 @@ fn host_frame(app: &AppHandle, inner: &Mutex<Inner>, session_id: &str, frame: &[
             if was_online != (t != "bye") {
                 h.send_roster();
                 emit_host(app, h);
+                team::announce_all(&mut g);
             }
         }
         "prompt" if role >= Role::Collaborator => {
             let text: String = body["text"].as_str().unwrap_or("").trim().chars().take(MAX_PROMPT).collect();
-            if text.is_empty() || h.queue.len() >= MAX_QUEUE {
+            if text.is_empty() {
                 return;
             }
             let id = body["id"].as_str().map(str::to_string).unwrap_or_else(message_id);
+            if let Some(reason) = h.prompt_refusal(&from) {
+                h.send(json!({ "t": "rejected", "to": from, "ref": id, "reason": reason }));
+                return;
+            }
             h.queue.push(Queued { id, author: name, author_id: from, text });
             h.send_queue();
             emit_host(app, h);
@@ -329,7 +509,7 @@ fn guest_frame(app: &AppHandle, inner: &Mutex<Inner>, room: &str, frame: &[u8]) 
         guest.synced = true;
     } else if seq <= guest.last_seq {
         return;
-    } else if !guest.synced && !matches!(t, "roster" | "queue" | "ended") {
+    } else if !guest.synced && !matches!(t, "roster" | "queue" | "ended" | "rejected") {
         // Ohne Snapshot ergeben einzelne Ereignisse keine Ansicht.
         guest.last_seq = seq;
         return;
@@ -377,6 +557,18 @@ async fn ensure_lan(inner: &Mutex<Inner>, port: u16) -> CmdResult<u16> {
     }
     g.lan = Some(Lan { port, task });
     Ok(port)
+}
+
+/// LAN-Relay stoppen, wenn weder Freigaben noch Teams es brauchen.
+fn release_lan(g: &mut Inner) {
+    let Some(lan) = &g.lan else { return };
+    let suffix = format!(":{}", lan.port);
+    let team_uses = g.teams.values().any(|t| t.secret.relay.ends_with(&suffix) && team::is_own_lan(&t.secret.relay));
+    if !g.hosts.values().any(|h| h.lan) && !team_uses {
+        if let Some(lan) = g.lan.take() {
+            lan.task.abort();
+        }
+    }
 }
 
 /// Markiert Gäste ohne Lebenszeichen als abwesend.
@@ -439,7 +631,9 @@ pub async fn collab_share(
             (format!("ws://{ip}:{port}"), format!("ws://127.0.0.1:{port}"), true)
         }
     };
-    let me = Identity::generate();
+    // Erst eintragen, dann kann der Transport-Status ankommen.
+    let mut g = state.0.lock().unwrap();
+    let me = g.me.clone();
     let link = Link {
         room: b64(&random::<16>()),
         relay: public,
@@ -448,8 +642,6 @@ pub async fn collab_share(
         expires: options.expires_minutes.filter(|m| *m > 0).map(|m| unix_now() + m * 60),
     };
     let room = link.room.clone();
-    // Erst eintragen, dann kann der Transport-Status ankommen.
-    let mut g = state.0.lock().unwrap();
     let transport = {
         let (app_f, inner_f, sid_f) = (app.clone(), state.0.clone(), session_id.clone());
         let (app_s, inner_s, sid_s) = (app.clone(), state.0.clone(), session_id.clone());
@@ -466,6 +658,7 @@ pub async fn collab_share(
             },
         )
     };
+    let team = options.team.filter(|t| g.teams.contains_key(t));
     let host = Host {
         session_id: session_id.clone(),
         link,
@@ -479,12 +672,23 @@ pub async fn collab_share(
         blocked: Vec::new(),
         queue: Vec::new(),
         default_role: options.default_role,
+        team_role: options.team_role,
         show_outputs: options.show_outputs,
         lan,
+        backend: options.backend,
+        plan: options.plan,
+        title: options.title,
+        project: options.project,
+        team,
+        policy: options.policy,
+        next_author: None,
+        running_author: None,
+        running: false,
         seen: VecDeque::new(),
     };
     let view = host.view();
     g.hosts.insert(session_id.clone(), host);
+    team::announce_all(&mut g);
     drop(g);
     spawn_host_ticker(app, state.0.clone(), session_id, room);
     Ok(view)
@@ -492,21 +696,70 @@ pub async fn collab_share(
 
 /// Ereignisse der geteilten Session an alle Gäste (in Reihenfolge, signiert).
 #[tauri::command]
-pub fn collab_publish(state: State<'_, CollabState>, session_id: String, events: Vec<Value>) {
+pub fn collab_publish(app: AppHandle, state: State<'_, CollabState>, session_id: String, events: Vec<Value>) {
     let mut g = state.0.lock().unwrap();
     let Some(h) = g.hosts.get_mut(&session_id) else { return };
+    let mut usage_changed = false;
+    let mut running_changed = false;
     for mut ev in events {
-        let allowed = matches!(
-            ev["t"].as_str(),
-            Some("snapshot" | "update" | "prompt" | "turn_end" | "permission" | "permission_closed" | "notice")
-        );
-        if !allowed {
-            continue;
+        match ev["t"].as_str() {
+            Some("snapshot" | "update" | "permission" | "permission_closed" | "notice") => {}
+            Some("prompt") => {
+                // Ein Gast-Prompt aus der Warteschlange – oder ein eigener des Hosts.
+                h.running_author = h.next_author.take();
+                h.running = true;
+                running_changed = true;
+                ev["billedTo"] = h.billed_to();
+                ev["backend"] = json!(h.backend);
+            }
+            Some("turn_end") => {
+                let tokens = ev["tokens"].as_u64().unwrap_or(0);
+                let author = h.running_author.take();
+                h.running = false;
+                running_changed = true;
+                let mut author_name = Value::Null;
+                if let Some(p) = author.as_ref().and_then(|a| h.participants.get_mut(a)) {
+                    p.roll_day();
+                    p.tokens += tokens;
+                    author_name = json!(p.name);
+                    usage_changed = true;
+                }
+                ev["billedTo"] = h.billed_to();
+                ev["backend"] = json!(h.backend);
+                // Für die Usage-Anzeige: wer hat auf wessen Abo wie viel verbraucht.
+                let _ = app.emit(
+                    "collab:usage",
+                    json!({
+                        "sessionId": session_id, "backend": h.backend, "billedTo": h.billed_to(),
+                        "authorId": author, "authorName": author_name, "tokens": tokens,
+                    }),
+                );
+            }
+            _ => continue,
         }
         if !h.show_outputs {
             strip_outputs(&mut ev);
         }
         h.send(ev);
+    }
+    if usage_changed {
+        h.send_roster();
+        emit_host(&app, h);
+    }
+    if running_changed {
+        team::announce_all(&mut g);
+    }
+}
+
+/// Titel der geteilten Session hat sich geändert (für die Team-Ankündigung).
+#[tauri::command]
+pub fn collab_session_meta(state: State<'_, CollabState>, session_id: String, title: Option<String>) {
+    let mut g = state.0.lock().unwrap();
+    if let Some(h) = g.hosts.get_mut(&session_id) {
+        if h.title != title {
+            h.title = title;
+            team::announce_all(&mut g);
+        }
     }
 }
 
@@ -543,13 +796,34 @@ pub fn collab_set_default_role(app: AppHandle, state: State<'_, CollabState>, se
     Ok(())
 }
 
-/// Nimmt einen Gast-Prompt aus der Warteschlange (zum Ausführen oder Verwerfen).
+/// Abo-Regeln ändern: Gast-Prompts erlauben, Tageslimits.
 #[tauri::command]
-pub fn collab_queue_take(app: AppHandle, state: State<'_, CollabState>, session_id: String, id: String) -> CmdResult<Option<Queued>> {
+pub fn collab_set_policy(app: AppHandle, state: State<'_, CollabState>, session_id: String, policy: Policy) -> CmdResult<()> {
+    let mut g = state.0.lock().unwrap();
+    let h = g.hosts.get_mut(&session_id).ok_or("Session ist nicht geteilt")?;
+    h.policy = policy;
+    h.send_roster();
+    emit_host(&app, h);
+    team::announce_all(&mut g);
+    Ok(())
+}
+
+/// Nimmt einen Gast-Prompt aus der Warteschlange. `run`: er wird gleich
+/// ausgeführt und zählt zur Nutzung des Gasts; sonst ist er verworfen.
+#[tauri::command]
+pub fn collab_queue_take(app: AppHandle, state: State<'_, CollabState>, session_id: String, id: String, run: bool) -> CmdResult<Option<Queued>> {
     let mut g = state.0.lock().unwrap();
     let h = g.hosts.get_mut(&session_id).ok_or("Session ist nicht geteilt")?;
     let Some(pos) = h.queue.iter().position(|q| q.id == id) else { return Ok(None) };
     let item = h.queue.remove(pos);
+    if run {
+        if let Some(p) = h.participants.get_mut(&item.author_id) {
+            p.roll_day();
+            p.prompts += 1;
+        }
+        h.next_author = Some(item.author_id.clone());
+        h.send_roster();
+    }
     h.send_queue();
     emit_host(&app, h);
     Ok(Some(item))
@@ -562,11 +836,8 @@ pub fn collab_unshare(app: AppHandle, state: State<'_, CollabState>, session_id:
         h.send(json!({ "t": "ended" }));
         // Der Transport verschickt noch das Ende und schließt dann.
     }
-    if !g.hosts.values().any(|h| h.lan) {
-        if let Some(lan) = g.lan.take() {
-            lan.task.abort();
-        }
-    }
+    release_lan(&mut g);
+    team::announce_all(&mut g);
     let _ = app.emit("collab:host-ended", json!({ "sessionId": session_id }));
 }
 
@@ -688,5 +959,17 @@ mod tests {
     #[test]
     fn roles_are_ordered() {
         assert!(Role::Approver > Role::Collaborator && Role::Collaborator > Role::Viewer);
+    }
+
+    #[test]
+    fn daily_limits() {
+        let mut p = Participant {
+            id: "a".into(), name: "Anna".into(), role: Role::Collaborator, online: true, team: false,
+            prompts: 5, tokens: 10, day: 0, last_seen: None,
+        };
+        p.roll_day();
+        assert_eq!((p.prompts, p.tokens), (0, 0));
+        let policy: Policy = serde_json::from_value(json!({ "dailyPrompts": 3 })).unwrap();
+        assert!(policy.guest_prompts, "Gast-Prompts sind ohne Angabe erlaubt");
     }
 }

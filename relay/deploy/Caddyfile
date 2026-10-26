@@ -1,0 +1,10 @@
+{$RELAY_DOMAIN} {
+	# Nur die Endpunkte des Relays, alles andere 404.
+	@relay path /ws/* /healthz
+	handle @relay {
+		reverse_proxy brise-relay:8787
+	}
+	handle {
+		respond 404
+	}
+}

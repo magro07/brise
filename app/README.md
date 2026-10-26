@@ -145,7 +145,13 @@ Relay-Dienst: [`relay/`](../relay/README.md).
   öffnet sich als nur lesbarer Tab. Mitarbeiter bekommen ein Eingabefeld für Vorschläge.
 - **Verbindung:** Standard ist „Direkt im LAN“: Brise startet das Relay selbst (Port 47800,
   Firewall freigeben). Für Gäste von außerhalb unter Einstellungen → Zusammenarbeit die
-  Adresse eines eigenen Relays eintragen (`wss://…`).
+  Adresse eines eigenen Relays eintragen (`wss://…`, Homelab-Anleitung in `relay/README.md`).
+- **Teams:** Sidebar → Projekt-Menü → „Team anlegen oder beitreten …“. Im Team seht ihr, wer
+  online ist, welche Abos es gibt, welche Sessions geteilt sind (ein Klick zum Beitreten) und
+  eine gemeinsame Projektliste. Teammitglieder bekommen in geteilten Sessions die Team-Rolle.
+- **Abo:** Jede geteilte Session läuft auf dem Abo des Hosts (`backend`, `billedTo`). Der Host
+  legt fest, ob Gäste Prompts darauf schicken dürfen, optional mit Tageslimit je Gast; die
+  Nutzung pro Gast steht im Teilen-Dialog und kommt als Event `collab:usage`.
 - **Was Gäste sehen:** Konversation und Diffs. Werkzeug-Ausgaben (gelesene Dateien,
   Befehlsausgaben) nur, wenn „Werkzeug-Ausgaben zeigen“ an ist. Alles ist Ende-zu-Ende
   verschlüsselt (XChaCha20-Poly1305), Rollen signiert der Host (Ed25519).

@@ -1,0 +1,12 @@
+# Brise-Relay nur im LAN bzw. über VPN (WireGuard), ohne TLS-Proxy.
+# In Brise: Relay-Adresse ws://<ip-des-docker-hosts>:8787
+services:
+  brise-relay:
+    build: ..
+    image: brise-relay:latest
+    restart: unless-stopped
+    ports:
+      - "8787:8787"
+    read_only: true
+    security_opt:
+      - no-new-privileges:true

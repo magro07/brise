@@ -2,7 +2,12 @@ import { useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { Check, Copy, Crown, Play, Share2, ShieldAlert, Trash2, UserMinus, Users, X } from "lucide-react";
 import { useStore } from "../../lib/store";
+import { tokens as fmtTokens } from "../../lib/format";
 import {
+  BACKEND_LABEL,
+  planLabel,
+  policyFromPrefs,
+  setPolicy,
   ROLE_DESCRIPTION,
   ROLE_LABEL,
   dropQueued,
@@ -15,6 +20,7 @@ import {
   useCollab,
   type CollabRole,
   type HostView,
+  type Policy,
 } from "../../lib/collab";
 import { Button, Menu, MenuContent, MenuItem, MenuTrigger, Switch, clsx } from "../ui";
 
@@ -45,9 +51,55 @@ export function RolePicker({ value, onChange }: { value: CollabRole; onChange: (
   );
 }
 
+/** Was Gäste auf dem eigenen Abo dürfen: Prompts ja/nein, Tageslimits. */
+function PolicyEditor({ policy, onChange }: { policy: Policy; onChange: (p: Policy) => void }) {
+  const num = (v: string) => (Number(v) > 0 ? Math.floor(Number(v)) : null);
+  return (
+    <div className="rounded-xl border border-line px-3 py-2.5">
+      <div className="flex items-center gap-3">
+        <span className="flex-1 text-[0.9em]">
+          Gäste dürfen Prompts auf dein Abo schicken
+          <span className="block text-[0.86em] text-muted">Gilt für Mitarbeiter und Freigeber. Aus: alle schauen nur zu.</span>
+        </span>
+        <Switch checked={policy.guestPrompts} onChange={(v) => onChange({ ...policy, guestPrompts: v })} />
+      </div>
+      {policy.guestPrompts && (
+        <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-2 text-[0.88em] text-fg-2">
+          <label className="flex items-center gap-1.5">
+            Je Gast höchstens
+            <input
+              type="number"
+              min={0}
+              value={policy.dailyPrompts ?? ""}
+              placeholder="∞"
+              onChange={(e) => onChange({ ...policy, dailyPrompts: num(e.target.value) })}
+              className="h-7 w-16 rounded-md border border-line bg-bg px-1.5 text-right"
+            />
+            Prompts
+          </label>
+          <label className="flex items-center gap-1.5">
+            und
+            <input
+              type="number"
+              min={0}
+              step={10000}
+              value={policy.dailyTokens ?? ""}
+              placeholder="∞"
+              onChange={(e) => onChange({ ...policy, dailyTokens: num(e.target.value) })}
+              className="h-7 w-24 rounded-md border border-line bg-bg px-1.5 text-right"
+            />
+            Tokens pro Tag
+          </label>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function Setup({ sessionId }: { sessionId: string }) {
   const prefs = useCollab((s) => s.prefs);
   const setPrefs = useCollab((s) => s.setPrefs);
+  const teams = Object.values(useCollab((s) => s.teams));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const relayMissing = prefs.mode === "relay" && !prefs.relayUrl.trim();
@@ -97,8 +149,31 @@ function Setup({ sessionId }: { sessionId: string }) {
         <p className="mt-1.5 text-[0.84em] text-muted">Brise öffnet Port {prefs.lanPort} für Gäste im selben Netz. Inhalte bleiben verschlüsselt.</p>
       )}
 
-      <div className="mt-4 flex items-center gap-3">
-        <span className="flex-1 text-[0.9em]">Rolle neuer Gäste</span>
+      {teams.length > 0 && (
+        <>
+          <div className="mt-4 flex items-center gap-3">
+            <span className="flex-1 text-[0.9em]">Im Team zeigen</span>
+            <select
+              value={teams.some((t) => t.id === prefs.shareTeam) ? prefs.shareTeam : ""}
+              onChange={(e) => setPrefs({ shareTeam: e.target.value })}
+              className="h-7 rounded-md border border-line bg-bg px-1.5 text-[0.86em]"
+            >
+              <option value="">keinem Team</option>
+              {teams.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="mt-3 flex items-center gap-3">
+            <span className="flex-1 text-[0.9em]">Rolle für Teammitglieder</span>
+            <RolePicker value={prefs.teamRole} onChange={(r) => setPrefs({ teamRole: r })} />
+          </div>
+        </>
+      )}
+      <div className="mt-3 flex items-center gap-3">
+        <span className="flex-1 text-[0.9em]">Rolle anderer Gäste</span>
         <RolePicker value={prefs.defaultRole} onChange={(r) => setPrefs({ defaultRole: r })} />
       </div>
       <div className="mt-3 flex items-center gap-3">
@@ -123,9 +198,17 @@ function Setup({ sessionId }: { sessionId: string }) {
         <Switch checked={prefs.showOutputs} onChange={(v) => setPrefs({ showOutputs: v })} />
       </div>
 
+      <div className="mt-4 text-[0.86em] font-medium">Dein Abo ({BACKEND_LABEL.vibe}: {planLabel()})</div>
+      <div className="mt-1">
+        <PolicyEditor
+          policy={policyFromPrefs(prefs)}
+          onChange={(p) => setPrefs({ guestPrompts: p.guestPrompts, dailyPrompts: p.dailyPrompts ?? 0, dailyTokens: p.dailyTokens ?? 0 })}
+        />
+      </div>
+
       <div className="mt-4 flex gap-2 rounded-lg bg-warn-soft px-3 py-2 text-[0.84em] text-warn">
         <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0" />
-        <span>Prompts von Gästen laufen mit deinen Rechten und deinem Mistral-Plan. Die Session wechselt deshalb auf „Alles fragen“.</span>
+        <span>Prompts von Gästen laufen mit deinen Rechten und auf deinem Abo. Die Session wechselt deshalb auf „Alles fragen“.</span>
       </div>
       {error && <p className="mt-3 text-[0.88em] text-bad selectable">{error}</p>}
       <div className="mt-5 flex justify-end">
@@ -162,6 +245,14 @@ function Shared({ host }: { host: HostView }) {
         {host.expires && <span>· gültig bis {new Date(host.expires * 1000).toLocaleString("de-DE", { dateStyle: "short", timeStyle: "short" })}</span>}
       </p>
 
+      <p className="mt-1 text-[0.82em] text-muted">
+        {BACKEND_LABEL[host.backend] ?? host.backend} auf deinem Abo ({host.billedTo.plan ?? "ohne Angabe"})
+        {host.team && <> · im Team sichtbar</>}
+      </p>
+      <div className="mt-3">
+        <PolicyEditor policy={host.policy} onChange={(p) => setPolicy(sid, p)} />
+      </div>
+
       <div className="mt-5 flex items-center gap-2 text-[0.86em] font-medium">
         <Users className="h-4 w-4 text-muted" /> Teilnehmer <span className="text-muted">{online} online</span>
         <span className="flex-1" />
@@ -176,7 +267,15 @@ function Shared({ host }: { host: HostView }) {
         {host.participants.map((p) => (
           <div key={p.id} className="flex items-center gap-2 px-3 py-1.5 text-[0.9em]" data-collab="participant">
             <span className={clsx("h-2 w-2 rounded-full", p.online ? "bg-ok" : "bg-line-strong")} title={p.online ? "online" : "abwesend"} />
-            <span className="min-w-0 flex-1 truncate">{p.name}</span>
+            <span className="min-w-0 flex-1 truncate">
+              {p.name}
+              {p.team && <span className="ml-1.5 text-[0.82em] text-muted">Team</span>}
+            </span>
+            {(p.prompts ?? 0) > 0 && (
+              <span className="shrink-0 text-[0.8em] text-muted" title="heute auf deinem Abo">
+                {p.prompts} Prompts · {fmtTokens(p.tokens ?? 0)}
+              </span>
+            )}
             <RolePicker value={p.role} onChange={(r) => setRole(sid, p.id, r)} />
             <button
               className="flex h-7 w-7 items-center justify-center rounded-md text-muted hover:bg-hover hover:text-bad"

@@ -28,12 +28,21 @@ pub fn unb64<const N: usize>(text: &str) -> Option<[u8; N]> {
     URL_SAFE_NO_PAD.decode(text.trim()).ok()?.try_into().ok()
 }
 
-/// Eigene Identität: Ed25519-Schlüssel, nur im Arbeitsspeicher.
+/// Eigene Identität: Ed25519-Schlüssel (dauerhaft, siehe secrets.rs).
+#[derive(Clone)]
 pub struct Identity(SigningKey);
 
 impl Identity {
     pub fn generate() -> Self {
-        Self(SigningKey::from_bytes(&random::<32>()))
+        Self::from_seed(random::<32>())
+    }
+
+    pub fn from_seed(seed: [u8; 32]) -> Self {
+        Self(SigningKey::from_bytes(&seed))
+    }
+
+    pub fn seed(&self) -> [u8; 32] {
+        self.0.to_bytes()
     }
 
     /// Öffentlicher Schlüssel als Teilnehmer-ID.

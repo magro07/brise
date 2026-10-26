@@ -15,7 +15,7 @@ pub struct Link {
     pub expires: Option<u64>,
 }
 
-fn encode(text: &str) -> String {
+pub(super) fn encode(text: &str) -> String {
     let mut out = String::new();
     for b in text.bytes() {
         if b.is_ascii_alphanumeric() || b"-._~".contains(&b) {
@@ -27,7 +27,7 @@ fn encode(text: &str) -> String {
     out
 }
 
-fn decode(text: &str) -> Option<String> {
+pub(super) fn decode(text: &str) -> Option<String> {
     let bytes = text.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
     let mut i = 0;

@@ -88,6 +88,7 @@ pub fn run() {
         .manage(collab::CollabState::default())
         .setup(|app| {
             customize::watch(app.handle().clone());
+            collab::start(app.handle());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -168,6 +169,14 @@ pub fn run() {
             collab::collab_guest_cancel,
             collab::collab_leave,
             collab::collab_status,
+            collab::collab_set_policy,
+            collab::collab_session_meta,
+            collab::team::collab_team_create,
+            collab::team::collab_team_join,
+            collab::team::collab_team_leave,
+            collab::team::collab_team_projects,
+            collab::team::collab_team_profile,
+            collab::team::collab_teams,
         ])
         .run(tauri::generate_context!())
         .expect("Brise konnte nicht gestartet werden");
