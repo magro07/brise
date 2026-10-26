@@ -295,7 +295,7 @@ function Shared({ host }: { host: HostView }) {
         <Switch checked={autoRun} onChange={(v) => setPrefs({ autoRun: v })} />
       </div>
       {host.queue.length === 0 ? (
-        <p className="mt-1 text-[0.86em] text-muted">Prompts von Mitarbeitern landen hier, bevor Vibe sie bekommt.</p>
+        <p className="mt-1 text-[0.86em] text-muted">Prompts von Mitarbeitern landen hier, bevor der Agent sie bekommt.</p>
       ) : (
         <div className="mt-2 space-y-1.5">
           {host.queue.map((q) => (
@@ -304,7 +304,7 @@ function Shared({ host }: { host: HostView }) {
                 <div className="text-[0.82em] text-muted">{q.author}</div>
                 <div className="line-clamp-3 whitespace-pre-wrap selectable">{q.text}</div>
               </div>
-              <Button size="sm" variant="primary" disabled={running} onClick={() => runQueued(sid, q.id)} title={running ? "Vibe arbeitet gerade" : "Jetzt ausführen"}>
+              <Button size="sm" variant="primary" disabled={running} onClick={() => runQueued(sid, q.id)} title={running ? "Der Agent arbeitet gerade" : "Jetzt ausführen"}>
                 <Play className="h-3.5 w-3.5" /> Ausführen
               </Button>
               <button className="flex h-7 w-7 items-center justify-center rounded-md text-muted hover:bg-hover hover:text-bad" title="Verwerfen" onClick={() => dropQueued(sid, q.id)}>
@@ -347,7 +347,7 @@ export function ShareDialog() {
             </button>
           </Dialog.Title>
           <Dialog.Description className="mt-1 text-[0.9em] text-muted">
-            {title ?? "Neue Session"} – Vibe läuft weiter nur auf diesem Rechner. Gäste bekommen Konversation, Diffs und Freigabe-Anfragen, Ende-zu-Ende verschlüsselt.
+            {title ?? "Neue Session"} – der Agent läuft weiter nur auf diesem Rechner. Gäste bekommen Konversation, Diffs und Freigabe-Anfragen, Ende-zu-Ende verschlüsselt.
           </Dialog.Description>
           {sessionId && (host ? <Shared host={host} /> : <Setup sessionId={sessionId} />)}
         </Dialog.Content>

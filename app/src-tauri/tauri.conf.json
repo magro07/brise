@@ -25,6 +25,8 @@
   },
   "bundle": {
     "active": true,
+    "shortDescription": "Desktop-Client für KI-Coding-Agenten mit Zusammenarbeit im Team",
+    "longDescription": "Desktop-Client für KI-Coding-Agenten (Mistral Vibe, Claude Code, Codex, Gemini CLI) über ACP: geteilte Sessions und Teams mit Ende-zu-Ende-Verschlüsselung, Model Council, eigene Benchmarks, Secrets im Schlüsselbund und Nutzungs- und Leistungsstatistik.",
     "targets": "all",
     "icon": [
       "icons/32x32.png",

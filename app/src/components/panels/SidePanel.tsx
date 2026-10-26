@@ -196,11 +196,11 @@ function useContextParts(session: Session) {
     const skillPart = Math.min(Math.max(0, overhead - project), skills);
     const system = Math.max(0, overhead - project - skillPart);
     const parts: Part[] = [
-      { key: "system", label: "System & Werkzeuge", hint: "Vibes System-Prompt und Werkzeugbeschreibungen (inkl. MCP)", value: system, color: "#8b8f98" },
+      { key: "system", label: "System & Werkzeuge", hint: "System-Prompt des Agenten und Werkzeugbeschreibungen (inkl. MCP)", value: system, color: "#8b8f98" },
       { key: "skills", label: "Skills", hint: "Namen und Beschreibungen aller verfügbaren Skills", value: skillPart, color: "#b07cf0" },
       { key: "project", label: "Projektkontext", hint: "AGENTS.md, Git-Branch und letzte Commits", value: project, color: "#e0a03a" },
       { key: "user", label: "Deine Nachrichten", hint: "inkl. angehängter Dateien", value: scaled(user), color: "#3d6ef0" },
-      { key: "assistant", label: "Antworten", hint: "Text von Vibe", value: scaled(assistant), color: "#18b6a4" },
+      { key: "assistant", label: "Antworten", hint: "Text des Agenten", value: scaled(assistant), color: "#18b6a4" },
       { key: "thoughts", label: "Gedankengang", hint: "Reasoning – je nach Modell nur teilweise im Kontext", value: scaled(thoughts), color: "#7aa7ff" },
       { key: "tools", label: "Werkzeug-Ergebnisse", hint: "Gelesene Dateien, Befehlsausgaben, Suchtreffer", value: scaled(tools), color: "#e06c75" },
       { key: "agents", label: "Subagents", hint: "Aufträge und Ergebnisse der Subagents", value: scaled(agents), color: "#56b366" },
@@ -343,7 +343,7 @@ function Agents({ session }: { session: Session }) {
 }
 
 function Tasks({ session }: { session: Session }) {
-  if (!session.plan.length) return <Empty text="Vibe legt bei mehrstufigen Aufgaben eine Aufgabenliste an. Sie erscheint hier und über dem Eingabefeld." />;
+  if (!session.plan.length) return <Empty text="Der Agent legt bei mehrstufigen Aufgaben eine Aufgabenliste an. Sie erscheint hier und über dem Eingabefeld." />;
   return (
     <div className="overflow-hidden rounded-xl border border-line bg-elev">
       <TaskList session={session} />
@@ -424,7 +424,7 @@ function SemanticSearch({ cwd }: { cwd: string }) {
         ) : (
           <>
             <p className="mt-1 text-[0.86em] text-muted">
-              Brise zerlegt den Code in Abschnitte und bettet sie mit {model} ein. Danach findest du Stellen nach Bedeutung – und Vibe kann die Suche selbst als Werkzeug nutzen.
+              Brise zerlegt den Code in Abschnitte und bettet sie mit {model} ein. Danach findest du Stellen nach Bedeutung – und der Agent kann die Suche selbst als Werkzeug nutzen.
             </p>
             <Button variant="primary" size="sm" className="mt-2" onClick={build}>
               Projekt indexieren

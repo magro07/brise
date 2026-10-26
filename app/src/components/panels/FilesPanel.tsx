@@ -195,7 +195,7 @@ export function FilesPanel({ cwd }: { cwd: string }) {
             />
           ) : (
             <div className="flex h-full items-center justify-center px-8 text-center text-[0.9em] text-muted">
-              Datei links auswählen. Änderungen von Vibe siehst du im Git-Reiter als Vergleich.
+              Datei links auswählen. Änderungen des Agenten siehst du im Git-Reiter als Vergleich.
             </div>
           )}
         </div>

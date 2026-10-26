@@ -76,7 +76,7 @@ export function NewProjectDialog() {
             <label className="flex items-center justify-between gap-4 text-[0.92em]">
               <span>
                 Git-Repository anlegen
-                <span className="block text-[0.86em] text-muted">Damit lässt sich jede Änderung von Vibe nachvollziehen und rückgängig machen.</span>
+                <span className="block text-[0.86em] text-muted">Damit lässt sich jede Änderung des Agenten nachvollziehen und rückgängig machen.</span>
               </span>
               <Switch checked={git} onChange={setGit} />
             </label>

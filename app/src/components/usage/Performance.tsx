@@ -140,7 +140,7 @@ export function Performance({ records, bins, binOf }: { records: UsageRecord[]; 
                       </span>
                     </div>
                     <div className="truncate pl-3.5 text-[0.86em] text-muted">
-                      {r.provider} · {r.turn ? "Vibe-Turn" : "Aufruf"}
+                      {r.provider} · {r.turn ? "Agent-Turn" : "Aufruf"}
                     </div>
                   </td>
                   <td className="text-muted">{r.records.length}</td>
@@ -215,7 +215,7 @@ export function Performance({ records, bins, binOf }: { records: UsageRecord[]; 
       )}
 
       <p className="mt-2 text-[0.76em] text-muted">
-        Turns: vom Senden bis zum ersten Text- oder Gedanken-Chunk; t/s über die Zeit, in der Vibe tatsächlich Text oder Werkzeugaufrufe erzeugte (ohne Werkzeuge,
+        Turns: vom Senden bis zum ersten Text- oder Gedanken-Chunk; t/s über die Zeit, in der der Agent tatsächlich Text oder Werkzeugaufrufe erzeugte (ohne Werkzeuge,
         ohne Turns mit Subagents). Aufrufe ohne Stream (Task-Modell, Council, Codestral) haben kein „erstes Token“, ihre t/s rechnen über die ganze Dauer und sind
         daher eine Untergrenze. Cortecs-Turns misst der ZDR-Proxy je Modellaufruf.
       </p>

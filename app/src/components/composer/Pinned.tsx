@@ -4,6 +4,7 @@ import { useStore, type PendingPermission, type Session, type ToolItem } from ".
 import { maskSecrets, short } from "../../lib/format";
 import { Button, clsx } from "../ui";
 import { toolIcon, toolTitle } from "../chat/ToolCall";
+import { agentName } from "../../lib/backends";
 
 const OPTION_LABEL: Record<string, string> = {
   allow_once: "Erlauben",
@@ -46,7 +47,7 @@ export function PermissionPrompt({ session, pending }: { session: Session; pendi
     <div className="mb-2 overflow-hidden rounded-2xl border border-accent/50 bg-elev shadow-pop fade-in">
       <div className="flex items-center gap-2 border-b border-line bg-accent-soft px-4 py-2.5">
         <ShieldAlert className="h-4 w-4 text-accent" />
-        <span className="font-medium">Vibe möchte {verb ? verb.toLowerCase().replace(/^befehl$/, "einen Befehl ausführen") : "etwas ausführen"}</span>
+        <span className="font-medium">{agentName(session.backend)} möchte {verb ? verb.toLowerCase().replace(/^befehl$/, "einen Befehl ausführen") : "etwas ausführen"}</span>
         {session.pending.length > 1 && <span className="ml-auto text-[0.82em] text-muted">+{session.pending.length - 1} weitere</span>}
       </div>
       <div className="px-4 py-3">

@@ -1,7 +1,7 @@
 [package]
 name = "brise"
 version = "0.1.0"
-description = "Desktop-App für den Coding-Agenten Mistral Vibe"
+description = "Desktop-Client für KI-Coding-Agenten (Vibe, Claude Code, Codex, Gemini) mit Zusammenarbeit im Team"
 authors = ["Max Grohmann"]
 license = "Apache-2.0"
 edition = "2024"

@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { AlertTriangle, BookOpen, Bug, CheckCircle2, Download, FileSearch, FolderOpen, FolderPlus, Gauge, GitBranch, Globe, KeyRound, LogIn, RefreshCw, Rocket, ShieldCheck, Sparkles, TestTube2, Wand2 } from "lucide-react";
+import { AlertTriangle, ArrowLeft, BookOpen, Bug, CheckCircle2, FileSearch, FolderOpen, FolderPlus, Gauge, GitBranch, Globe, KeyRound, LogIn, RefreshCw, Rocket, ShieldCheck, Sparkles, TestTube2, Wand2 } from "lucide-react";
 import { api, type Suggestion } from "../../lib/acp";
 import { basename, draftBackendOf, helperProvider, useStore } from "../../lib/store";
 import { Button, Logo, Spinner, clsx } from "../ui";
 import { pickProject } from "../layout/Sidebar";
 import { BackendChoice } from "../agents/BackendChoice";
-import { BACKEND_SHORT } from "../../lib/backends";
+import { agentName } from "../../lib/backends";
 
 function Shell({ children }: { children: React.ReactNode }) {
   return (
@@ -33,13 +33,13 @@ export function StartScreen() {
       )}
       {phase === "login" && <LoginStep />}
       {phase === "no-vibe" && <InstallStep />}
-      {(phase === "login" || phase === "no-vibe") && <BackendChoice />}
+      {phase === "login" && <BackendChoice />}
       {phase === "error" && (
         <>
           <div className="mb-3 flex justify-center text-bad">
             <AlertTriangle className="h-6 w-6" />
           </div>
-          <h1 className="text-[1.4em] font-semibold">Verbindung zu Vibe unterbrochen</h1>
+          <h1 className="text-[1.4em] font-semibold">Verbindung zum Agenten unterbrochen</h1>
           <pre className="mt-3 whitespace-pre-wrap rounded-lg bg-bad-soft p-3 text-left text-[0.85em] text-bad selectable">{error}</pre>
           <Button variant="primary" className="mt-5" onClick={() => connect()}>
             <RefreshCw className="h-4 w-4" /> Neu verbinden
@@ -50,10 +50,10 @@ export function StartScreen() {
   );
 }
 
-/** Erster Start ohne Vibe: Brise installiert es selbst. */
+/** Erster Start ohne Vibe: Agent wählen – Vibe installiert Brise selbst, die anderen per npm. */
 function InstallStep() {
   const install = useStore((s) => s.install);
-  const { installVibe, connect } = useStore.getState();
+  const { connect } = useStore.getState();
   const log = useRef<HTMLPreElement>(null);
   useEffect(() => {
     if (log.current) log.current.scrollTop = log.current.scrollHeight;
@@ -62,17 +62,15 @@ function InstallStep() {
     <>
       <h1 className="text-[1.6em] font-semibold tracking-tight">Willkommen bei Brise</h1>
       <p className="mt-2 text-fg-2">
-        Brise arbeitet mit Mistral Vibe, dem Coding-Agenten von Mistral. Er fehlt auf diesem Rechner noch – Brise installiert ihn für dich in einen eigenen Ordner. Ein Terminal brauchst du dafür nicht.
+        Brise arbeitet mit einem Coding-Agenten deiner Wahl: Mistral Vibe, Claude Code, Codex oder Gemini CLI. Wähle, womit du anfangen willst. Brise installiert den Agenten in einen eigenen Ordner, ein Terminal brauchst du dafür nicht.
       </p>
       {!install.running && install.lines.length === 0 && (
-        <div className="mt-6 flex flex-col items-center gap-3">
-          <Button variant="primary" size="lg" onClick={installVibe}>
-            <Download className="h-4 w-4" /> Mistral Vibe installieren
-          </Button>
-          <button className="text-[0.86em] text-muted hover:text-fg" onClick={() => connect()}>
+        <>
+          <BackendChoice withVibe />
+          <button className="mt-3 text-[0.86em] text-muted hover:text-fg" onClick={() => connect()}>
             Schon installiert? Erneut suchen
           </button>
-        </div>
+        </>
       )}
       {(install.running || install.lines.length > 0) && (
         <div className="mt-6 text-left">
@@ -86,14 +84,14 @@ function InstallStep() {
           {install.error && (
             <>
               <pre className="mt-2 whitespace-pre-wrap rounded-lg bg-bad-soft p-2.5 text-[0.82em] text-bad selectable">{install.error}</pre>
-              <Button variant="primary" className="mt-3" onClick={installVibe}>
-                <RefreshCw className="h-4 w-4" /> Nochmal versuchen
+              <Button variant="primary" className="mt-3" onClick={() => useStore.setState({ install: { running: false, lines: [] } })}>
+                <ArrowLeft className="h-4 w-4" /> Zurück zur Auswahl
               </Button>
             </>
           )}
         </div>
       )}
-      <p className="mt-6 text-[0.78em] text-muted">Installiert wird das offizielle Paket „mistral-vibe“ mit uv von Astral. Systemdateien und PATH bleiben unverändert.</p>
+      <p className="mt-6 text-[0.78em] text-muted">Mistral Vibe kommt als offizielles Paket „mistral-vibe“ über uv von Astral, Claude Code, Codex und Gemini CLI über npm (Node.js nötig). Systemdateien und PATH bleiben unverändert.</p>
     </>
   );
 }
@@ -122,7 +120,7 @@ function LoginStep() {
   return (
     <>
       <h1 className="text-[1.6em] font-semibold tracking-tight">Mit Mistral verbinden</h1>
-      <p className="mt-2 text-fg-2">Brise nutzt deinen Mistral-Vibe-Plan (Free, Pro oder Team) oder einen API-Key.</p>
+      <p className="mt-2 text-fg-2">Für Mistral Vibe nutzt Brise deinen Vibe-Plan (Free, Pro oder Team) oder einen API-Key.</p>
       <div className="mx-auto mt-6 flex w-fit rounded-xl border border-line bg-panel p-1">
         {(
           [
@@ -219,7 +217,7 @@ export function DraftHero({ project }: { project: string }) {
   const send = useStore((s) => s.send);
   const index = useStore((s) => s.index);
   const quickActions = useStore((s) => s.quickActions);
-  const agentName = useStore((s) => BACKEND_SHORT[draftBackendOf(s)] ?? "Der Agent");
+  const agent = useStore((s) => agentName(draftBackendOf(s)));
   const [suggestions, setSuggestions] = useState<Suggestion[] | null>(null);
   const [personal, setPersonal] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -250,7 +248,7 @@ export function DraftHero({ project }: { project: string }) {
     <div className="flex flex-1 flex-col items-center justify-center overflow-y-auto px-6 pb-6">
       <Logo size={44} />
       <h1 className="mt-4 text-[1.6em] font-semibold tracking-tight">Was bauen wir in {basename(project)}?</h1>
-      <p className="mt-1 text-muted">{agentName} liest den Code, ändert Dateien und fragt bei heiklen Schritten nach.</p>
+      <p className="mt-1 text-muted">{agent} liest den Code, ändert Dateien und fragt bei heiklen Schritten nach.</p>
       <div className="mt-8 w-full max-w-[720px]">
         <div className="mb-2 flex items-center gap-2 text-[0.78em] text-muted">
           {personal ? <Sparkles className="h-3.5 w-3.5 text-accent" /> : null}

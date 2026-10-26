@@ -7,6 +7,9 @@ import { draftBackendOf, useStore, type Session } from "./store";
 
 export const BACKEND_SHORT: Record<string, string> = { vibe: "Vibe", claude: "Claude", codex: "Codex", gemini: "Gemini" };
 
+/** Kurzname des Backends für Fließtext, ohne bekanntes Backend neutral „Der Agent“. */
+export const agentName = (backend: string | undefined) => (backend && BACKEND_SHORT[backend]) || "Der Agent";
+
 /** Farbton je Backend für Badges (Tailwind-Klassen mit Design-Tokens). */
 export const BACKEND_TONE: Record<string, string> = {
   vibe: "bg-accent-soft text-accent",

@@ -53,7 +53,7 @@ export interface BilledTo {
 }
 
 /** Agent-Backends (heute nur Vibe, später z. B. Claude Code über ACP). */
-export const BACKEND_LABEL: Record<string, string> = { vibe: "Mistral Vibe", "claude-code": "Claude Code" };
+export const BACKEND_LABEL: Record<string, string> = { vibe: "Mistral Vibe", claude: "Claude Code", "claude-code": "Claude Code", codex: "Codex", gemini: "Gemini" };
 
 export interface TeamSession {
   sessionId: string;

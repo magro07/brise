@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle, ArrowDown, Brain, Check, Wand2, CheckCircle2, ChevronRight, CircleSlash, Copy, FileText, Image, Info, Scale, Square, Volume2 } from "lucide-react";
 import { useStore } from "../../lib/store";
-import { useVoiceAvailable } from "../../lib/backends";
+import { agentName, useVoiceAvailable } from "../../lib/backends";
 import type { Item, Session } from "../../lib/store";
 import { duration, latency, tokens } from "../../lib/format";
 import { Spinner, Tip, clsx } from "../ui";
@@ -43,7 +43,7 @@ function Thought({ text, live }: { text: string; live: boolean }) {
   );
 }
 
-function Working({ since }: { since?: number }) {
+function Working({ since, backend }: { since?: number; backend?: string }) {
   const [, tick] = useState(0);
   useEffect(() => {
     const t = setInterval(() => tick((n) => n + 1), 1000);
@@ -56,7 +56,7 @@ function Working({ since }: { since?: number }) {
           <span key={i} className="h-1.5 w-1.5 rounded-full bg-accent pulse-dot" style={{ animationDelay: `${i * 0.2}s` }} />
         ))}
       </span>
-      <span className="shimmer-text">Vibe arbeitet</span>
+      <span className="shimmer-text">{agentName(backend)} arbeitet</span>
       {since && <span className="text-muted">{duration(Date.now() - since)}</span>}
     </div>
   );
@@ -272,7 +272,7 @@ export function Conversation({ session }: { session: Session }) {
                   return null;
               }
             })}
-            {session.running && session.pending.length === 0 && <Working since={session.turnStarted} />}
+            {session.running && session.pending.length === 0 && <Working since={session.turnStarted} backend={session.backend} />}
           </div>
         </div>
       </div>

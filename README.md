@@ -4,8 +4,8 @@
 
 # Brise
 
-**Die Desktop-App für [Mistral Vibe](https://github.com/mistralai/mistral-vibe), angelehnt an Claude Code und Codex.**
-Für Windows, macOS und Linux. Du brauchst weder Terminal noch API-Key, dein Mistral-Plan genügt.
+**Desktop-Client für KI-Coding-Agenten, gebaut für Zusammenarbeit im kleinen Team und für Power-User.**
+Arbeitet mit Mistral Vibe, Claude Code, Codex und Gemini CLI. Für Windows, macOS und Linux.
 
 [![Build und Selbsttest](https://github.com/magro07/brise/actions/workflows/build.yml/badge.svg)](https://github.com/magro07/brise/actions/workflows/build.yml)
 
@@ -13,72 +13,109 @@ Für Windows, macOS und Linux. Du brauchst weder Terminal noch API-Key, dein Mis
 
 ![Brise mit einer laufenden Session, Werkzeugaufrufen, Diff und Kontext-Aufschlüsselung](docs/screenshots/session.png)
 
-> Brise ist ein unabhängiges Projekt und nicht mit Mistral AI verbunden. „Mistral“ und „Vibe“ sind Marken ihrer Inhaber.
+Brise ist ein privates Open-Source-Projekt (Apache-2.0). Es führt keinen eigenen
+Agenten aus, sondern steuert vorhandene Agenten über das
+[Agent Client Protocol](https://agentclientprotocol.com) (ACP). Du nutzt also deine
+bestehende Anmeldung bzw. dein Abo beim jeweiligen Anbieter. Worauf das Projekt
+hinauswill, steht in [docs/positionierung.md](docs/positionierung.md).
 
-## Was Brise kann
+> Brise ist ein unabhängiges Projekt und mit keinem der Anbieter verbunden.
+> „Mistral“, „Vibe“, „Claude“, „Codex“ und „Gemini“ sind Marken ihrer Inhaber.
 
-**Einfach loslegen**
-- Beim ersten Start installiert Brise Mistral Vibe selbst in einen eigenen Ordner. Dafür nutzt es das offizielle `uv` und prüft dessen Prüfsumme.
-- Anmeldung mit dem Mistral-Konto im Browser (Kontingent des Vibe-Plans) oder per eingefügtem Vibe-Key bzw. API-Key.
-- Personalisierte Vorschläge: Brise liest README, Git-Stand, letzte Commits, TODOs und deine letzten Sessions und schlägt konkrete nächste Aufgaben vor.
+## Zusammenarbeit
 
-**Arbeiten wie in Claude Code und Codex**
-- Projekte mit ihren Sessions in der Seitenleiste, Befehlspalette (Strg/⌘+K), Hell- und Dunkelmodus.
-- Live-Streaming mit zusammengefassten Werkzeugaufrufen, Diffs, Gedankengang, Subagent-Karten und einer Aufgabenliste mit Fortschritt.
-- Freigaben direkt über dem Eingabefeld. „Immer erlauben“ gibt es nur mit Befehlsmuster, Passwörter werden maskiert.
-- `@` hängt Dateien an, `/` ruft Befehle und Skills auf. Bilder per Drag & Drop.
-- **Auto:** GLM-5.3 arbeitet, und das Task-Modell (Mistral Small, wählbar) setzt die Denkstufe:
-  - Vor jeder Anfrage stuft es die Aufgabe ein.
-  - Während der Arbeit steuert es nach, etwa höher bei wiederholten Fehlern und niedriger bei reinem Lesen.
-  - Ein Klick auf die Denkstufe zeigt jeden Wechsel mit Begründung.
-  - Alternativ wechselt Auto das Modell je nach Aufgabe.
-- **Tabs und geteilte Ansicht:** mehrere Sessions als Tabs, bis zu drei Bereiche nebeneinander, jeder mit eigenem Eingabefeld. Kürzel: Strg/⌘+W, Strg+Tab, Strg/⌘+\.
-- **Modelle:** Mistral Large 4 und GLM-5.3 sind sofort dabei. Bei jedem Start meldet Brise neue Modelle aus Mistrals Katalog, eigene lassen sich hinzufügen.
+- **Sessions teilen:** Ein Einladungslink öffnet die Session bei anderen. Sie sehen
+  Konversation und Diffs live mit. Wer Mitarbeiter ist, schlägt Prompts vor, wer
+  Freigeber ist, entscheidet Freigaben. Der Agent läuft dabei nur beim Host.
+- **Teams:** Wer online ist, welche Sessions geteilt sind (ein Klick zum Beitreten),
+  welche Abos es gibt, dazu eine gemeinsame Projektliste.
+- **Gastzugang auf dem eigenen Abo:** Der Host legt fest, ob Gäste Prompts auf
+  sein Abo schicken dürfen, optional mit Tageslimit für Prompts oder Tokens je Gast.
+  Die Nutzung je Gast steht im Teilen-Dialog.
+- **Ende-zu-Ende verschlüsselt** (XChaCha20-Poly1305, Rollen signiert der Host mit
+  Ed25519). Im selben Netz verbindet Brise direkt, für Gäste von außerhalb gibt es
+  ein kleines [Relay zum Selbst-Hosten](relay/README.md), etwa im Homelab
+  (Docker Compose, Beispiel für Caddy). Das Relay sieht keine Inhalte.
 
-**Werkzeuge**
-- Eingebautes **Terminal** mit echter Shell, mehreren Tabs und Strg/⌘+ö.
-- **Git:** Branches, Änderungen vormerken, Commit mit KI-Nachricht, Pull und Push, Verlauf. Unter Windows bringt Brise Git bei Bedarf selbst mit.
-- **Editor:** Monaco, der Editor von VS Code, mit Datei-Explorer und Vergleich zum letzten Commit. „Öffnen in“ für VS Code, Cursor, Zed und andere.
-- **Detaillierte Kontext-Aufschlüsselung:**
-  - System und Werkzeuge, Skills, Projektkontext
-  - deine Nachrichten, Antworten, Gedankengang
-  - Werkzeug-Ergebnisse, Subagents, freier Platz
-  - die größten Einzelposten
-- **Semantische Codesuche** mit `codestral-embed`, für dich im Panel und für Vibe als Werkzeug.
-- **Websuche bis Deep Research:**
-  - Vibe sucht nativ im Web.
-  - Der Skill `deep-research` zerlegt Fragen in Teilfragen und lässt Subagents parallel recherchieren.
-  - Er prüft Quellen gegeneinander und schreibt bei Bedarf einen belegten Bericht nach `research/`.
-- **Weitere Mistral-Modelle:**
-  - Codestral vervollständigt im Editor wie Copilot.
-  - Mistral OCR liest angehängte PDF-, Word- und PowerPoint-Dateien.
-  - Das Task-Modell (wählbar) stuft Aufgaben ein.
-- **Neue Projekte** legst du direkt in der App an, mit Git und README. Beim ersten Start führt eine Tour durch alle Bereiche.
-- **Sprache:** Spracheingabe mit Live-Wellenform und Wort-für-Wort-Transkript (Voxtral Realtime), Vorlesen von Antworten (Voxtral TTS).
+Protokoll und Sicherheitsmodell: [docs/collab-protocol.md](docs/collab-protocol.md).
 
-**Skills, die mitkommen**
+## Mehrere Agenten
 
-[reverse-engineer-anything](https://github.com/morluto/rea) (rea, mit MCP-Werkzeugen), [ponytail](https://github.com/DietrichGebert/ponytail) (sechs Skills), [gauntlet-loop](https://github.com/duolahypercho/gauntlet-loop), frontend-design, webapp-testing, mcp-builder und skill-creator ([anthropics/skills](https://github.com/anthropics/skills)), dazu der eigene Skill `brise-anpassen`. Lizenzen und Quellen stehen in [NOTICE.md](app/src-tauri/resources/skills/NOTICE.md).
+| Agent | Anmeldung | Was Brise zusätzlich kann |
+|---|---|---|
+| [Mistral Vibe](https://github.com/mistralai/mistral-vibe) | Mistral-Konto im Browser, Vibe-Key oder API-Key | Installation ohne Terminal, Einstellungen aus Vibes Schema, Modelle, Skills, Auto-Modellwahl, Sprache |
+| [Claude Code](https://docs.anthropic.com/claude-code) | Claude-Code-Anmeldung (Pro/Max oder Console) | Anmeldung aus Brise heraus |
+| [Codex](https://github.com/openai/codex) | `codex login` oder `OPENAI_API_KEY` | |
+| [Gemini CLI](https://github.com/google-gemini/gemini-cli) | Google-Konto oder `GEMINI_API_KEY` | |
 
-**Brise per Chat anpassen**
+- Jede Session gehört einem Agenten, gewählt beim Anlegen. Ein Badge an Session
+  und Tab zeigt, welcher es ist.
+- Beim ersten Start wählst du, womit du anfängst. Keiner der Agenten ist Pflicht:
+  Wer kein Vibe hat, startet genauso mit Claude Code oder Codex. Brise installiert
+  die ACP-Adapter (`claude-agent-acp`, `codex-acp`) per npm in den eigenen
+  Datenordner, Vibe per `uv`.
+- Freigaben, Diffs, Aufgabenliste, Slash-Befehle und Sessions-Liste kommen bei allen
+  Agenten über Standard-ACP. Was nur Vibe bietet, blendet Brise bei den anderen aus.
 
-Sag Vibe einfach, was du an Brise ändern willst. Zum Beispiel:
-- „Mach Brise orange und die Schrift etwas größer.“
-- „Nimm für komplexe Aufgaben immer Mistral Large 4.“
-- „Leg eine Schnellaktion ‚Release vorbereiten‘ an.“
-- „Versteck den Gedankengang.“
+## Für Power-User
 
-Brise gibt jeder Session dafür den MCP-Server `brise-app` mit. Über dessen Werkzeuge ändert Vibe Einstellungen, eigenes CSS, Schnellaktionen und Vibes `config.toml`, und Brise übernimmt das sofort.
+- **Model Council:** Der Agent holt sich bei Reviews, Fehlersuche oder „ist das
+  wirklich fertig?“ zweite Meinungen von anderen Modellen. Die Urteile erscheinen
+  als Karte im Chat, mit Kosten und Tageslimit.
+- **Eigene Benchmarks:** Aufgaben mit Prüfungen (Befehl, Regex, Datei, Richtermodell)
+  gegen mehrere Agenten und Modelle laufen lassen, in isolierten Arbeitsordnern.
+  Eine Vergleichstabelle und der Verlauf je Ziel zeigen Regressionen.
+- **Secrets:** Passwörter und Tokens gibst du in ein eigenes Feld ein, nie in den
+  Chat. Der Wert liegt nur im Schlüsselbund, der Agent sieht einen Platzhalter.
+  Versehentlich eingetippte Schlüssel erkennt Brise vor dem Senden.
+- **Auto-Modellwahl (Vibe):** Ein kleines Task-Modell stuft jede Aufgabe ein und
+  setzt Modell bzw. Denkstufe. Jeder Wechsel ist mit Begründung nachlesbar.
+- **Nutzung und Leistung:** Journal jedes Aufrufs mit Tokens, Kosten, Projekt und
+  Backend, Monatsbudget mit Prognose. Dazu Zeit bis zum ersten Token und t/s je
+  Modell als Median und p90.
+- **Daten ohne Speicherung beim Anbieter:** Über [Cortecs](https://cortecs.ai)
+  laufen Modelle mit Zero Data Retention. Brise prüft Prompts vor dem Senden auf
+  sensible Daten (IBAN, Schlüssel, Gesundheitsdaten …) und schlägt dann ein ZDR-Modell vor.
+- **Selbst hosten:** Relay im eigenen Netz, keine Brise-Cloud, Brise selbst sendet keine Telemetrie.
+
+## Arbeiten mit Brise
+
+- Projekte mit ihren Sessions in der Seitenleiste, Befehlspalette (Strg/⌘+K), Hell-
+  und Dunkelmodus. **Tabs und geteilte Ansicht** mit bis zu drei Bereichen nebeneinander.
+- Live-Streaming mit zusammengefassten Werkzeugaufrufen, Diffs, Gedankengang,
+  Subagent-Karten und Aufgabenliste. Freigaben direkt über dem Eingabefeld.
+  „Immer erlauben“ gibt es nur mit Befehlsmuster.
+- `@` hängt Dateien an, `/` ruft Befehle und Skills auf, Bilder per Drag & Drop.
+- **Werkzeuge:** Terminal mit echter Shell, Git (vormerken, Commit mit KI-Nachricht,
+  Pull, Push, Verlauf), Monaco-Editor mit Vergleich zum letzten Commit,
+  „Öffnen in“ für VS Code, Cursor, Zed und andere.
+- **Kontext-Aufschlüsselung:** wofür der Kontext draufgeht, bis zu den größten Einzelposten.
+- **Semantische Codesuche** mit `codestral-embed`, im Panel und als Werkzeug für den Agenten.
+- **Design-Modus:** Chat mit Live-Vorschau, Varianten, Versionen und Design-Tokens.
+  Die Übergabe startet eine Coding-Session mit Auftrag.
+- **Personalisierte Vorschläge** auf der Startseite aus README, Git-Stand, TODOs und
+  den letzten Sessions.
+- **Sprache (über Vibe):** Spracheingabe mit Voxtral Realtime, Vorlesen mit Voxtral TTS.
+- **Brise per Chat anpassen:** „Mach Brise orange“, „Leg eine Schnellaktion
+  ‚Release vorbereiten‘ an“. Der mitgegebene MCP-Server `brise-app` ändert
+  Einstellungen, CSS und Schnellaktionen, Brise übernimmt das sofort.
+
+**Mitgelieferte Skills:** [reverse-engineer-anything](https://github.com/morluto/rea),
+[ponytail](https://github.com/DietrichGebert/ponytail),
+[gauntlet-loop](https://github.com/duolahypercho/gauntlet-loop), frontend-design,
+webapp-testing, mcp-builder und skill-creator ([anthropics/skills](https://github.com/anthropics/skills)),
+dazu `brise-anpassen`, `council`, `deep-research` und `design-mode`. Lizenzen und Quellen:
+[NOTICE.md](app/src-tauri/resources/skills/NOTICE.md).
 
 ## Bilder
 
 | Startseite mit persönlichen Vorschlägen | Freigabe, Diff und Aufgabenliste |
 |---|---|
 | ![Startseite](docs/screenshots/start.png) | ![Freigabe](docs/screenshots/permission.png) |
-| **Editor mit Vergleich zum letzten Commit** | **Modelle und Auto-Wahl** |
-| ![Editor](docs/screenshots/git-editor.png) | ![Modelle](docs/screenshots/models.png) |
-| **Terminal** | **Websuche und Deep Research (dunkel)** |
-| ![Terminal](docs/screenshots/terminal.png) | ![Websuche](docs/screenshots/web-dark.png) |
+| **Erster Start: Agent wählen** | **Modelle und Auto-Wahl (Vibe)** |
+| ![Agent wählen](docs/screenshots/onboarding.png) | ![Modelle](docs/screenshots/models.png) |
+| **Editor mit Vergleich zum letzten Commit** | **Terminal** |
+| ![Editor](docs/screenshots/git-editor.png) | ![Terminal](docs/screenshots/terminal.png) |
 
 ## Installieren
 
@@ -90,9 +127,11 @@ Fertige Installer gibt es unter [Releases](https://github.com/magro07/brise/rele
 | macOS 11+ (Apple Silicon und Intel) | `.dmg` |
 | Linux | `.AppImage`, `.deb` oder `.rpm` |
 
-Die Builds sind noch nicht signiert. Windows SmartScreen und macOS Gatekeeper warnen deshalb beim ersten Start. Unter macOS öffnest du Brise dann per Rechtsklick → „Öffnen“.
+Die Builds sind nicht signiert. Windows SmartScreen und macOS Gatekeeper warnen
+deshalb beim ersten Start. Unter macOS öffnest du Brise dann per Rechtsklick → „Öffnen“.
 
-Brise findet ein schon installiertes Mistral Vibe von selbst. Sonst bietet die App beim ersten Start die Installation an.
+Schon installierte Agenten findet Brise von selbst. Für Claude Code, Codex und
+Gemini braucht es Node.js 22 oder neuer.
 
 ## Entwickeln
 
@@ -104,24 +143,25 @@ npm run tauri build            # Installer bauen
 ./src-tauri/target/release/brise --self-test   # Selbsttest ohne Fenster
 ```
 
-Voraussetzungen für Tauri findest du unter [tauri.app/start/prerequisites](https://tauri.app/start/prerequisites/). Unter Linux brauchst du zusätzlich die ALSA-Header (`libasound2-dev` bzw. `alsa-lib-devel`).
+Voraussetzungen für Tauri findest du unter [tauri.app/start/prerequisites](https://tauri.app/start/prerequisites/).
+Unter Linux brauchst du zusätzlich die ALSA-Header (`libasound2-dev` bzw. `alsa-lib-devel`).
 
-Bei jedem Push baut die [CI](.github/workflows/build.yml) Brise auf Windows, macOS und Linux und lässt dort `--self-test` laufen. Geprüft werden:
-- Installation von uv und Vibe
-- Start von ACP
-- beide MCP-Server
-- Terminal und Git
+Bei jedem Push baut die [CI](.github/workflows/build.yml) Brise auf Windows, macOS und
+Linux und lässt dort `--self-test` laufen: Installation von uv und Vibe, Start der
+Agenten über ACP, die MCP-Server, Terminal und Git.
 
-Mehr zur Architektur steht in [app/README.md](app/README.md), Hintergründe und Fahrplan in [PLAN.md](PLAN.md).
+Architektur und Details zu jeder Funktion: [app/README.md](app/README.md).
+Entscheidungen: [docs/adr/](docs/adr/). Fahrplan: [PLAN.md](PLAN.md).
 
 ### Aufbau in Kürze
 
 ```
 Brise (Tauri 2: Rust + React)
  ├─ Oberfläche: React, Tailwind, Radix, Monaco, xterm.js
- ├─ Rust: ACP-Client, Installer, Git, Terminal, Embeddings, Mikrofonpegel
- ├─ MCP-Server in Brise selbst: brise-app (Anpassung), brise-search (Suche)
- └─ startet ──► vibe-acp (Mistral Vibe, Apache-2.0) ──► Mistral-API
+ ├─ Rust: ACP-Client, Installer, Git, Terminal, Embeddings, Nutzung, Benchmarks
+ ├─ MCP-Server in Brise: brise-app (Anpassung, Secrets), brise-search, brise-council
+ ├─ Kollaboration: E2E-verschlüsselt, direkt im LAN oder über relay/ (selbst gehostet)
+ └─ startet per ACP ──► vibe-acp · claude-agent-acp · codex-acp · gemini --acp
 ```
 
 ## Lizenz

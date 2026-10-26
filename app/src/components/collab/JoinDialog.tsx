@@ -45,7 +45,7 @@ export function JoinDialog() {
             <LogIn className="h-5 w-5 text-accent" /> Einer Session beitreten
           </Dialog.Title>
           <Dialog.Description className="mt-1 text-[0.9em] text-muted">
-            Füge den Einladungslink ein (<span className="font-mono">brise://join/…</span>). Vibe läuft dabei beim Host, nicht bei dir.
+            Füge den Einladungslink ein (<span className="font-mono">brise://join/…</span>). Der Agent läuft dabei beim Host, nicht bei dir.
           </Dialog.Description>
 
           <label className="mt-5 block text-[0.86em] font-medium">Einladungslink</label>

@@ -665,7 +665,7 @@ export const useStore = create<State & Actions>((set, get) => {
     sig.busy = true;
     const progress = s.items
       .slice(-14)
-      .map((i) => (i.type === "tool" ? `- ${i.title} (${i.status})` : i.type === "assistant" ? `- Vibe: ${i.text.slice(0, 160)}` : ""))
+      .map((i) => (i.type === "tool" ? `- ${i.title} (${i.status})` : i.type === "assistant" ? `- Agent: ${i.text.slice(0, 160)}` : ""))
       .filter(Boolean)
       .join("\n");
     api

@@ -97,7 +97,7 @@ export function GitPanel({ cwd }: { cwd: string }) {
   if (!status.isRepo) {
     return (
       <div className="p-6 text-center">
-        <p className="text-fg-2">Dieser Ordner ist noch kein Git-Repository. Mit Git kannst du jede Änderung von Vibe nachvollziehen und rückgängig machen.</p>
+        <p className="text-fg-2">Dieser Ordner ist noch kein Git-Repository. Mit Git kannst du jede Änderung des Agenten nachvollziehen und rückgängig machen.</p>
         <Button variant="primary" className="mt-3" onClick={() => run("init", () => api.git(cwd, "init"))}>
           Repository anlegen
         </Button>

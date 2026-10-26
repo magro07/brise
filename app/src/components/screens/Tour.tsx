@@ -23,17 +23,17 @@ const STEPS: Step[] = [
   {
     target: '[data-brise="composer"]',
     title: "Aufgabe beschreiben",
-    text: "Schreib hier, was Vibe tun soll. Mit @ hängst du Dateien an, mit / rufst du Befehle und Skills auf (z. B. /deep-research). Das Mikrofon startet die Spracheingabe.",
+    text: "Schreib hier, was der Agent tun soll. Mit @ hängst du Dateien an, mit / rufst du Befehle und Skills auf (z. B. /deep-research). Das Mikrofon startet die Spracheingabe.",
   },
   {
     target: '[data-tour="mode"]',
     title: "Freigaben",
-    text: "Bestimmt, wann Vibe nachfragt: bei allem, nur bei Befehlen oder gar nicht. Freigaben erscheinen direkt über dem Eingabefeld.",
+    text: "Bestimmt, wann der Agent nachfragt: bei allem, nur bei Befehlen oder gar nicht. Freigaben erscheinen direkt über dem Eingabefeld.",
   },
   {
     target: '[data-tour="model"]',
     title: "Auto-Modellwahl",
-    text: "„Auto“ stuft jede Aufgabe ein und nimmt das passende Mistral-Modell – klein und schnell für Einfaches, Large 4 für Komplexes.",
+    text: "Mit Mistral Vibe stuft „Auto“ jede Aufgabe ein und nimmt das passende Modell – klein und schnell für Einfaches, Large 4 für Komplexes. Claude Code, Codex und Gemini bringen ihre eigene Modellwahl mit.",
   },
   {
     target: '[data-brise="header"]',
@@ -43,7 +43,7 @@ const STEPS: Step[] = [
   {
     target: '[data-tour="settings"]',
     title: "Einstellungen – oder einfach fragen",
-    text: "Modelle, Skills, Websuche, Sprache und mehr findest du in den Einstellungen. Oder sag es Vibe im Chat: „Mach Brise orange und die Schrift größer.“",
+    text: "Modelle, Skills, Websuche, Sprache und mehr findest du in den Einstellungen. Oder sag es dem Agenten im Chat: „Mach Brise orange und die Schrift größer.“",
   },
   {
     title: "Los geht’s",

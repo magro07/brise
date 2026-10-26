@@ -58,7 +58,7 @@ export function GuestPane({ session }: { session: Session }) {
 
   return (
     <div className="space-y-2">
-      {pending && <Note icon={<ShieldQuestion />}>Vibe wartet auf eine Freigabe durch {session.guest?.host ?? "den Host"}.</Note>}
+      {pending && <Note icon={<ShieldQuestion />}>Der Agent wartet auf eine Freigabe durch {session.guest?.host ?? "den Host"}.</Note>}
       {mine.length > 0 && (
         <Note icon={<Hourglass />}>
           {mine.length === 1 ? "Deine Nachricht wartet" : `${mine.length} Nachrichten warten`} beim Host, bis er sie ausführt.

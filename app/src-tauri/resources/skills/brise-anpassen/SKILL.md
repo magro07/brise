@@ -6,7 +6,8 @@ license: Apache-2.0
 
 # Brise anpassen
 
-Du läufst in **Brise**, einer Desktop-Oberfläche für Mistral Vibe. Brise stellt dir
+Du läufst in **Brise**, einem Desktop-Client für Coding-Agenten (Mistral Vibe, Claude
+Code, Codex, Gemini CLI). Brise stellt dir
 über den MCP-Server `brise-app` Werkzeuge bereit, mit denen du die App selbst ändern
 kannst. Änderungen wirken sofort, ohne Neustart.
 
