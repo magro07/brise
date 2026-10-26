@@ -1374,12 +1374,14 @@ export const useStore = create<State & Actions>((set, get) => {
         set((s) => ({ draft: { ...s.draft, [configId]: value } }));
         return;
       }
+      let fresh: ConfigOption[] | undefined;
       if (configId === "mode") await api.setMode(session.id, value);
-      else await api.setConfigOption(session.id, configId, value);
+      else fresh = ((await api.setConfigOption(session.id, configId, value)) as { configOptions?: ConfigOption[] } | null)?.configOptions;
+      // Ein Modellwechsel ändert die verfügbaren Denkstufen; die Antwort enthält die neue Liste.
       patchSession(session.id, (s) => ({
         ...s,
         currentMode: configId === "mode" ? value : s.currentMode,
-        config: s.config.map((o) => (o.id === configId ? { ...o, currentValue: value } : o)),
+        config: fresh?.length ? fresh : s.config.map((o) => (o.id === configId ? { ...o, currentValue: value } : o)),
       }));
     },
 
