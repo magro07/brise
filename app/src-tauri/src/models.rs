@@ -141,8 +141,11 @@ fn model_entry(name: &str, alias: &str, display: &str, info: Option<&CatalogMode
             entry["max_context_length"] = json!(m.context);
         }
         if m.reasoning {
+            // Vibes Mistral-Anbindung kennt auf der Leitung nur `none`/`high`
+            // („low“ → none, alles darüber → high). GLM-5.3 lehnt `none` ab,
+            // daher nur „off“ (Server-Standard) und „high“ anbieten.
             entry["thinking"] = json!("high");
-            entry["thinking_levels"] = json!(["low", "high", "max"]);
+            entry["thinking_levels"] = json!(["off", "high"]);
         }
     }
     entry
@@ -179,7 +182,40 @@ pub async fn ensure_default_models() -> CmdResult<bool> {
         .iter()
         .map(|(name, alias, display)| model_entry(name, alias, display, catalog.iter().find(|m| m.aliases.iter().any(|a| a == name))))
         .collect();
-    add_entries(entries)
+    let added = add_entries(entries)?;
+    Ok(fix_thinking_levels()? || added)
+}
+
+/// Korrigiert Denkstufen bestehender GLM-/Large-4-Einträge (auch von Hand
+/// angelegter): „low“ würde Vibe als `none` senden – GLM-5.3 antwortet dann
+/// mit HTTP 400.
+fn fix_thinking_levels() -> CmdResult<bool> {
+    edit_config(|doc| {
+        let Some(arr) = doc.get_mut("models").and_then(Item::as_array_of_tables_mut) else { return Ok(()) };
+        for t in arr.iter_mut() {
+            let name = t.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let provider = t.get("provider").and_then(|v| v.as_str()).unwrap_or("mistral").to_string();
+            if provider != "mistral" || !(name.starts_with("zai-glm") || name.starts_with("mistral-large-4")) {
+                continue;
+            }
+            let levels: Vec<String> = t
+                .get("thinking_levels")
+                .and_then(|v| v.as_array())
+                .map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect())
+                .unwrap_or_default();
+            if levels != ["off", "high"] {
+                let mut a = toml_edit::Array::new();
+                a.push("off");
+                a.push("high");
+                t.insert("thinking_levels", Item::Value(toml_edit::Value::Array(a)));
+            }
+            let thinking = t.get("thinking").and_then(|v| v.as_str()).unwrap_or("");
+            if thinking != "off" && thinking != "high" {
+                t.insert("thinking", toml_edit::value("high"));
+            }
+        }
+        Ok(())
+    })
 }
 
 /// Fügt ein Modell aus dem Katalog (oder frei benannt) hinzu.

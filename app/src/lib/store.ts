@@ -469,7 +469,7 @@ function heuristicLevel(text: string): Routed["level"] {
   return "standard";
 }
 
-export const THINKING_LABEL: Record<string, string> = { off: "aus", low: "niedrig", medium: "mittel", high: "hoch", max: "maximal" };
+export const THINKING_LABEL: Record<string, string> = { off: "Standard", low: "niedrig", medium: "mittel", high: "hoch", max: "maximal" };
 const LEVEL_TO_THINKING: Record<Routed["level"], string> = { simple: "low", standard: "high", complex: "max" };
 export const THINKING_ORDER = ["off", "low", "medium", "high", "max"];
 
