@@ -155,12 +155,12 @@ function MasterCard({ records }: { records: UsageRecord[] }) {
   }, [records, titles, index]);
   if (!rows.length) return null;
   return (
-    <Card title="Master-Sessions" description="Diesen Monat: eigene Turns und die ihrer Untersessions (geschätzt nach Preistabelle).">
+    <Card title="Master-Sessions" description="Diesen Monat: Kurator (die Master-Session selbst) und Arbeiter (ihre Untersessions), geschätzt nach Preistabelle.">
       {rows.map((r) => (
         <Row
           key={r.id}
           title={r.title}
-          description={`${r.sessions} Untersession${r.sessions === 1 ? "" : "s"} · ${r.tokens.toLocaleString("de-DE")} Tokens · selbst ${eur(r.own, 2)}, Untersessions ${eur(r.sub, 2)}`}
+          description={`${r.sessions} Untersession${r.sessions === 1 ? "" : "s"} · ${r.tokens.toLocaleString("de-DE")} Tokens · Kurator ${eur(r.own, 2)}, Arbeiter ${eur(r.sub, 2)}`}
           control={<span className="font-medium tabular-nums">{eur(r.own + r.sub, 2)}</span>}
         />
       ))}

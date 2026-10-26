@@ -299,6 +299,7 @@ pub fn run() {
             orchestra::orch_merge,
             orchestra::orch_reject,
             orchestra::orch_forget,
+            orchestra::orch_costs,
         ])
         .run(tauri::generate_context!())
         .expect("Brise konnte nicht gestartet werden");

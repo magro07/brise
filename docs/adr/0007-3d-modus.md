@@ -131,7 +131,11 @@ statt reinem Text eine Liste von MCP-Inhalten zurück (`text` und `image`).
 - kommt die Rückmeldung als normale Notiz, ergänzt um die ID des Designs bzw.
   Modells und den Hinweis auf `read_model`/`export_model`;
 - gibt es kein `merge_session`, denn das Ergebnis liegt nicht in Git. Die
-  Master-Session übernimmt es mit `export_model` bzw. `export_design`.
+  Master-Session übernimmt es mit `export_model` bzw. `export_design`;
+- greift der Arbeiter-Pool des Kurators nicht (immer Vibe mit Standardmodell, wie
+  im jeweiligen Modus), und `escalate_session` bzw. die automatische Eskalation lehnen
+  ab: Nacharbeit läuft per `send_message` an dieselbe Session, damit Versionen,
+  Vorschau und Regler zusammenbleiben.
 
 `delegate_design` und `delegate_3d` sind keine eigenen Werkzeuge: zwei Wege
 für dasselbe würden Modelle nur verwirren.

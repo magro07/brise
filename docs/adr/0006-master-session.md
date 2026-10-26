@@ -176,6 +176,66 @@ deshalb erst nach Ablauf. Zwei Gegenmittel:
   laufender `wait`-Aufruf, keine offene Freigabe), bricht Brise den Turn ab und
   stellt die Notiz danach zu. Dasselbe gilt für Nachrichten an Untersessions.
 
+## Nachtrag: Kurator und Arbeiter (Stand 26.10.2026)
+
+### Anlass
+
+Ein sehr gutes Modell soll planen und prüfen, günstigere Modelle sollen die
+Menge der Umsetzung erledigen.
+
+### Entscheidung
+
+- **Kurator** ist die Master-Session. Ihr Modell steht in den Einstellungen
+  (Backend + Modell, z. B. Claude Code mit Opus oder Vibe mit Mistral Large 4).
+  „Neue Kurator-Session“ (Projektmenü, Einstellungen) legt eine Session mit
+  diesem Modell an; das Modell bleibt fest (keine Auto-Modellwahl). Der Kurator
+  plant, schreibt Aufträge, prüft (Tests, `council_review`) und entscheidet über
+  Nacharbeit, Eskalation und Merge.
+- **Arbeiter-Pool**: geordnete Liste `{backend, model, tier}` mit Stufe 1
+  (günstig/schnell) bis 3 (stark). Standard: Vibe GLM-5.3 (1), Mistral Medium
+  3.5 (2), Mistral Large 4 (3).
+- **Automatische Wahl** bei `start_session` ohne `model`: Schwierigkeit
+  `difficulty` gibt der Kurator an (er ist das starke Modell), sonst stuft
+  `assist::classify_task` ein. Abbildung: einfach und normal → Stufe 1,
+  komplex → Stufe 2; Stufe 3 bleibt der Eskalation vorbehalten. Innerhalb einer
+  Stufe gewinnt der niedrigste Preis laut Preistabelle, bei Gleichstand die
+  höhere mittlere t/s laut Journal. Ist das Budget des Laufs zu 70 % verbraucht,
+  wird nur noch Stufe 1 gewählt. Denkstufe: einfach → niedrig, normal → mittel,
+  komplex → hoch, Eskalation → maximal (jeweils die nächste, die das Modell kann).
+  Modelle und Backends, die die Team-Richtlinie nicht erlaubt, fallen aus dem Pool.
+- **Eskalation**: `escalate_session(session, feedback)` hebt eine Untersession
+  auf die nächsthöhere Stufe. Gleiches Backend: Modell und Denkstufe in der
+  Session wechseln, Feedback als Nachricht (Verlauf bleibt). Anderes Backend:
+  neue Session im selben Worktree mit Auftrag und Feedback; die alte gilt als
+  „eskaliert“. Scheitert ein Arbeiter (Fehler, Token- oder Schrittlimit),
+  eskaliert Brise selbst. Höchstens `maxEscalation` Stufen je Teilaufgabe.
+- **Budget je Master-Lauf**: Kosten von Kurator und Arbeitern laut Journal
+  (Feld `master`). Ist es erreicht, starten und eskalieren keine Arbeiter mehr.
+- **Sichtbarkeit**: Leiste und Seitenleiste zeigen Modell, Stufe und
+  Eskalationen je Arbeiter; Kosten „Kurator“ und „Arbeiter“ je Master-Session
+  in der Leiste und auf der Nutzungsseite.
+
+### Abos und geteilte Sessions
+
+Claude-Code-Sessions laufen über das Claude-Abo des Nutzers (Pro/Max). Nach
+Anthropics Bedingungen ist das Abo persönlich; es darf nicht als Kurator für
+andere Personen arbeiten. Brise setzt das so um, wie es selbst prüfen kann:
+
+- Eine Master-Session, die gerade mit Gästen geteilt ist, darf keine
+  Untersessions über das Backend `claude` starten, und eine geteilte
+  Claude-Code-Session bekommt keine Orchestrierung (Werkzeugaufruf wird
+  abgelehnt).
+- Gäste lösen in geteilten Sessions ohnehin nur Prompts beim Host aus; ob ein
+  Host sein Abo anderweitig teilt, kann Brise nicht prüfen – das bleibt in der
+  Verantwortung des Nutzers. Für Teams ist ein API-Schlüssel (Anthropic Console)
+  oder ein anderes Backend der passende Weg.
+
+### Grenzen
+
+- Kosten von Cortecs-Turns erfasst `cortecs.rs` direkt am Proxy, ohne Zuordnung
+  zur Master-Session; sie fehlen in den Kurator-/Arbeiter-Summen.
+- Claude-Code-Turns stehen ohne Preis im Journal (Abo, Preistabelle kennt keine Claude-Modelle): Tokens ja, Euro 0.
+
 ## Verworfen
 
 - **Unix-Socket / Named Pipe**: je Betriebssystem eigener Code; TCP auf
@@ -224,3 +284,35 @@ Sperre per Team-Richtlinie (strengste Kombination).
 Nicht getestet: Claude Code, Codex und Gemini als Backend einer Untersession
 (hier nicht angemeldet), Merge-Konflikte in der Oberfläche (nur der Abbruchpfad
 im Code), Sperre über einen echten Team-Stand.
+
+### Testprotokoll Kurator und Arbeiter (26.10.2026)
+
+Echter Lauf wie oben (Xvfb, tauri-driver, Vibe 3.0.2). „Neue Kurator-Session“
+legte eine Session mit Mistral Large 4 an (Modell fest, trotz Auto-Modellwahl).
+Auftrag: `multiply` in `calc.py` und `divide` in `division.py`, Abnahme
+`tests/check.py`, ohne Modellvorgabe.
+
+- Der Kurator las das Repo, setzte `difficulty: "simple"`; Brise wählte beide
+  Arbeiter aus dem Pool: Vibe GLM-5.3, Stufe 1, angeforderte Denkstufe „low“
+  („Automatik: einfach → Stufe 1“).
+- Beide Arbeiter committeten nach 27 bzw. 40 s. Der Kurator führte
+  `tests/check.py` in jedem Worktree aus – rot, weil die Prüfung beide Teile
+  verlangt (Fehler im Testaufbau, nicht bei den Arbeitern) – und eskalierte
+  beide mit `escalate_session` auf Mistral Medium 3.5 (Stufe 2, Modellwechsel in
+  derselben Session, Feedback mit der Testausgabe).
+- Die eskalierten Arbeiter bauten daraufhin auch den jeweils anderen Teil. Nach
+  der Freigabe wurde der erste Branch gemerged; der zweite kollidierte in
+  `calc.py`, Brise brach mit `git merge --abort` ab, `main` blieb sauber, die
+  Master-Session bekam die Notiz mit der Konfliktdatei.
+- Kosten laut Leiste: Kurator 0,31 € (700 k Tokens), Arbeiter 0,11 € (je
+  Session und Modell getrennt im Journal). Bei so kleinen Aufgaben kostet das
+  Kuratieren mehr als die Umsetzung.
+
+Folgerung im Code: Arbeiter bekommen den Hinweis, keine Teile anderer
+Untersessions nachzubauen; der Kurator prüft je Untersession nur deren Teil
+und eskaliert nur bei echten Mängeln.
+
+Nicht live getestet: automatische Eskalation nach einem Fehler des Arbeiters
+(Logik per Unit-Test der Auswahl), Eskalation auf ein anderes Backend,
+Claude Code als Kurator (hier nicht angemeldet), Abo-Schutz in einer
+geteilten Session.

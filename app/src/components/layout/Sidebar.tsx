@@ -17,6 +17,7 @@ import {
   Settings,
   SquarePen,
   Trash2,
+  Crown,
 } from "lucide-react";
 import { basename, useStore, type Session } from "../../lib/store";
 import { BackendBadge } from "../agents/BackendPicker";
@@ -27,7 +28,7 @@ import { useCollab } from "../../lib/collab";
 import { TeamPanel } from "../collab/TeamPanel";
 import { DesignList, ModeSwitch } from "../design/Sidebar";
 import { ModelList } from "../model3d/Sidebar";
-import { useOrchestra } from "../../lib/orchestra";
+import { startCurator, useOrchestra } from "../../lib/orchestra";
 import { SubRows } from "../orchestra/Orchestra";
 
 const SHOWN_PER_PROJECT = 6;
@@ -192,6 +193,9 @@ export function Sidebar() {
                     <MenuContent>
                       <MenuItem icon={<Plus />} onSelect={() => newDraft(project)}>
                         Neue Session
+                      </MenuItem>
+                      <MenuItem icon={<Crown />} onSelect={() => startCurator(project)}>
+                        Neue Kurator-Session
                       </MenuItem>
                       <MenuSeparator />
                       <MenuItem icon={<EyeOff />} onSelect={() => removeProject(project)}>

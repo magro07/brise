@@ -918,6 +918,11 @@ pub fn collab_leave(state: State<'_, CollabState>, room: String) {
     state.0.lock().unwrap().guests.remove(&room);
 }
 
+/// Teilt dieses Brise die Session gerade mit Gästen (Host)? Für den Abo-Schutz der Master-Session.
+pub fn hosting(state: &CollabState, session_id: &str) -> bool {
+    state.0.lock().unwrap_or_else(|e| e.into_inner()).hosts.contains_key(session_id)
+}
+
 /// Stand nach einem Neuladen der Oberfläche.
 #[tauri::command]
 pub fn collab_status(state: State<'_, CollabState>) -> Value {

@@ -146,6 +146,8 @@ export interface Session {
   currentTask?: string;
   /** Session nur mit Modellen ohne Datenspeicherung (Cortecs ZDR). */
   zdr?: boolean;
+  /** Fest gewähltes Modell (Kurator, Arbeiter): keine Auto-Modellwahl. */
+  keepModel?: boolean;
   /** Geteilte Session eines anderen Rechners, der man beigetreten ist (lib/collab.ts). */
   guest?: { room: string; host: string; role: "viewer" | "collaborator" | "approver" | null; ended?: boolean };
 }
@@ -219,9 +221,32 @@ export interface OrchestraPrefs {
   maxParallel: number;
   /** Untersessions standardmäßig im eigenen Git-Worktree. */
   worktree: boolean;
+  /** Kurator: Backend und Modell für „Neue Kurator-Session“. */
+  curatorBackend: string;
+  curatorModel: string;
+  /** Arbeiter-Pool: Stufe 1 günstig … 3 stark (liest orchestra.rs). */
+  workers: { backend: string; model: string; tier: number }[];
+  /** Höchstens so viele Eskalationen je Teilaufgabe. */
+  maxEscalation: number;
+  /** Budget je Master-Lauf in Euro, 0 = ohne. */
+  runBudgetEur: number;
 }
 
-export const ORCHESTRA_DEFAULTS: OrchestraPrefs = { enabled: true, confirmStart: true, maxParallel: 3, worktree: true };
+export const ORCHESTRA_DEFAULTS: OrchestraPrefs = {
+  enabled: true,
+  confirmStart: true,
+  maxParallel: 3,
+  worktree: true,
+  curatorBackend: "vibe",
+  curatorModel: "mistral-large-4",
+  workers: [
+    { backend: "vibe", model: "glm-5-3", tier: 1 },
+    { backend: "vibe", model: "mistral-medium-3.5", tier: 2 },
+    { backend: "vibe", model: "mistral-large-4", tier: 3 },
+  ],
+  maxEscalation: 2,
+  runBudgetEur: 2,
+};
 
 export interface CouncilPrefs {
   /** auto = Agent fragt von sich aus, request = nur auf Wunsch, off = kein Council */
@@ -374,7 +399,7 @@ interface Actions {
   openChildSession(childId: string, cwd: string): Promise<void>;
   deleteSession(id: string): Promise<void>;
   /** Neue Session anlegen, ohne sie zu öffnen (Untersessions einer Master-Session). */
-  createSession(cwd: string, backend: string, opts?: { parent?: string; model?: string; title?: string }): Promise<string>;
+  createSession(cwd: string, backend: string, opts?: { parent?: string; model?: string; title?: string; thinking?: string }): Promise<string>;
   /** Vorhandene Session im Hintergrund laden, ohne sie zu öffnen. */
   attachSession(id: string, cwd: string, backend: string, title?: string): Promise<void>;
   /** `zdr`: diese Session ab jetzt nur mit Modellen ohne Datenspeicherung.
@@ -617,7 +642,7 @@ const LEVEL_TO_THINKING: Record<Routed["level"], string> = { simple: "low", stan
 export const THINKING_ORDER = ["off", "low", "medium", "high", "max"];
 
 /** Nächste verfügbare Denkstufe (nicht jedes Modell kann jede). */
-function nearestThinking(wanted: string, available: string[]): string | undefined {
+export function nearestThinking(wanted: string, available: string[]): string | undefined {
   if (available.includes(wanted)) return wanted;
   const w = THINKING_ORDER.indexOf(wanted);
   return [...available].sort((a, b) => Math.abs(THINKING_ORDER.indexOf(a) - w) - Math.abs(THINKING_ORDER.indexOf(b) - w))[0];
@@ -1184,7 +1209,7 @@ export const useStore = create<State & Actions>((set, get) => {
 
     async createSession(cwd, backend, opts) {
       const r = await api.newSession(cwd, get().prefs.agentSearch, get().prefs.rea, backend, opts?.parent);
-      const session = { ...applySetup(emptySession(r.sessionId, cwd, backend), r), title: opts?.title };
+      const session = { ...applySetup(emptySession(r.sessionId, cwd, backend), r), title: opts?.title, keepModel: !!opts?.model || undefined };
       set((s) => ({ sessions: { ...s.sessions, [r.sessionId]: session } }));
       rememberTemplate(session);
       if (opts?.model) {
@@ -1192,6 +1217,14 @@ export const useStore = create<State & Actions>((set, get) => {
         if (available.length && !available.includes(opts.model)) {
           pushItem(r.sessionId, { type: "notice", id: uid(), text: `Modell „${opts.model}“ gibt es bei diesem Backend nicht – es bleibt beim Standard.`, tone: "warn" });
         } else await get().setOption("model", opts.model, r.sessionId);
+      }
+      if (opts?.thinking) {
+        const levels = get().sessions[r.sessionId]?.config.find((o) => o.id === "thinking")?.options?.map((o) => o.value) ?? [];
+        const target = nearestThinking(opts.thinking, levels);
+        if (target) {
+          await get().setOption("thinking", target, r.sessionId).catch(() => {});
+          patchSession(r.sessionId, (s) => ({ ...s, autoThinking: false }));
+        }
       }
       return r.sessionId;
     },
@@ -1327,7 +1360,7 @@ export const useStore = create<State & Actions>((set, get) => {
       const decider = deciderFor(get(), get().sessions[sid]);
       // Auto-Modellwahl nur bei Backends, deren Modelle und Denkstufen Brise kennt.
       const autoCapable = get().agents[current?.backend ?? "vibe"]?.caps.autoModel ?? current?.backend === "vibe";
-      if (prefs.autoModel && autoCapable && !opts?.keepModel && modelOption?.options?.length && !text.startsWith("/")) {
+      if (prefs.autoModel && autoCapable && !opts?.keepModel && !current?.keepModel && modelOption?.options?.length && !text.startsWith("/")) {
         const history = current.items
           .filter((i) => i.type === "user")
           .slice(-4, -1)

@@ -6,9 +6,9 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { create } from "zustand";
 import { api } from "./acp";
-import { useStore, type Session } from "./store";
+import { nearestThinking, useStore, type Session } from "./store";
 
-export type SubStatus = "starting" | "running" | "waiting" | "done" | "error" | "stopped" | "interrupted" | "merged";
+export type SubStatus = "starting" | "running" | "waiting" | "done" | "error" | "stopped" | "interrupted" | "merged" | "escalated";
 
 export interface SubSession {
   id: string;
@@ -32,6 +32,15 @@ export interface SubSession {
   turns: number;
   created: number;
   updated: number;
+  /** Stufe im Arbeiter-Pool (1 günstig … 3 stark), 0 = vom Kurator gewählt. */
+  tier: number;
+  level?: string | null;
+  thinking?: string | null;
+  /** Warum dieses Modell. */
+  choice?: string | null;
+  escalations: number;
+  models: string[];
+  escalatedTo?: string | null;
 }
 
 export interface Proposal {
@@ -49,6 +58,11 @@ export interface Proposal {
   error?: string | null;
   created: number;
   branch?: string | null;
+  tier: number;
+  level?: string | null;
+  thinking?: string | null;
+  choice?: string | null;
+  escalationOf?: string | null;
 }
 
 export interface MergeRequest {
@@ -85,7 +99,10 @@ export const STATUS_LABEL: Record<SubStatus, string> = {
   stopped: "gestoppt",
   interrupted: "unterbrochen",
   merged: "gemerged",
+  escalated: "eskaliert",
 };
+
+export const LEVEL_LABEL: Record<string, string> = { simple: "einfach", standard: "normal", complex: "komplex" };
 
 /** Absender der Notizen im Chat der Master-Session. */
 export const NOTE_AUTHOR = "Brise · Untersessions";
@@ -265,7 +282,7 @@ async function handleCall(kind: string, p: any): Promise<unknown> {
         const r = await useDesign.getState().delegate(p.title, p.prompt, { author: "Master-Session", onSession: register });
         return { sessionId: r.sessionId, item: r.designId };
       }
-      const sid = await st.createSession(p.cwd, p.backend, { parent: p.master, model: p.model ?? undefined, title: p.title });
+      const sid = await st.createSession(p.cwd, p.backend, { parent: p.master, model: p.model ?? undefined, title: p.title, thinking: p.thinking ?? undefined });
       const sub = await invoke<SubSession>("orch_register", { proposal: p.proposal, session: sid });
       // Sofort eintragen – sonst geht der Turn-Beginn am Abonnement vorbei.
       useOrchestra.setState((o) => ({ book: { ...o.book, subs: [...o.book.subs.filter((x) => x.id !== sid), sub] } }));
@@ -292,6 +309,27 @@ async function handleCall(kind: string, p: any): Promise<unknown> {
         return { queued: true };
       }
       void useStore.getState().send(p.text, [], { sessionId: p.session, author: "Master-Session", keepModel: true });
+      return { queued: false };
+    }
+    case "escalate": {
+      // Stärkeres Modell in derselben Session, dann das Feedback.
+      const s = await ensureLoaded(p.session, p.cwd, p.backend, p.title);
+      if (!s) throw new Error("Untersession nicht gefunden");
+      const st2 = useStore.getState();
+      const models = s.config.find((o) => o.id === "model")?.options?.map((o) => o.value) ?? [];
+      if (models.length && !models.includes(p.model)) throw new Error(`Modell „${p.model}“ gibt es bei diesem Backend nicht`);
+      await st2.setOption("model", p.model, s.id);
+      const levels = useStore.getState().sessions[s.id]?.config.find((o) => o.id === "thinking")?.options?.map((o) => o.value) ?? [];
+      const thinking = nearestThinking(p.thinking ?? "max", levels);
+      if (thinking) await st2.setOption("thinking", thinking, s.id).catch(() => {});
+      useStore.setState((x) => (x.sessions[s.id] ? { sessions: { ...x.sessions, [s.id]: { ...x.sessions[s.id], keepModel: true, autoThinking: false } } } : {}));
+      const now = useStore.getState().sessions[s.id];
+      if (now?.running || now?.replaying) {
+        messages[s.id] = [...(messages[s.id] ?? []), p.text];
+        if (now) wake(now);
+        return { queued: true };
+      }
+      void useStore.getState().send(p.text, [], { sessionId: s.id, author: "Kurator · Eskalation", keepModel: true });
       return { queued: false };
     }
     case "stop": {
@@ -328,6 +366,27 @@ export const rejectMerge = (id: string) => act(id, () => invoke<Note>("orch_reje
 export function forgetSub(id: string) {
   if (subOf(id)) invoke("orch_forget", { session: id }).catch(() => {});
 }
+
+/** Neue Session mit dem Kurator-Modell aus den Einstellungen (Modell bleibt fest). */
+export async function startCurator(project: string) {
+  const st = useStore.getState();
+  const { curatorBackend, curatorModel } = st.prefs.orchestra;
+  try {
+    const id = await st.createSession(project, curatorBackend, { model: curatorModel || undefined, title: "Kurator" });
+    useStore.setState((x) => ({ activeProject: project, view: "chat" as const, sessions: { ...x.sessions, [id]: { ...x.sessions[id], items: [...x.sessions[id].items, { type: "notice" as const, id: `kurator-${id}`, tone: "info" as const, text: `Kurator-Session mit ${curatorModel || "Standardmodell"} (${curatorBackend}). Beschreibe die Aufgabe: Der Kurator plant, verteilt die Umsetzung an günstigere Arbeiter-Modelle, prüft und eskaliert bei Bedarf.` }] } } }));
+    useStore.getState().openTab(id);
+  } catch (e) {
+    useStore.setState({ error: `Kurator-Session konnte nicht starten: ${e}` });
+  }
+}
+
+export interface MasterCosts {
+  total: number;
+  budget: number;
+  costs: { curator: number; curatorTokens: number; curatorModels: string[]; workers: { session: string; model: string; cost: number; tokens: number; turns: number }[] };
+}
+
+export const masterCosts = (master: string) => invoke<MasterCosts>("orch_costs", { master });
 
 /** Untersession als Tab (oder rechts daneben) öffnen – auch nach einem Neustart. */
 export async function openSub(sub: SubSession, split = false) {
@@ -390,6 +449,7 @@ export function initOrchestra() {
       }
     }),
     listen("policy:changed", () => refreshOrchestra()),
+    listen<Note>("orch:note", (e) => deliver(e.payload)),
   ];
   // Turn-Beginn, Freigaben und Turn-Ende der Untersessions beobachten.
   const unsub = useStore.subscribe((st, prev) => {
