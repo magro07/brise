@@ -121,10 +121,11 @@ export function TerminalPanel({ cwd }: { cwd: string }) {
     setTabs((t) => [...t, { key, title: command ? "Anmeldung" : basename(cwd), command }]);
     setActive(key);
   };
-  const request = useTerminalRequest();
+  const requestSeq = useTerminalRequest((s) => s.seq);
   useEffect(() => {
-    if (request.command) add(request.command);
-  }, [request.seq]);
+    const command = useTerminalRequest.getState().take();
+    if (command) add(command);
+  }, [requestSeq]);
   const close = (key: number) => {
     setTabs((t) => {
       const rest = t.filter((x) => x.key !== key);

@@ -48,8 +48,15 @@ export function useMultiBackend(): boolean {
 }
 
 /** Befehl, den das eingebaute Terminal in einem neuen Tab ausführen soll (z. B. eine Anmeldung). */
-export const useTerminalRequest = create<{ seq: number; command: string | null; run(command: string): void }>((set) => ({
+export const useTerminalRequest = create<{ seq: number; command: string | null; run(command: string): void; take(): string | null }>((set, get) => ({
   seq: 0,
   command: null,
   run: (command) => set((s) => ({ seq: s.seq + 1, command })),
+  // Genau einmal ausführen: Ein neu aufgebautes Terminal (Projekt-, Ansichts- oder
+  // Bereichswechsel) darf eine alte Anmeldung nicht erneut starten.
+  take: () => {
+    const { command } = get();
+    if (command) set({ command: null });
+    return command;
+  },
 }));
