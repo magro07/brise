@@ -22,6 +22,7 @@ mod usage;
 mod installer;
 mod rpc;
 mod selftest;
+mod secrets;
 mod sensitive;
 
 pub fn run_mcp_search(cwd: String) {
@@ -100,6 +101,8 @@ pub fn run() {
         .manage(collab::CollabState::default())
         .setup(|app| {
             customize::watch(app.handle().clone());
+            secrets::startup_cleanup();
+            secrets::watch(app.handle().clone());
             if let Err(e) = cortecs::start_proxy() {
                 eprintln!("Cortecs-Proxy: {e}");
             }
@@ -213,6 +216,13 @@ pub fn run() {
             cortecs::cortecs_classify_task,
             cortecs::cortecs_adjust_reasoning,
             sensitive::sensitivity_check,
+            secrets::secrets_pending,
+            secrets::secret_answer,
+            secrets::secret_save,
+            secrets::secrets_list,
+            secrets::secret_delete,
+            secrets::secret_set_scope,
+            secrets::secret_scan,
             collab::collab_share,
             collab::collab_publish,
             collab::collab_set_role,

@@ -92,6 +92,14 @@ const PREFS: &[(&str, &str)] = &[
 ];
 
 fn tools() -> Value {
+    let mut list = app_tools();
+    if let Some(a) = list.as_array_mut() {
+        a.extend(crate::secrets::tools());
+    }
+    list
+}
+
+fn app_tools() -> Value {
     json!([
         {
             "name": "brise_get_settings",
@@ -144,6 +152,9 @@ fn tools() -> Value {
 }
 
 fn call_tool(name: &str, args: &Value) -> CmdResult<String> {
+    if let Some(result) = crate::secrets::call_tool(name, args) {
+        return result;
+    }
     match name {
         "brise_get_settings" => {
             let custom = read_customization();
@@ -198,7 +209,7 @@ pub fn run_mcp_server() {
                 "protocolVersion": msg["params"]["protocolVersion"].as_str().unwrap_or("2025-06-18"),
                 "capabilities": { "tools": {} },
                 "serverInfo": { "name": "brise-app", "version": env!("CARGO_PKG_VERSION") },
-                "instructions": "Werkzeuge, mit denen du die Desktop-App Brise selbst anpasst, wenn der Nutzer das im Chat wünscht."
+                "instructions": format!("Werkzeuge, mit denen du die Desktop-App Brise selbst anpasst, wenn der Nutzer das im Chat wünscht. {}", crate::secrets::MCP_INSTRUCTIONS)
             }}),
             "ping" => json!({ "result": {} }),
             "tools/list" => json!({ "result": { "tools": tools() } }),
@@ -219,8 +230,10 @@ pub fn run_mcp_server() {
     }
 }
 
-/// MCP-Eintrag für jede Session.
-pub fn mcp_entry() -> Option<Value> {
+/// MCP-Eintrag für jede Session; Projekt und Session-Kennung für die Secrets.
+pub fn mcp_entry(cwd: &str, tag: &str) -> Option<Value> {
     let exe = std::env::current_exe().ok()?;
-    Some(json!({ "name": "brise-app", "command": exe.display().to_string(), "args": ["--mcp-app"], "env": crate::agent::child_env() }))
+    let mut env = crate::agent::child_env();
+    env.extend(crate::secrets::mcp_env(cwd, tag));
+    Some(json!({ "name": "brise-app", "command": exe.display().to_string(), "args": ["--mcp-app"], "env": env }))
 }

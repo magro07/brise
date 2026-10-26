@@ -294,6 +294,73 @@ unter Dienst `dev.brise.cortecs`, Konto `CORTECS_API_KEY`) bekommt Brise:
 
 Details, Messwerte und Grenzen: [docs/adr/0004-cortecs.md](../docs/adr/0004-cortecs.md).
 Live-Tests mit Schlüssel: `cargo test --lib cortecs::tests -- --ignored --test-threads=1`.
+
+## Secrets (Passwörter, API-Keys, Tokens)
+
+Secrets gibt man in Brise in ein eigenes, maskiertes Feld ein, nie in den Chat.
+Das Modell sieht nur einen Platzhalter wie `{{secret:GITHUB_TOKEN}}`.
+
+- **Anfordern durch den Agenten:** Der MCP-Server `brise-app` hat das Werkzeug
+  `request_secret(name, purpose, scope)`. Brise zeigt dafür statt des Composers
+  eine Karte mit Zweck, maskiertem Feld und Gültigkeit: *nur diese Session*
+  (gelöscht beim nächsten Start von Brise), *dieses Projekt* oder *dauerhaft*.
+  Der Agent bekommt danach nur den Platzhalter zurück. Antwortet man nicht
+  innerhalb von 50 s, ruft der Agent das Werkzeug erneut auf und wartet weiter
+  (Vibe bricht MCP-Werkzeuge nach 60 s ab).
+- **Selbst anlegen:** Schlüssel-Knopf im Composer (fügt den Platzhalter an der
+  Cursorposition ein) oder Einstellungen → Freigaben & Sicherheit → Secrets. Dort
+  stehen alle Secrets mit Namen und Gültigkeit, ohne Wert. Man kann sie löschen
+  oder die Gültigkeit ändern.
+- **Versehentlich eingetippt:** Vor jedem Senden prüft Brise den Text lokal
+  mit den Schlüsselmustern aus `sensitive.rs` (GitHub-/Slack-/AWS-/Google-Token,
+  `sk-…`, JWT, private Schlüssel, `password=…`, Verbindungs-URLs mit Passwort).
+  Bei einem Treffer bietet Brise an, den Wert als Secret zu speichern und im Text
+  durch den Platzhalter zu ersetzen. Diese Prüfung läuft vor der Cortecs-Prüfung,
+  der Wert geht also auch nicht an das Decision-Modell.
+- **Benutzen:** `run_with_secrets(command, env?)` führt einen Shell-Befehl aus.
+  Platzhalter im Befehl werden zu Verweisen auf Umgebungsvariablen
+  (`"${BRISE_SECRET_NAME}"`, passend zum Quoting), der Wert steht also nicht in
+  der Befehlszeile. `env` setzt eigene Variablen, z. B.
+  `{"GH_TOKEN": "{{secret:GITHUB_TOKEN}}"}`. `http_request_with_secrets(method,
+  url, headers, body)` setzt Platzhalter in URL, Header und Body ein. Beide
+  schwärzen ihre Ausgabe, bevor sie ans Modell geht: der Wert selbst sowie seine
+  base64-, hex-, URL- und JSON-Form werden durch den Platzhalter ersetzt. Werte
+  unter vier Zeichen werden nicht geschwärzt. `list_secrets` nennt die verfügbaren
+  Namen. Bei gleichem Namen gilt: Session vor Projekt vor dauerhaft.
+
+**Ablage:** Werte liegen nur im System-Schlüsselbund (Secret Service/GNOME
+Keyring bzw. KWallet unter Linux, macOS-Schlüsselbund, Windows-Anmeldeinformationen),
+Dienst `dev.brise.secrets`. Ohne Schlüsselbund speichert Brise keine Secrets, es
+gibt keine Datei als Ausweichlösung. In `<Datenordner>/secrets/` liegen nur Namen,
+Gültigkeit, Zweck und offene Anfragen (`index.json`, `requests/`). Den Wert trägt
+die Oberfläche über einen Tauri-Befehl direkt in den Schlüsselbund ein. Er erscheint
+nicht im ACP-Verkehr (`BRISE_ACP_TRACE`), nicht im Session-Verlauf von Vibe, nicht
+im Nutzungsjournal und nicht in Logs.
+
+**Wie weit der Schutz reicht:**
+
+- Der Schlüsselbund schützt gegen **andere Nutzer** am Rechner und **offline**
+  (gestohlene Platte, Backup): Die Werte sind mit dem Login verschlüsselt.
+- Gegen **Prozesse desselben Nutzers** schützt er je nach System nur begrenzt.
+  Unter Linux kann jedes Programm der eigenen Sitzung den entsperrten Secret
+  Service auslesen, z. B. mit `secret-tool lookup service dev.brise.secrets …`.
+  Das gilt auch für Shell-Befehle, die der Agent über sein normales
+  Shell-Werkzeug ausführt. macOS fragt bei fremden Programmen nach, Windows nicht.
+- Ein Befehl, den `run_with_secrets` startet, hat den Wert in seiner Umgebung.
+  Er kann ihn weitergeben, in Dateien schreiben oder an einen beliebigen Server
+  schicken. Gleiches gilt für die URL bei `http_request_with_secrets`. Beide
+  Werkzeuge laufen über Vibes normale Freigabe, also vorher Befehl bzw. URL ansehen.
+  Mit „Alle Freigaben überspringen“ (`bypass_tool_permissions`) entfällt diese
+  Rückfrage, und der Agent kann ein Secret ohne Rückfrage benutzen.
+- Das Schwärzen erkennt nur exakte Werte und die genannten Kodierungen. Ein
+  Befehl, der den Wert umgedreht, gekürzt, zeichenweise oder verschlüsselt
+  ausgibt, kommt ungeschwärzt durch. Schwärzen ist also eine Absicherung gegen
+  Versehen, keine Schranke gegen einen Agenten, der den Wert absichtlich
+  herausholen will.
+- Der lokale Vorfilter im Composer erkennt bekannte Schlüsselformate, aber nicht
+  jedes Passwort. Freier Text ohne Muster (etwa „mein Passwort ist sommer2026“)
+  geht unerkannt durch.
+
 ## Design-Modus
 
 Umschalter „Code | Design“ in der Seitenleiste. Im Design-Modus stehen statt der Projekte
@@ -336,6 +403,7 @@ Jede Session bekommt den MCP-Server `brise-app` (`brise --mcp-app`). Seine Werkz
 | `brise_set_custom_css` | eigenes CSS (Variablen wie `--accent`, Bereiche über `[data-brise="…"]`) |
 | `brise_set_quick_actions` | eigene Karten auf der Startseite |
 | `brise_set_vibe_config` | Einträge in Vibes `config.toml`, Freigaben abschalten ausgenommen |
+| `request_secret`, `list_secrets`, `run_with_secrets`, `http_request_with_secrets` | Secrets anfordern und verwenden, siehe [Secrets](#secrets-passwörter-api-keys-tokens) |
 
 Die Werkzeuge schreiben nach `<Datenordner>/custom/`. Brise beobachtet den Ordner
 und übernimmt Änderungen sofort. Der mitgelieferte Skill `brise-anpassen` erklärt

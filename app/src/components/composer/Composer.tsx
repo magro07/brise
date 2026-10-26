@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
-import { ArrowUp, AtSign, FileText, Image, Mic, Paperclip, ShieldCheck, Slash, Square, X } from "lucide-react";
+import { ArrowUp, AtSign, FileText, Image, KeyRound, Mic, Paperclip, ShieldCheck, Slash, Square, X } from "lucide-react";
 import { basename, isZdr, useStore, type Attachment, type Session, type SlashCommand } from "../../lib/store";
 import { cortecs, type SensitiveVerdict } from "../../lib/cortecs";
 import { SensitiveNotice } from "./SensitiveNotice";
+import { SecretCreate } from "../secrets/SecretPrompt";
+import { secretsApi, type SecretFound } from "../../lib/secrets";
 import { IconButton, Tip, clsx } from "../ui";
 import { VoiceRecorder } from "./VoiceRecorder";
 import { ContextMeter, ModePicker, OptionPicker, ThinkingPicker } from "./Pickers";
@@ -68,6 +70,8 @@ export function Composer({ session, project, focused = true }: { session?: Sessi
   const recordingHere = recording && focused;
   const [checking, setChecking] = useState(false);
   const [flagged, setFlagged] = useState<{ verdict: SensitiveVerdict; text: string; attachments: Attachment[] } | null>(null);
+  // Secret anlegen: von Hand (ohne found) oder für erkannte Zugangsdaten im Text.
+  const [secretPanel, setSecretPanel] = useState<{ found?: SecretFound[]; text?: string; attachments?: Attachment[] } | null>(null);
   const zdrActive = useStore((s) => (session ? isZdr(s, session) : s.prefs.zdrProjects.includes(project)));
 
   // Von außen eingefügter Text (z. B. Treffer der semantischen Suche).
@@ -188,12 +192,38 @@ export function Composer({ session, project, focused = true }: { session?: Sessi
     setAttachments([]);
     setCursor(0);
     setFlagged(null);
+    setSecretPanel(null);
   };
 
-  /** Vor dem Senden: sensible Daten? Nur nötig, wenn das Ziel kein ZDR-Modell ist. */
-  const submit = async () => {
+  /** Platzhalter an der Cursorposition einfügen. */
+  const insertAtCursor = (snippet: string) => {
+    const pos = cursor >= 0 && cursor <= text.length ? cursor : text.length;
+    const pre = text.slice(0, pos);
+    const glue = pre && !/\s$/.test(pre) ? " " : "";
+    setText(`${pre}${glue}${snippet}${text.slice(pos)}`);
+    requestAnimationFrame(() => {
+      const at = pos + glue.length + snippet.length;
+      ref.current?.focus();
+      ref.current?.setSelectionRange(at, at);
+      setCursor(at);
+    });
+  };
+
+  /**
+   * Vor dem Senden: Zugangsdaten im Text? Dann als Secret anbieten (immer, lokal).
+   * Danach sensible Daten – nur nötig, wenn das Ziel kein ZDR-Modell ist.
+   */
+  const submit = async (skipSecrets = false) => {
     const t = text.trim();
     if (!t || running || disabled || checking) return;
+    if (!skipSecrets && !t.startsWith("/")) {
+      const found = await secretsApi.scan(t).catch(() => [] as SecretFound[]);
+      if (found.length) {
+        setSecretPanel({ found, text: t, attachments });
+        return;
+      }
+    }
+    setSecretPanel(null);
     const st = useStore.getState();
     const model = String(session?.config.find((o) => o.id === "model")?.currentValue ?? st.draft.model ?? "");
     const safe = zdrActive || (!st.prefs.autoModel && st.cortecs.models.includes(model));
@@ -218,6 +248,33 @@ export function Composer({ session, project, focused = true }: { session?: Sessi
 
   return (
     <div data-brise="composer" className="@container relative">
+      {secretPanel && (
+        <SecretCreate
+          key={secretPanel.text ?? "manual"}
+          found={secretPanel.found}
+          text={secretPanel.text}
+          sessionId={session?.id}
+          project={project}
+          onSaved={(saved) => {
+            const original = secretPanel.text;
+            setSecretPanel(null);
+            if (original == null) return insertAtCursor(saved[0].placeholder);
+            // Von hinten ersetzen, damit die vorderen Bereiche gültig bleiben.
+            let next = original;
+            for (const { found: f, placeholder } of [...saved].sort((a, b) => (b.found?.start ?? 0) - (a.found?.start ?? 0))) {
+              if (f) next = next.slice(0, f.start) + placeholder + next.slice(f.end);
+            }
+            setText(next);
+            setCursor(next.length);
+            ref.current?.focus();
+          }}
+          onSendAnyway={secretPanel.found ? () => submit(true) : undefined}
+          onClose={() => {
+            setSecretPanel(null);
+            ref.current?.focus();
+          }}
+        />
+      )}
       {flagged && (
         <SensitiveNotice
           verdict={flagged.verdict}
@@ -331,6 +388,9 @@ export function Composer({ session, project, focused = true }: { session?: Sessi
           <IconButton label="Dateien oder Bilder anhängen" onClick={attach} disabled={disabled}>
             <Paperclip className="h-4 w-4" />
           </IconButton>
+          <IconButton label="Secret anlegen (Passwort, API-Key, Token) – der Agent sieht nur den Platzhalter" onClick={() => setSecretPanel(secretPanel ? null : {})} disabled={disabled}>
+            <KeyRound className="h-4 w-4" />
+          </IconButton>
           <BackendPicker session={session} />
           <ModePicker session={session} />
           <OptionPicker session={session} id="model" />
@@ -368,7 +428,7 @@ export function Composer({ session, project, focused = true }: { session?: Sessi
             </button>
           ) : (
             <button
-              onClick={submit}
+              onClick={() => submit()}
               disabled={!text.trim() || disabled || checking}
               className="ml-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-accent text-accent-fg transition hover:brightness-110 disabled:bg-line-strong disabled:text-muted"
               aria-label="Senden (Enter)"

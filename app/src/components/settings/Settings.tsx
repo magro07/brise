@@ -44,6 +44,7 @@ import { confirmAction } from "../../lib/dialogs";
 import { UsagePage } from "../usage/UsagePage";
 import { CortecsView } from "./CortecsSettings";
 import { CollabSettings } from "../collab/CollabSettings";
+import { SecretsCard } from "./SecretsSettings";
 
 const SECTIONS = [
   { id: "general", label: "Allgemein", icon: Palette },
@@ -478,6 +479,7 @@ export function SettingsView() {
               )}
               <Card>{SECTION_KEYS.permissions.map(field)}</Card>
               <Allowlist values={values} write={write} />
+              <SecretsCard />
             </>
           )}
 
