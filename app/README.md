@@ -25,6 +25,7 @@ src/
     screens/             Start, Login, Vibe fehlt, leere Zustände
     ui/                  Buttons, Menüs, Tooltips, Schalter, Ring
     collab/              Session teilen, beitreten, Gast-Composer, Einstellungen
+    bench/               Benchmarks: Liste, Editor, Lauf, Vergleichstabelle, Verlauf
 src-tauri/src/
   rpc.rs                 JSON-RPC über stdio
   agent.rs               ACP-Commands, ein Prozess je Backend, Session-Routing, Events, fs-Handler
@@ -48,6 +49,7 @@ src-tauri/src/
   council.rs             Model Council: andere Modelle um Rat fragen, MCP-Server brise-council
   meter.rs               Mikrofonpegel für die Wellen-Animation (cpal, nur Messung)
   usage.rs               Nutzungsjournal, Preistabelle, Import aus Vibes Session-Logs
+  bench.rs               eigene Benchmarks: Definitionen, isolierte Läufe, Prüfungen, Ergebnisse
   selftest.rs            `brise --self-test` für die CI auf allen Systemen
   collab/                Kollaboration: Verschlüsselung, Einladungslinks, Relay-Verbindung, LAN-Relay
   design.rs              Design-Modus: Arbeitsordner, Kopien/Versionen, Export ins Projekt, Token-Import
@@ -340,6 +342,91 @@ Jede Session bekommt den MCP-Server `brise-app` (`brise --mcp-app`). Seine Werkz
 Die Werkzeuge schreiben nach `<Datenordner>/custom/`. Brise beobachtet den Ordner
 und übernimmt Änderungen sofort. Der mitgelieferte Skill `brise-anpassen` erklärt
 Vibe, wann und wie er die Werkzeuge nutzt.
+
+## Benchmarks
+
+Unter *Einstellungen → Benchmarks* legt man eigene Benchmarks an und lässt sie beliebig oft
+laufen, um Modelle und Agenten auf den eigenen Aufgaben zu vergleichen und Regressionen zu
+sehen. Brise liefert den Beispiel-Benchmark `beispiel.json` mit (Rechenfrage, Bugfix mit
+Tests, Erklärung mit Richtermodell; Quelle `src-tauri/resources/benchmarks/`). Er wird beim
+ersten Öffnen einmal angelegt und kommt nach dem Löschen nicht wieder.
+
+**Definition:** eine JSON-Datei je Benchmark in `<Datenordner>/benchmarks/<id>.json`. Man
+bearbeitet sie im Formular, als JSON in Brise oder direkt in der Datei, und kann sie
+versionieren:
+
+```json
+{
+  "name": "Refactorings im Backend",
+  "judgeModel": "mistral-small-latest",
+  "tasks": [{
+    "id": "bugfix",
+    "name": "Bugfix mit Tests",
+    "prompt": "Behebe den Fehler in calc.py, sodass die Tests grün sind.",
+    "project": "/home/ich/code/projekt",
+    "ref": "v1.2",
+    "files": { "notiz.txt": "zusätzliche Datei" },
+    "setup": "npm ci",
+    "timeoutSec": 600,
+    "checks": [
+      { "type": "command", "run": "npm test", "timeoutSec": 300 },
+      { "type": "regex", "pattern": "(?i)behoben" },
+      { "type": "contains", "value": "calc.py", "ignoreCase": true },
+      { "type": "file", "path": "src/calc.py", "pattern": "def mittelwert" },
+      { "type": "judge", "criteria": "Erklärt die Ursache korrekt", "threshold": 0.6 }
+    ]
+  }],
+  "targets": [
+    { "backend": "vibe", "model": "glm-5-3", "options": { "thinking": "high" }, "label": "GLM-5.3 hoch" },
+    { "backend": "vibe", "model": "mistral-large-4" },
+    { "backend": "vibe", "model": "cortecs-kimi-k2-7-code" },
+    { "backend": "claude" }
+  ]
+}
+```
+
+- **Ziele:** `backend` ist ein Agent aus *Einstellungen → Agenten* (`vibe`, `claude`,
+  `codex`, `gemini`). `model` ist der Wert der Session-Option „Modell“, so wie ihn die
+  Modellauswahl zeigt (Vibe-Alias wie `glm-5-3`, Cortecs-Modelle als `cortecs-…`). Fehlt
+  er, gilt der Standard des Agenten. `options` setzt weitere Session-Optionen, etwa die
+  Denkstufe `thinking`. Kennt der Agent den Wert nicht, steht das als Fehler im Ergebnis,
+  zusammen mit den Werten, die er kennt.
+- **Prüfungen:** Eine Aufgabe ist bestanden, wenn alle Prüfungen bestehen. Der Score ist
+  der Mittelwert, beim Richter zählen dessen Punkte (0–10). `regex` und `contains` prüfen
+  die Textantwort des Agenten. `command` läuft im Arbeitsordner über `sh -c` bzw.
+  `cmd /C` und muss mit Code 0 enden. `file` prüft eine Datei im Arbeitsordner. `judge`
+  lässt ein Richtermodell Aufgabe, Kriterien und Antwort bewerten (Mistral-Modell-ID
+  oder `cortecs/<modell>`, Standard Mistral Small). Den Diff sieht es nicht: Für Code
+  nimmt man `command`.
+
+**Lauf:** „Starten“ führt jede Aufgabe gegen jedes Ziel aus, eine Kombination nach der
+anderen, im Hintergrund (Event `bench:progress`, ein Lauf zur Zeit, „Abbrechen“ möglich):
+
+1. Arbeitsordner `<Datenordner>/benchmarks/work/<lauf>/<aufgabe>--<ziel>`: mit `ref` ein
+   `git clone` des Projekts, auf den Ref ausgecheckt. Ohne `ref` eine Kopie des
+   Arbeitsstands, ohne `.git` und ohne alles, was `.gitignore` ausschließt. Ohne Projekt
+   ist der Ordner leer. Danach schreibt Brise `files` und führt `setup` aus. Das echte
+   Projekt wird nur gelesen.
+2. Eine frische Session des Agenten in diesem Ordner, ohne semantische Suche. Wenn der
+   Agent es kann, läuft sie im Modus „Alles automatisch“. Freigaben beantwortet Brise
+   selbst mit „erlauben“. Die Session erscheint nicht in der Oberfläche und wird danach
+   gelöscht. **Der Agent führt Befehle ohne Rückfrage aus.** Der Ordner ist nur eine
+   Kopie, keine Sandbox.
+3. Gemessen werden die Dauer, das erste Token (TTFT), t/s (Generierungszeit wie bei
+   normalen Turns) und Tokens laut Agent. Die Kosten schätzt Brise mit der Preistabelle,
+   bei Cortecs-Modellen kommen sie aus dem Cortecs-Journal. Jeder Turn landet als
+   `kind: "bench"` im Nutzungsjournal, der Richter als „Benchmark: Richter“.
+4. Prüfungen auswerten. Bestandene Arbeitsordner werden gelöscht, nicht bestandene
+   bleiben zum Nachsehen („Arbeitsordner“ im Detail).
+
+**Ergebnisse:** `<Datenordner>/benchmarks/runs/<id>/<lauf>.json`, einer je Lauf, mit allen
+Messwerten, Prüfdetails und der Antwort (gekürzt auf 6000 Zeichen). Die Seite zeigt die
+Vergleichstabelle Aufgabe × Ziel mit Summen je Ziel (bestanden, Score, Dauer, Tokens,
+Kosten, Median von TTFT und t/s). Unter jeder Zelle zeigen kleine Balken dieselbe
+Kombination in früheren Läufen. Darunter steht der Verlauf aller Läufe je Ziel, mit
+Pfeilen für Verbesserung und Regression gegenüber dem vorigen Lauf. Die Ziele werden
+über `backend:model:option=wert` zugeordnet. Ein umbenannter Anzeigename bricht den
+Verlauf also nicht, ein anderes Modell beginnt einen neuen.
 
 ## Model Council
 
