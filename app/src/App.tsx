@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { Suspense, lazy, useEffect, useState } from "react";
 import { Sparkles } from "lucide-react";
 import { listen } from "@tauri-apps/api/event";
 import { api, type PermissionRequest } from "./lib/acp";
@@ -24,6 +24,7 @@ import { JoinDialog } from "./components/collab/JoinDialog";
 import { TeamDialog } from "./components/collab/TeamDialog";
 import { GuestPane } from "./components/collab/GuestComposer";
 import { DesignView } from "./components/design/DesignView";
+const ModelView = lazy(() => import("./components/model3d/ModelView").then((m) => ({ default: m.ModelView })));
 import { SecretPrompt } from "./components/secrets/SecretPrompt";
 import { initSecrets, useSecretRequest } from "./lib/secrets";
 
@@ -223,7 +224,17 @@ export default function App() {
       ) : (
         <div className="flex h-full">
           {sidebarOpen && <Sidebar />}
-          {view === "settings" ? <SettingsView /> : view === "design" ? <DesignView /> : <Workspace />}
+          {view === "settings" ? (
+            <SettingsView />
+          ) : view === "design" ? (
+            <DesignView />
+          ) : view === "3d" ? (
+            <Suspense fallback={<div className="flex flex-1 items-center justify-center text-muted">Lade 3D-Modus …</div>}>
+              <ModelView />
+            </Suspense>
+          ) : (
+            <Workspace />
+          )}
         </div>
       )}
       <CommandPalette />

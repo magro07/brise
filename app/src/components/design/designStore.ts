@@ -25,6 +25,7 @@ import {
   type PickedElement,
 } from "../../lib/design";
 import { captureEntry } from "./capture";
+import { handoffToSession } from "../../lib/handoff";
 
 export type PreviewMode = { kind: "single" } | { kind: "compare" } | { kind: "version"; n: number };
 
@@ -73,7 +74,7 @@ interface DesignActions {
 
 const metaPath = (id: string) => `${id}/design.json`;
 
-function emptySession(id: string, cwd: string, setup: SessionSetup | null, title: string): Session {
+export function emptySession(id: string, cwd: string, setup: SessionSetup | null, title: string): Session {
   const modeOption = setup?.configOptions?.find((o) => o.id === "mode");
   return {
     id,
@@ -423,6 +424,12 @@ export const useDesign = create<DesignState & DesignActions>((set, get) => {
       const n = (meta.versions[meta.versions.length - 1]?.n ?? 0) + 1;
       await designApi.copy(meta.id, `${meta.id}/.versions/${n}`, MANAGED, true);
       await get().saveMeta({ ...meta, versions: [...meta.versions, { n, label, at: Date.now(), sig }] });
+      // Vorschaubild für andere Sessions (MCP-Werkzeug read_design).
+      const main = entries(files)[0];
+      if (main)
+        captureEntry(meta.id, main.entry, tokensCss(systemOf(meta)), "desktop", "light")
+          .then((url) => designApi.writeBase64(`${meta.id}/preview.png`, url.split(",")[1]))
+          .catch(() => {});
     },
 
     async restore(n) {
@@ -511,20 +518,10 @@ export const useDesign = create<DesignState & DesignActions>((set, get) => {
       const record = { project, at: Date.now(), path: exported };
       await get().saveMeta({ ...meta, handoffs: [...meta.handoffs, record] });
 
-      const st = useStore.getState();
-      st.openProject(project);
-      st.newDraft(project);
-      // Neue Session merken, sobald sie angelegt ist.
-      const unsub = useStore.subscribe((s) => {
-        const id = s.activeSessionId;
-        const session = id ? s.sessions[id] : undefined;
-        if (!id || session?.cwd !== project || !session.items.some((i) => i.type === "user" && i.text === prompt)) return;
-        unsub();
+      handoffToSession(project, prompt, attachments, (id) => {
         const m = get().designs.find((d) => d.id === meta.id);
         if (m) get().saveMeta({ ...m, handoffs: m.handoffs.map((h) => (h.at === record.at ? { ...h, sessionId: id } : h)) });
       });
-      setTimeout(unsub, 60_000);
-      st.send(prompt, attachments);
       set({ handoffOpen: false });
     },
   };

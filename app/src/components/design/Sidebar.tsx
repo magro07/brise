@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { Code2, Palette, Pencil, Sparkles, X } from "lucide-react";
+import { Box, Code2, Palette, Pencil, Sparkles, X } from "lucide-react";
 import { useStore } from "../../lib/store";
 import { relativeTime } from "../../lib/format";
 import { askText, confirmAction } from "../../lib/dialogs";
@@ -7,23 +7,26 @@ import { Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger, clsx } from ".
 import { useDesign } from "./designStore";
 import { newDesign } from "./DesignView";
 
-/** Umschalter zwischen Coding-Sessions und Design-Modus. */
+/** Umschalter zwischen Coding-Sessions, Design- und 3D-Modus. */
 export function ModeSwitch() {
   const view = useStore((s) => s.view);
   const setView = useStore((s) => s.setView);
-  const design = view === "design";
+  const current = view === "design" || view === "3d" ? view : "chat";
   return (
     <div className="mx-2 mt-3 flex h-8 items-center rounded-lg bg-hover p-0.5" data-tour="mode-switch">
-      {[
-        { id: false, label: "Code", icon: Code2 },
-        { id: true, label: "Design", icon: Palette },
-      ].map((m) => (
+      {(
+        [
+          { id: "chat", label: "Code", icon: Code2 },
+          { id: "design", label: "Design", icon: Palette },
+          { id: "3d", label: "3D", icon: Box },
+        ] as const
+      ).map((m) => (
         <button
-          key={m.label}
-          onClick={() => setView(m.id ? "design" : "chat")}
+          key={m.id}
+          onClick={() => setView(m.id)}
           className={clsx(
             "flex h-7 flex-1 items-center justify-center gap-1.5 rounded-md text-[0.9em]",
-            design === m.id ? "bg-elev font-medium text-fg shadow-soft" : "text-muted hover:text-fg",
+            current === m.id ? "bg-elev font-medium text-fg shadow-soft" : "text-muted hover:text-fg",
           )}
         >
           <m.icon className="h-3.5 w-3.5" /> {m.label}

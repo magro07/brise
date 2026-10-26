@@ -106,6 +106,7 @@ fn tools() -> Value {
     let mut list = app_tools();
     if let Some(a) = list.as_array_mut() {
         a.extend(crate::secrets::tools());
+        a.extend(crate::model3d::tools());
     }
     list
 }
@@ -221,14 +222,21 @@ pub fn run_mcp_server() {
                 "protocolVersion": msg["params"]["protocolVersion"].as_str().unwrap_or("2025-06-18"),
                 "capabilities": { "tools": {} },
                 "serverInfo": { "name": "brise-app", "version": env!("CARGO_PKG_VERSION") },
-                "instructions": format!("Werkzeuge, mit denen du die Desktop-App Brise selbst anpasst, wenn der Nutzer das im Chat wünscht. {}", crate::secrets::MCP_INSTRUCTIONS)
+                "instructions": format!(
+                    "Werkzeuge, mit denen du die Desktop-App Brise selbst anpasst, wenn der Nutzer das im Chat wünscht. {} {}",
+                    crate::secrets::MCP_INSTRUCTIONS,
+                    crate::model3d::MCP_INSTRUCTIONS
+                )
             }}),
             "ping" => json!({ "result": {} }),
             "tools/list" => json!({ "result": { "tools": tools() } }),
             "tools/call" => {
                 let p = &msg["params"];
-                match call_tool(p["name"].as_str().unwrap_or(""), &p["arguments"]) {
-                    Ok(text) => json!({ "result": { "content": [{ "type": "text", "text": text }] } }),
+                let (name, args) = (p["name"].as_str().unwrap_or(""), &p["arguments"]);
+                // Werkzeuge mit Bildern liefern MCP-Inhalte statt Text.
+                let rich = crate::model3d::call_tool(name, args);
+                match rich.unwrap_or_else(|| call_tool(name, args).map(|text| vec![json!({ "type": "text", "text": text })])) {
+                    Ok(content) => json!({ "result": { "content": content } }),
                     Err(e) => json!({ "result": { "content": [{ "type": "text", "text": e }], "isError": true } }),
                 }
             }

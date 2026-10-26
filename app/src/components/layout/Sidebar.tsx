@@ -26,6 +26,7 @@ import { confirmAction } from "../../lib/dialogs";
 import { useCollab } from "../../lib/collab";
 import { TeamPanel } from "../collab/TeamPanel";
 import { DesignList, ModeSwitch } from "../design/Sidebar";
+import { ModelList } from "../model3d/Sidebar";
 
 const SHOWN_PER_PROJECT = 6;
 
@@ -97,7 +98,7 @@ export function Sidebar() {
 
       <ModeSwitch />
 
-      {view === "design" ? <DesignList /> : <>
+      {view === "design" ? <DesignList /> : view === "3d" ? <ModelList /> : <>
       <TeamPanel />
 
       <div className="mt-3 flex items-center px-4 pb-1 text-[0.78em] font-medium uppercase tracking-wide text-muted">

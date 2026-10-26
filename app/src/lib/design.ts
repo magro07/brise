@@ -106,7 +106,7 @@ export function isDesignPath(p: string): boolean {
 export const absPath = (rel: string) => `${root ?? ""}/${rel}`.replace(/\\/g, "/");
 
 /** Dateien, die Brise im Design-Ordner selbst verwaltet. */
-export const MANAGED = [".versions", "design.json", "refs", "handoff"];
+export const MANAGED = [".versions", "design.json", "refs", "handoff", "preview.png"];
 
 /** Verbindet `base` und `rel` und löst `.`/`..` auf. Liefert null bei Ausbruch über `limit`. */
 export function joinPath(base: string, rel: string, limit: string): string | null {

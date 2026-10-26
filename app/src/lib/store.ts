@@ -23,6 +23,7 @@ import { promptWithReserve } from "./accounts";
 import type { Suggestion } from "./acp";
 import { budgetModel, perfEvent, perfFinish, perfStart, reportTurn, type TurnPerf } from "../components/usage/usage";
 import { isDesignPath } from "./design";
+import { isModelPath } from "./model3d";
 import { isBenchPath } from "./bench";
 
 // ---------- Modell ----------
@@ -283,7 +284,7 @@ interface State {
   activeProject: string | null;
   activeSessionId: string | null;
 
-  view: "chat" | "settings" | "design";
+  view: "chat" | "settings" | "design" | "3d";
   settingsSection: string;
   panel: PanelTab | null;
   sidebarOpen: boolean;
@@ -1063,8 +1064,8 @@ export const useStore = create<State & Actions>((set, get) => {
     async refreshIndex() {
       try {
         const r = await api.listSessions();
-        // Sessions des Design-Modus gehören zu keinem Projekt.
-        const index = (r.sessions ?? []).filter((s) => !isDesignPath(s.cwd) && !isBenchPath(s.cwd)).sort((a, b) => (b.updatedAt ?? "").localeCompare(a.updatedAt ?? ""));
+        // Sessions des Design- und 3D-Modus gehören zu keinem Projekt.
+        const index = (r.sessions ?? []).filter((s) => !isDesignPath(s.cwd) && !isModelPath(s.cwd) && !isBenchPath(s.cwd)).sort((a, b) => (b.updatedAt ?? "").localeCompare(a.updatedAt ?? ""));
         const { projects, hiddenProjects } = get();
         const known = new Set(projects);
         const discovered = [...new Set(index.map((s) => s.cwd))].filter((c) => !known.has(c) && !hiddenProjects.includes(c));

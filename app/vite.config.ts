@@ -1,13 +1,38 @@
-import { defineConfig } from "vite";
+import { build, defineConfig, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 // @ts-expect-error type error without @types/node package
 import process from "node:process";
 const host = process.env.TAURI_DEV_HOST;
 
+/**
+ * 3D-Modus: Die Laufzeit für `model.js` (three.js, Exporter, CSG) wird als
+ * eigenständiges Skript gebündelt und als Text eingebettet. Brise startet sie
+ * als Worker in einem isolierten iframe (siehe src/components/model3d/sandbox.ts).
+ */
+function modelRuntime(): Plugin {
+  const id = "virtual:model-runtime";
+  const entry = new URL("./src/components/model3d/runtime.ts", import.meta.url).pathname;
+  return {
+    name: "brise-model-runtime",
+    resolveId: (source) => (source === id ? "\0" + id : null),
+    async load(source) {
+      if (source !== "\0" + id) return null;
+      this.addWatchFile(entry);
+      const out: any = await build({
+        configFile: false,
+        logLevel: "warn",
+        build: { write: false, minify: true, lib: { entry, formats: ["iife"], name: "BriseRuntime", fileName: () => "runtime.js" } },
+      });
+      const chunk = (Array.isArray(out) ? out[0] : out).output.find((o: any) => o.type === "chunk");
+      return `export default ${JSON.stringify(chunk.code)};`;
+    },
+  };
+}
+
 // https://vite.dev/config/
 export default defineConfig(() => ({
-  plugins: [react(), tailwindcss()],
+  plugins: [react(), tailwindcss(), modelRuntime()],
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //

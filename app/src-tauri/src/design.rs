@@ -20,15 +20,11 @@ pub fn design_dir() -> PathBuf {
 
 /// `rel` unter dem Design-Ordner, ohne `..` und ohne absolute Pfade.
 fn resolve(rel: &str) -> CmdResult<PathBuf> {
-    let p = Path::new(rel);
-    if p.components().any(|c| !matches!(c, Component::Normal(_) | Component::CurDir)) {
-        return Err(format!("Ungültiger Pfad: {rel}"));
-    }
-    Ok(design_dir().join(p))
+    resolve_in(&design_dir(), rel)
 }
 
-/// Projektpfad + relatives Ziel, ebenfalls ohne Ausbruch.
-fn resolve_in(root: &Path, rel: &str) -> CmdResult<PathBuf> {
+/// Basisordner + relatives Ziel, ohne Ausbruch (auch für den 3D-Modus).
+pub(crate) fn resolve_in(root: &Path, rel: &str) -> CmdResult<PathBuf> {
     let p = Path::new(rel);
     if p.components().any(|c| !matches!(c, Component::Normal(_) | Component::CurDir)) {
         return Err(format!("Ungültiger Pfad: {rel}"));
@@ -103,12 +99,12 @@ pub fn design_data_url(path: String) -> CmdResult<String> {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DesignFile {
-    path: String,
-    size: u64,
-    modified: u64,
+    pub path: String,
+    pub size: u64,
+    pub modified: u64,
 }
 
-fn walk(base: &Path, dir: &Path, skip_hidden: bool, out: &mut Vec<DesignFile>) {
+pub(crate) fn walk(base: &Path, dir: &Path, skip_hidden: bool, out: &mut Vec<DesignFile>) {
     let Ok(entries) = std::fs::read_dir(dir) else { return };
     for entry in entries.flatten() {
         let name = entry.file_name().to_string_lossy().to_string();
@@ -151,7 +147,7 @@ pub fn design_dirs(path: String) -> CmdResult<Vec<String>> {
     Ok(out)
 }
 
-fn copy_tree(from: &Path, to: &Path, skip: &[String]) -> std::io::Result<()> {
+pub(crate) fn copy_tree(from: &Path, to: &Path, skip: &[String]) -> std::io::Result<()> {
     std::fs::create_dir_all(to)?;
     for entry in std::fs::read_dir(from)?.flatten() {
         let name = entry.file_name().to_string_lossy().to_string();
@@ -169,7 +165,7 @@ fn copy_tree(from: &Path, to: &Path, skip: &[String]) -> std::io::Result<()> {
 }
 
 /// Entfernt in `dir` alles außer den Einträgen in `keep`.
-fn clear_except(dir: &Path, keep: &[String]) -> std::io::Result<()> {
+pub(crate) fn clear_except(dir: &Path, keep: &[String]) -> std::io::Result<()> {
     let Ok(entries) = std::fs::read_dir(dir) else { return Ok(()) };
     for entry in entries.flatten() {
         let name = entry.file_name().to_string_lossy().to_string();

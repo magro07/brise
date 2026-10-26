@@ -16,6 +16,7 @@ mod embeddings;
 mod files;
 mod meter;
 mod mistral;
+mod model3d;
 mod models;
 mod skills;
 mod terminal;
@@ -265,6 +266,18 @@ pub fn run() {
             design::design_remove,
             design::design_export,
             design::design_import_tokens,
+            model3d::model_root,
+            model3d::model_read,
+            model3d::model_bytes,
+            model3d::model_write,
+            model3d::model_write_base64,
+            model3d::model_list,
+            model3d::model_dirs,
+            model3d::model_copy,
+            model3d::model_remove,
+            model3d::model_export,
+            model3d::model_tools,
+            model3d::model_openscad,
             bench::bench_list,
             bench::bench_get,
             bench::bench_save,
