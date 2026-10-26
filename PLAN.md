@@ -157,8 +157,8 @@ Warum so:
 |---|---|---|
 | 0 | Mistrals „Vibe Desktop“-Verfügbarkeit klären, AionUi kurz testen | Go/No-Go, Wunschliste |
 | 1 ✅ | Spike: Rust-Konsolenprogramm spricht ACP mit `vibe-acp` (init, auth, prompt, Streaming, Permission) – siehe [spikes/acp-cli](spikes/acp-cli/README.md) | Protokoll verstanden, Risiken weg |
-| 2 | Tauri-Grundgerüst + Chatfenster + Streaming | erster sichtbarer Chat |
-| 3 | Approvals, Tool-Karten, Diffs | sicher benutzbar |
+| 2 ✅ | Tauri-Grundgerüst + Chatfenster + Streaming – siehe [app/](app/README.md) | erster sichtbarer Chat |
+| 3 ✅ | Approvals, Tool-Karten, Diffs (vorgezogen, zusammen mit 2 umgesetzt) | sicher benutzbar |
 | 4 | Onboarding mit Auto-Installation + Login | ohne Terminal startbar |
 | 5 | Sessions, Projekte, Einstellungen | MVP fertig |
 | 6 | CI-Builds + Signierung (macOS-Notarisierung braucht Apple-Developer-Konto, 99 $/Jahr; Windows-Signierung optional) | Installer für alle OS |
