@@ -22,6 +22,7 @@ import { ShareDialog } from "./components/collab/ShareDialog";
 import { JoinDialog } from "./components/collab/JoinDialog";
 import { TeamDialog } from "./components/collab/TeamDialog";
 import { GuestPane } from "./components/collab/GuestComposer";
+import { DesignView } from "./components/design/DesignView";
 
 /** Backend-Events abonnieren und einmal mit Vibe verbinden. */
 function useBackend() {
@@ -206,7 +207,7 @@ export default function App() {
       ) : (
         <div className="flex h-full">
           {sidebarOpen && <Sidebar />}
-          {view === "settings" ? <SettingsView /> : <Workspace />}
+          {view === "settings" ? <SettingsView /> : view === "design" ? <DesignView /> : <Workspace />}
         </div>
       )}
       <CommandPalette />

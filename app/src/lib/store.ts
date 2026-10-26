@@ -21,6 +21,7 @@ import { cortecs } from "./cortecs";
 import { promptWithReserve } from "./accounts";
 import type { Suggestion } from "./acp";
 import { budgetModel, reportTurn } from "../components/usage/usage";
+import { isDesignPath } from "./design";
 
 // ---------- Modell ----------
 
@@ -280,7 +281,7 @@ interface State {
   activeProject: string | null;
   activeSessionId: string | null;
 
-  view: "chat" | "settings";
+  view: "chat" | "settings" | "design";
   settingsSection: string;
   panel: PanelTab | null;
   sidebarOpen: boolean;
@@ -1056,7 +1057,8 @@ export const useStore = create<State & Actions>((set, get) => {
     async refreshIndex() {
       try {
         const r = await api.listSessions();
-        const index = (r.sessions ?? []).sort((a, b) => (b.updatedAt ?? "").localeCompare(a.updatedAt ?? ""));
+        // Sessions des Design-Modus gehören zu keinem Projekt.
+        const index = (r.sessions ?? []).filter((s) => !isDesignPath(s.cwd)).sort((a, b) => (b.updatedAt ?? "").localeCompare(a.updatedAt ?? ""));
         const { projects, hiddenProjects } = get();
         const known = new Set(projects);
         const discovered = [...new Set(index.map((s) => s.cwd))].filter((c) => !known.has(c) && !hiddenProjects.includes(c));
