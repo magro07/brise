@@ -196,10 +196,11 @@ Dazu bekommt jede Session im MCP-Server `brise-app` diese Werkzeuge:
 
 | Werkzeug | Was es tut |
 |---|---|
-| `start_session(title, task, backend?, model?, worktree?)` | Teilaufgabe vorschlagen bzw. starten, auf Wunsch mit anderem Backend/Modell |
+| `start_session(title, task, backend?, model?, worktree?, difficulty?, thinking?)` | Teilaufgabe vorschlagen bzw. starten; ohne `model` wählt Brise einen Arbeiter aus dem Pool |
 | `list_sessions` | eigene Untersessions mit Status und Branch |
 | `get_session(session)` | Status, letzter Bericht, Branch, Commits vor der Basis, nicht committete Dateien |
 | `send_message(session, text)` | Nachricht an eine Untersession (läuft sie, nach dem Turn) |
+| `escalate_session(session, feedback)` | Teilaufgabe auf die nächste Stufe des Arbeiter-Pools heben |
 | `stop_session(session)` | Turn abbrechen, Untersession beenden (Worktree bleibt) |
 | `merge_session(session)` | Freigabe zum Mergen ihres Branches anfragen |
 
@@ -227,6 +228,22 @@ Dazu bekommt jede Session im MCP-Server `brise-app` diese Werkzeuge:
   Untersessions (Standard 3), Worktree als Standard. Ist das Monatsbudget erreicht, startet
   keine Untersession. Team-Admins können die Funktion sperren oder die Zahl begrenzen
   (Richtlinie `orchestra`, `maxSubSessions`); Backend- und Modell-Listen gelten auch hier.
+- **Kurator und Arbeiter:** *Einstellungen → Master-Session → Kurator und Arbeiter* legt das
+  Kurator-Modell fest (z. B. Claude Code mit Opus oder Vibe mit Mistral Large 4; „Neue
+  Kurator-Session“ im Projektmenü startet es mit festem Modell) und einen Arbeiter-Pool mit
+  Stufen 1–3 (Standard: GLM-5.3, Mistral Medium 3.5, Mistral Large 4). Gibt der Kurator bei
+  `start_session` nur `difficulty` an, wählt Brise Modell und Denkstufe: einfach/normal →
+  Stufe 1, komplex → Stufe 2; innerhalb einer Stufe das günstigste Modell (Preistabelle),
+  bei Gleichstand das schnellere (t/s im Journal). Ab 70 % des Budgets je Lauf nur noch
+  Stufe 1, bei 100 % keine neuen Arbeiter. Team-Richtlinien filtern den Pool.
+- **Eskalation:** `escalate_session(session, feedback)` hebt eine Teilaufgabe auf die nächste
+  Stufe (gleiches Backend: Modellwechsel in der Session; sonst neue Session im selben
+  Worktree). Scheitert ein Arbeiter (Fehler, Token- oder Schrittlimit), eskaliert Brise
+  selbst; höchstens „Höchste Eskalation“ Stufen. Leiste, Seitenleiste und Notizen zeigen
+  Modell, Stufe und Eskalationen; die Leiste die Kosten von Kurator und Arbeitern.
+- **Claude-Abo:** Claude Code läuft über dein persönliches Claude-Abo. Ist eine
+  Master-Session mit Gästen geteilt, lehnt Brise Claude Code als Kurator oder Arbeiter ab
+  (Anthropics Bedingungen); für Teams passt ein API-Schlüssel oder ein anderes Backend.
 - **Kanal:** Der MCP-Server erreicht die laufende App über einen Port auf `127.0.0.1` mit
   Zufallstoken (nur in der Umgebung der Kindprozesse, gilt bis zum Neustart). Buch führt
   `<Datenordner>/orchestra/state.json` (ohne Schlüssel). Untersessions bekommen keine

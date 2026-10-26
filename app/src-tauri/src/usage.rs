@@ -557,6 +557,77 @@ fn load_settings() -> Settings {
     std::fs::read(settings_path()).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
 }
 
+// ---------- Für die Master-Session (orchestra.rs) ----------
+
+/// Preis eines Modells je Million Tokens (Eingabe + Ausgabe, €) laut Preistabelle.
+pub fn price_per_mtok(model: &str) -> Option<f64> {
+    let pricer = Pricer::new();
+    let p = pricer.find(model)?;
+    Some((p.input + p.output) * pricer.factor(p))
+}
+
+/// Mittlere Output-Tokens je Sekunde eines Modells laut Journal (letzte 30 Tage).
+pub fn model_tps(model: &str) -> Option<f64> {
+    let now = now_ms();
+    let v: Vec<f64> = read_range(now.saturating_sub(30 * 86_400_000), now).iter().filter(|r| r.model == model).filter_map(|r| r.output_tps).collect();
+    (!v.is_empty()).then(|| v.iter().sum::<f64>() / v.len() as f64)
+}
+
+#[derive(Serialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkerCost {
+    pub session: String,
+    pub model: String,
+    pub cost: f64,
+    pub tokens: u64,
+    pub turns: u64,
+}
+
+#[derive(Serialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct MasterCosts {
+    /// Turns der Master-Session selbst (Kurator).
+    pub curator: f64,
+    pub curator_tokens: u64,
+    pub curator_models: Vec<String>,
+    /// Turns der Untersessions (Arbeiter), je Session und Modell.
+    pub workers: Vec<WorkerCost>,
+}
+
+impl MasterCosts {
+    pub fn total(&self) -> f64 {
+        self.curator + self.workers.iter().map(|w| w.cost).sum::<f64>()
+    }
+}
+
+/// Kosten eines Master-Laufs laut Journal: Kurator und Arbeiter getrennt.
+pub fn master_costs(master: &str) -> MasterCosts {
+    let pricer = Pricer::new();
+    let mut out = MasterCosts::default();
+    for r in read_range(0, now_ms()) {
+        let cost = pricer.cost(&r).0;
+        let tokens = r.input + r.output;
+        if r.master.as_deref() == Some(master) {
+            let session = r.session.clone().unwrap_or_default();
+            match out.workers.iter_mut().find(|w| w.session == session && w.model == r.model) {
+                Some(w) => {
+                    w.cost += cost;
+                    w.tokens += tokens;
+                    w.turns += r.turns;
+                }
+                None => out.workers.push(WorkerCost { session, model: r.model.clone(), cost, tokens, turns: r.turns }),
+            }
+        } else if r.session.as_deref() == Some(master) && r.master.is_none() {
+            out.curator += cost;
+            out.curator_tokens += tokens;
+            if !out.curator_models.contains(&r.model) {
+                out.curator_models.push(r.model.clone());
+            }
+        }
+    }
+    out
+}
+
 /// Eigenes Monatsbudget in Euro (Einstellungen → Nutzung).
 pub fn monthly_budget_eur() -> Option<f64> {
     Some(load_settings().budget_eur)
