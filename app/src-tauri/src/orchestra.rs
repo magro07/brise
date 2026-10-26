@@ -70,6 +70,22 @@ impl Status {
     }
 }
 
+/// Eine Entscheidung über den Arbeiter einer Teilaufgabe – mit Begründung, für Protokoll und Oberfläche.
+#[derive(Serialize, Deserialize, Clone, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct Decision {
+    pub at: u64,
+    /// kurator (die Master-Session) oder automatik (Rückfall ohne Vorgabe)
+    pub by: String,
+    /// start, wechsel, eskalation
+    pub action: String,
+    pub backend: String,
+    pub model: Option<String>,
+    pub thinking: Option<String>,
+    pub budget: Option<f64>,
+    pub reason: String,
+}
+
 /// Eine Untersession.
 #[derive(Serialize, Deserialize, Clone, Default)]
 #[serde(rename_all = "camelCase", default)]
@@ -105,6 +121,9 @@ pub struct Sub {
     /// Alle Modelle, mit denen die Teilaufgabe bisher lief.
     pub models: Vec<String>,
     pub escalated_to: Option<String>,
+    /// Budget dieser Teilaufgabe in Euro (vom Kurator gesetzt).
+    pub budget: Option<f64>,
+    pub decisions: Vec<Decision>,
 }
 
 /// Vorschlag der Master-Session, über den der Nutzer entscheidet.
@@ -136,6 +155,8 @@ pub struct Proposal {
     pub escalations: u32,
     /// Eskalation einer Untersession auf ein anderes Backend (neue Session, selber Worktree).
     pub escalation_of: Option<String>,
+    pub budget: Option<f64>,
+    pub decisions: Vec<Decision>,
 }
 
 /// Bitte um Freigabe zum Mergen eines Branches.
@@ -488,6 +509,8 @@ async fn handle(line: &str) -> CmdResult<String> {
         "stop_session" => stop_session(&caller, args).await,
         "merge_session" => merge_session(&caller, args).await,
         "escalate_session" => escalate_session(&caller, args).await,
+        "reassign_session" => reassign_session(&caller, args).await,
+        "available_models" => Ok(available_text(&caller)),
         other => Err(format!("Unbekanntes Werkzeug {other}")),
     }
 }
@@ -541,12 +564,34 @@ async fn start_session(caller: &str, cwd: &str, args: &Value) -> CmdResult<Strin
     let p = prefs();
     let worktree = args["worktree"].as_bool().unwrap_or(p.worktree);
     let difficulty = str_arg(args, "difficulty").filter(|d| ["simple", "standard", "complex"].contains(&d.as_str()));
+    let by_curator = str_arg(args, "model").is_some();
     let choice = choose_worker(&task, &master_cwd, str_arg(args, "backend"), str_arg(args, "model"), difficulty, &caller_backend, is_shared, ratio).await?;
     let thinking = str_arg(args, "thinking").or_else(|| choice.level.as_deref().map(|l| level_thinking(l).to_string()));
     let (backend, model) = (choice.backend, choice.model);
     if is_shared && backend == "claude" {
         return Err(ABO_HINT.into());
     }
+    if let (true, Some(m)) = (by_curator, model.as_deref()) {
+        check_in_pool(&backend, m, caller)?;
+    }
+    let budget = args["budget"].as_f64().filter(|b| *b > 0.0);
+    if let (Some(b), run) = (budget, p.run_budget) {
+        let left = run - crate::usage::master_costs(caller).total();
+        if run > 0.0 && b > left {
+            return Err(format!("BUDGET: {b:.2} € für diese Teilaufgabe übersteigt das restliche Laufbudget ({left:.2} €)."));
+        }
+    }
+    let reason = str_arg(args, "reason").unwrap_or_else(|| if by_curator { "ohne Begründung".into() } else { choice.reason.clone() });
+    let decision = Decision {
+        at: now_ms(),
+        by: if by_curator { "kurator" } else { "automatik" }.into(),
+        action: "start".into(),
+        backend: backend.clone(),
+        model: model.clone(),
+        thinking: thinking.clone(),
+        budget,
+        reason: reason.clone(),
+    };
     check_start(&backend, model.as_deref())?;
     let proposal = Proposal {
         id: format!("p{}", random_hex(6)),
@@ -563,7 +608,9 @@ async fn start_session(caller: &str, cwd: &str, args: &Value) -> CmdResult<Strin
         tier: choice.tier,
         level: choice.level,
         thinking,
-        choice: Some(choice.reason),
+        choice: Some(if by_curator { format!("Kurator: {reason}") } else { choice.reason }),
+        budget,
+        decisions: vec![decision],
         ..Default::default()
     };
     with_book(true, |b| b.proposals.push(proposal.clone()));
@@ -696,7 +743,7 @@ fn sub_prompt(p: &Proposal, master_title: &str) -> String {
         _ => out.push_str("Du arbeitest im selben Ordner wie die Master-Session; andere Sessions können parallel Dateien ändern.\n"),
     }
     out.push_str("Setze nur deinen Auftrag um; Teile, die andere Untersessions parallel bauen, nicht nachbauen (sonst gibt es beim Mergen Konflikte).\n");
-    out.push_str("Beende deinen Turn mit einem kurzen Bericht: was erledigt ist, was offen ist, wie du es geprüft hast.\n\nAuftrag:\n");
+    out.push_str("Beende deinen Turn mit einem kurzen Bericht: was erledigt ist, was offen ist, wie du es geprüft hast. Warte danach nicht mit wait auf Nachrichten.\n\nAuftrag:\n");
     out.push_str(&p.task);
     out
 }
@@ -810,6 +857,8 @@ fn register(proposal: &str, session: &str) -> CmdResult<Sub> {
             choice: p.choice.clone(),
             escalations: p.escalations,
             models: p.model.clone().into_iter().collect(),
+            budget: p.budget,
+            decisions: p.decisions.clone(),
             ..Default::default()
         };
         let from = p.escalation_of.clone();
@@ -904,6 +953,66 @@ fn cost_line(master: &str) -> String {
     )
 }
 
+/// Grobe Stärken je Modellfamilie – Orientierung für den Kurator, keine Messung.
+fn strengths(model: &str) -> &'static str {
+    let m = model.to_lowercase();
+    const TABLE: &[(&str, &str)] = &[
+        ("opus", "sehr stark bei Architektur, Review und schwierigen Fehlern; langsam"),
+        ("sonnet", "stark bei Code und Werkzeugen, schneller als Opus"),
+        ("haiku", "schnell, für einfache Umsetzung"),
+        ("glm", "schnell und günstig, solide bei Code und Werkzeugen"),
+        ("devstral", "auf Coding-Agenten trainiert, günstig"),
+        ("codestral", "schnelle Code-Erzeugung, wenig Planung"),
+        ("magistral", "Reasoning-Modell, gut für knifflige Logik"),
+        ("large", "stark bei Planung, Review und Fehlersuche, teurer"),
+        ("medium", "ausgewogen, gutes Preis-Leistungs-Verhältnis"),
+        ("small", "sehr günstig, für einfache, klar beschriebene Aufgaben"),
+        ("kimi", "lange Kontexte, Code"),
+        ("qwen", "günstig, solide bei Routinearbeit"),
+        ("codex", "stark bei Code"),
+        ("gpt", "stark bei Code und Werkzeugen"),
+        ("gemini", "sehr großer Kontext"),
+    ];
+    TABLE.iter().find(|(k, _)| m.contains(k)).map_or("keine Angaben", |(_, v)| *v)
+}
+
+/// Grundlage für die Wahl des Kurators: erlaubte Arbeiter mit Preis, Messwerten, Kontext und Stärken.
+fn available_text(caller: &str) -> String {
+    let p = prefs();
+    let pool = allowed_pool(shared(caller));
+    let spent = crate::usage::master_costs(caller).total();
+    let mut out = vec![if p.run_budget > 0.0 {
+        format!("Laufbudget: {:.2} € von {:.2} € verbraucht (Rest {:.2} €).", spent, p.run_budget, (p.run_budget - spent).max(0.0))
+    } else {
+        format!("Laufbudget: ohne Grenze ({spent:.2} € bisher).")
+    }];
+    if pool.is_empty() {
+        out.push("Kein Arbeiter-Modell erlaubt (Einstellungen → Master-Session, Team-Richtlinie).".into());
+    }
+    for w in &pool {
+        let price = match crate::usage::price_detail(&w.model) {
+            Some((i, o, _)) => format!("{i:.2} €/{o:.2} € je Mio. Tokens (Ein/Aus)"),
+            None if w.backend == "claude" => "Claude-Abo (keine Euro-Kosten im Journal)".into(),
+            None => "Preis unbekannt".into(),
+        };
+        let (tps, ttft, turns) = crate::usage::model_perf(&w.model);
+        let perf = match (tps, ttft) {
+            (None, None) => "noch keine Messwerte".to_string(),
+            (t, f) => format!(
+                "gemessen {}{} ({turns} Turns, 30 Tage)",
+                t.map(|t| format!("{t:.0} t/s")).unwrap_or_else(|| "– t/s".into()),
+                f.map(|f| format!(", erstes Token {:.1} s", f / 1000.0)).unwrap_or_default()
+            ),
+        };
+        let facts = if w.backend == "vibe" { crate::models::model_facts(&w.model) } else { Value::Null };
+        let context = facts["context"].as_i64().map(|c| format!(" · Kontext {}k", c / 1000)).unwrap_or_default();
+        let levels = facts["thinking"].as_array().map(|a| format!(" · Denkstufen {}", a.iter().filter_map(|x| x.as_str()).collect::<Vec<_>>().join("/"))).unwrap_or_default();
+        out.push(format!("- {}/{} · Stufe {} · {price} · {perf}{context}{levels} · {}", w.backend, w.model, w.tier, strengths(&w.model)));
+    }
+    out.push("Du entscheidest je Teilaufgabe: selbst erledigen oder delegieren; Backend, Modell, Denkstufe und Budget frei aus diesem Pool. Begründe jede Wahl kurz (reason).".into());
+    out.join("\n")
+}
+
 fn get_text(caller: &str, args: &Value) -> CmdResult<String> {
     let s = own_sub(caller, args)?;
     let mut out = vec![
@@ -930,6 +1039,15 @@ fn get_text(caller: &str, args: &Value) -> CmdResult<String> {
             out.push(format!("Nicht versioniert: {}", g.untracked.iter().take(20).cloned().collect::<Vec<_>>().join(", ")));
         }
     }
+    if let Some(b) = s.budget {
+        out.push(format!("Budget: {:.3} € von {b:.2} € verbraucht", sub_cost(&s)));
+    }
+    if !s.decisions.is_empty() {
+        out.push(format!(
+            "Entscheidungen:\n{}",
+            s.decisions.iter().map(|d| format!("  {} ({}): {}/{} – {}", d.action, d.by, d.backend, d.model.as_deref().unwrap_or("Standard"), d.reason)).collect::<Vec<_>>().join("\n")
+        ));
+    }
     out.push(format!("Letzter Bericht:\n{}", s.report.as_deref().unwrap_or("(noch keiner)")));
     Ok(out.join("\n"))
 }
@@ -939,6 +1057,9 @@ async fn send_message(caller: &str, args: &Value) -> CmdResult<String> {
     let text = str_arg(args, "text").ok_or("text fehlt")?;
     if s.status == Status::Merged {
         return Err("Diese Untersession ist schon gemerged.".into());
+    }
+    if let Some(b) = s.budget.filter(|b| sub_cost(&s) >= *b) {
+        return Err(format!("BUDGET: „{}“ hat ihr Budget von {b:.2} € verbraucht. Mit reassign_session (budget: …) erhöhen oder selbst übernehmen.", s.title));
     }
     let r = call_ui("send", json!({ "session": s.id, "cwd": s.cwd, "backend": s.backend, "title": s.title, "text": text })).await?;
     with_book(true, |b| {
@@ -965,7 +1086,29 @@ async fn escalate_session(caller: &str, args: &Value) -> CmdResult<String> {
     escalate(s, feedback, false).await
 }
 
-/// Nächststärkerer Arbeiter für eine Untersession, falls Stufen und Budget es erlauben.
+/// Der Kurator weist einer Untersession einen anderen Arbeiter zu (hoch, runter, anderes Backend).
+async fn reassign_session(caller: &str, args: &Value) -> CmdResult<String> {
+    let s = own_sub(caller, args)?;
+    let reason = str_arg(args, "reason").ok_or("reason fehlt – begründe den Wechsel in einem Satz")?;
+    let backend = str_arg(args, "backend").unwrap_or_else(|| s.backend.clone());
+    if backend != s.backend && s.status.active() {
+        return Err(format!("„{}“ arbeitet noch – auf ein anderes Backend erst nach ihrer Rückmeldung wechseln.", s.title));
+    }
+    let model = match str_arg(args, "model") {
+        Some(m) => m,
+        None if backend != s.backend => pick(&allowed_pool(shared(&s.master)).into_iter().filter(|w| w.backend == backend).collect::<Vec<_>>(), 1)
+            .map(|w| w.model)
+            .ok_or_else(|| format!("Kein erlaubtes Modell für {backend} im Pool"))?,
+        None => s.model.clone().ok_or("model fehlt")?,
+    };
+    let w = Worker { tier: tier_of(&model), backend, model };
+    let thinking = str_arg(args, "thinking").or_else(|| s.thinking.clone()).unwrap_or_else(|| "medium".into());
+    let budget = args["budget"].as_f64().filter(|b| *b > 0.0);
+    let decision = Decision { by: "kurator".into(), action: "wechsel".into(), reason, ..Default::default() };
+    reassign(s, w, thinking, str_arg(args, "feedback"), decision, budget, false).await
+}
+
+/// Nächststärkerer Arbeiter für eine Untersession (Rückfall, wenn der Kurator nichts vorgibt).
 fn next_worker(s: &Sub) -> CmdResult<Worker> {
     let p = prefs();
     if s.escalations >= p.max_escalation {
@@ -975,34 +1118,86 @@ fn next_worker(s: &Sub) -> CmdResult<Worker> {
     pick(&allowed_pool(shared(&s.master)), current + 1).ok_or_else(|| format!("Im Arbeiter-Pool gibt es keine Stufe über {current}."))
 }
 
-/// Hebt eine Untersession auf die nächste Stufe: gleiches Backend in der Session,
-/// sonst eine neue Session im selben Worktree.
+/// Feste Eskalation auf die nächste Stufe: automatisch nach einem Fehler oder per escalate_session.
 async fn escalate(s: Sub, feedback: String, auto: bool) -> CmdResult<String> {
+    let w = next_worker(&s)?;
+    let decision = Decision {
+        by: if auto { "automatik" } else { "kurator" }.into(),
+        action: "eskalation".into(),
+        reason: format!("{} Stufe {} → {}: {}", if auto { "Arbeiter gescheitert," } else { "Prüfung nicht bestanden," }, s.tier.max(1), w.tier, shorten_start(&feedback, 140)),
+        ..Default::default()
+    };
+    reassign(s, w, "max".into(), Some(feedback), decision, None, true).await
+}
+
+/// Liegt ein Arbeiter im erlaubten Pool (Einstellungen, Team-Richtlinie, Abo-Schutz)?
+fn check_in_pool(backend: &str, model: &str, master: &str) -> CmdResult<()> {
+    if shared(master) && backend == "claude" {
+        return Err(ABO_HINT.into());
+    }
+    let pool = allowed_pool(shared(master));
+    if pool.iter().any(|w| w.backend == backend && w.model == model) {
+        return Ok(());
+    }
+    Err(format!(
+        "POOL: {backend}/{model} ist nicht im erlaubten Arbeiter-Pool. Erlaubt: {} (siehe available_models; erweitern unter Einstellungen → Master-Session).",
+        pool.iter().map(|w| format!("{}/{}", w.backend, w.model)).collect::<Vec<_>>().join(", ")
+    ))
+}
+
+/// Kosten einer Untersession laut Journal.
+fn sub_cost(s: &Sub) -> f64 {
+    crate::usage::master_costs(&s.master).workers.iter().filter(|w| w.session == s.id).map(|w| w.cost).sum()
+}
+
+/// Wechselt den Arbeiter einer Untersession: gleiches Backend in der Session
+/// (Modell, Denkstufe, ggf. Feedback), sonst neue Session im selben Worktree.
+async fn reassign(s: Sub, w: Worker, thinking: String, feedback: Option<String>, mut decision: Decision, budget: Option<f64>, escalation: bool) -> CmdResult<String> {
     check_enabled()?;
     check_run_budget(&s.master)?;
-    let w = next_worker(&s)?;
+    check_in_pool(&w.backend, &w.model, &s.master)?;
+    crate::policy::check_backend(&w.backend)?;
     crate::policy::check_model(&w.model)?;
-    let why = if auto { "Dein letzter Versuch ist gescheitert." } else { "Der Kurator hat dein Ergebnis geprüft und ist nicht zufrieden." };
-    let choice = format!("{} eskaliert: Stufe {} → {}", if auto { "automatisch" } else { "vom Kurator" }, s.tier.max(1), w.tier);
+    decision.at = now_ms();
+    decision.backend = w.backend.clone();
+    decision.model = Some(w.model.clone());
+    decision.thinking = Some(thinking.clone());
+    decision.budget = budget.or(s.budget);
+    let summary = format!("{}: {}", if escalation { "eskaliert" } else { "gewechselt" }, decision.reason);
     if w.backend == s.backend {
-        let text = format!(
-            "[Brise · Eskalation] {why} Ab jetzt arbeitest du mit {} (Stufe {}). Rückmeldung:\n{feedback}\n\nBehebe das, committe und schließe wieder mit einem kurzen Bericht.",
-            w.model, w.tier
-        );
-        call_ui("escalate", json!({ "session": s.id, "cwd": s.cwd, "backend": s.backend, "title": s.title, "model": w.model, "thinking": "max", "text": text })).await?;
+        let text = feedback.as_deref().map(|f| {
+            format!(
+                "[Brise · {}] Ab jetzt arbeitest du mit {} (Denkstufe {thinking}). Rückmeldung:\n{f}\n\nBehebe das, committe und schließe wieder mit einem kurzen Bericht. Warte danach nicht mit wait auf Nachrichten.",
+                if escalation { "Eskalation" } else { "Wechsel" },
+                w.model
+            )
+        });
+        call_ui("escalate", json!({ "session": s.id, "cwd": s.cwd, "backend": s.backend, "title": s.title, "model": w.model, "thinking": thinking, "text": text })).await?;
         with_book(true, |b| {
             if let Some(x) = b.subs.iter_mut().find(|x| x.id == s.id) {
                 x.tier = w.tier;
                 x.model = Some(w.model.clone());
-                x.models.push(w.model.clone());
-                x.thinking = Some("max".into());
-                x.escalations += 1;
-                x.choice = Some(choice.clone());
-                x.status = Status::Starting;
+                if x.models.last() != Some(&w.model) {
+                    x.models.push(w.model.clone());
+                }
+                x.thinking = Some(thinking.clone());
+                x.escalations += escalation as u32;
+                x.choice = Some(summary.clone());
+                x.budget = decision.budget;
+                x.decisions.push(decision.clone());
+                if text.is_some() {
+                    x.status = Status::Starting;
+                }
                 x.updated = now_ms();
             }
         });
-        return Ok(format!("„{}“ eskaliert auf {}/{} (Stufe {}), Feedback zugestellt. Du bekommst eine Notiz, wenn sie fertig ist – beende bis dahin deinen Turn.", s.title, w.backend, w.model, w.tier));
+        return Ok(format!(
+            "„{}“ arbeitet jetzt mit {}/{} (Denkstufe {thinking}){}.",
+            s.title,
+            w.backend,
+            w.model,
+            if text.is_some() { "; Feedback zugestellt. Du bekommst eine Notiz, wenn sie fertig ist – beende bis dahin deinen Turn" } else { " ab ihrer nächsten Nachricht" }
+        ));
     }
     let proposal = Proposal {
         id: format!("p{}", random_hex(6)),
@@ -1011,10 +1206,11 @@ async fn escalate(s: Sub, feedback: String, auto: bool) -> CmdResult<String> {
         master_title: "Master-Session".into(),
         title: s.title.clone(),
         task: format!(
-            "{}\n\nEin früherer Versuch ({}/{}) reichte nicht. Er liegt schon im Worktree bzw. auf dem Branch; mach dort weiter.\nRückmeldung:\n{feedback}",
+            "{}\n\nEin früherer Versuch ({}/{}) liegt schon im Worktree bzw. auf dem Branch; mach dort weiter.{}",
             s.task,
             s.backend,
-            s.model.as_deref().unwrap_or("Standardmodell")
+            s.model.as_deref().unwrap_or("Standardmodell"),
+            feedback.as_deref().map(|f| format!("\nRückmeldung:\n{f}")).unwrap_or_default()
         ),
         backend: w.backend.clone(),
         model: Some(w.model.clone()),
@@ -1026,18 +1222,17 @@ async fn escalate(s: Sub, feedback: String, auto: bool) -> CmdResult<String> {
         base: s.base.clone(),
         tier: w.tier,
         level: s.level.clone(),
-        thinking: Some("max".into()),
-        choice: Some(choice),
-        escalations: s.escalations + 1,
+        thinking: Some(thinking),
+        choice: Some(summary),
+        escalations: s.escalations + escalation as u32,
         escalation_of: Some(s.id.clone()),
+        budget: decision.budget,
+        decisions: s.decisions.iter().cloned().chain(std::iter::once(decision)).collect(),
         ..Default::default()
     };
-    if shared(&s.master) && w.backend == "claude" {
-        return Err(ABO_HINT.into());
-    }
     with_book(true, |b| b.proposals.push(proposal.clone()));
     let n = launch(&proposal.id).await?;
-    Ok(format!("„{}“ eskaliert auf {}/{} (Stufe {}) als neue Session {} im selben Worktree. Du bekommst eine Notiz, wenn sie fertig ist.", s.title, w.backend, w.model, w.tier, n.id))
+    Ok(format!("„{}“ arbeitet jetzt mit {}/{} als neue Session {} im selben Worktree. Du bekommst eine Notiz, wenn sie fertig ist.", s.title, w.backend, w.model, n.id))
 }
 
 async fn stop_session(caller: &str, args: &Value) -> CmdResult<String> {
@@ -1170,6 +1365,10 @@ pub fn orch_status(session: String, status: Status, report: Option<String>, stop
     }
     text.push_str(&format!("\nBericht:\n{}", s.report.as_deref().unwrap_or("(kein Text)")));
     text.push_str(&format!("\n{}", still_active(&s.master, &s.id)));
+    if let Some(b) = s.budget {
+        let used = sub_cost(&s);
+        text.push_str(&format!("\nKosten der Teilaufgabe: {used:.3} € von {b:.2} €{}", if used >= b { " – Budget verbraucht" } else { "" }));
+    }
     let failed = status == Status::Error || matches!(stop_reason.as_deref(), Some("max_tokens" | "max_turn_requests"));
     if failed {
         // Gescheiterter Arbeiter: selbst auf die nächste Stufe heben, solange Stufen und Budget reichen.
@@ -1339,9 +1538,11 @@ pub const MCP_INSTRUCTIONS: &str = "Master-Session: Größere Aufgaben kannst du
     Darum nie per Schleife abfragen und nicht mit wait warten, sondern weiterarbeiten oder den Turn beenden. Danach Ergebnis prüfen (get_session), bei Bedarf send_message, und zum Mergen merge_session: \
     gemerged wird erst, wenn der Nutzer auf der Karte zustimmt. \
     Rollen: Du bist der Kurator – du planst, zerlegst, schreibst die Aufträge, prüfst die Ergebnisse (Tests ausführen, Diff lesen, bei Bedarf council_review) \
-    und entscheidest über Nacharbeit, Eskalation und Merge; die Umsetzung machen Arbeiter. Prüfe jede Untersession nur auf ihren eigenen Teil – \
-    was von anderen Teilaufgaben abhängt, erst nach deren Merge. Eskaliere nur bei echten Mängeln des eigenen Teils. Gib bei start_session difficulty an und lass model weg, \
-    dann wählt Brise ein günstiges Arbeiter-Modell aus dem Pool. Besteht ein Ergebnis die Prüfung nicht, escalate_session mit konkretem Feedback.";
+    und entscheidest über Nacharbeit, Wechsel und Merge. Ob du eine Aufgabe selbst erledigst oder delegierst, entscheidest du. \
+    Lies vor dem Delegieren available_models und wähle je Teilaufgabe backend, model, thinking und budget selbst – günstig für Menge und Routine, stark für Schwieriges – \
+    mit kurzer Begründung in reason. Während der Arbeit darfst du umentscheiden: reassign_session (hoch- oder herunterstufen, Arbeiter wechseln). \
+    Prüfe jede Untersession nur auf ihren eigenen Teil – was von anderen Teilaufgaben abhängt, erst nach deren Merge. \
+    Ohne model wählt Brise selbst aus dem Pool; escalate_session ist der Rückfall für „nächste Stufe“.";
 
 fn mcp_ready() -> bool {
     std::env::var("BRISE_ORCH_ADDR").is_ok_and(|a| !a.is_empty()) && std::env::var("BRISE_ORCH_PARENT").is_err() && check_enabled().is_ok()
@@ -1356,7 +1557,8 @@ pub fn tools() -> Vec<Value> {
     vec![
         json!({
             "name": "start_session",
-            "description": "Startet eine Teilaufgabe als eigene Brise-Session (Untersession). Je nach Einstellung erscheint zuerst eine Karte, \
+            "description": "Startet eine Teilaufgabe als eigene Brise-Session (Untersession). Du wählst als Kurator backend, model, thinking und budget frei aus dem \
+                erlaubten Pool (siehe available_models) und begründest die Wahl in reason; ohne model wählt Brise selbst (Rückfall). Je nach Einstellung erscheint zuerst eine Karte, \
                 auf der der Nutzer „Neue Session“ oder „Hier erledigen“ wählt. Mit worktree (Standard: an) arbeitet sie in einem eigenen Git-Worktree auf eigenem Branch. \
                 Die Antwort kommt sofort; das Ergebnis später als Notiz.",
             "inputSchema": {
@@ -1368,7 +1570,9 @@ pub fn tools() -> Vec<Value> {
                     "model": { "type": "string", "description": "Modell-Alias des Backends, z. B. glm-5-3 oder mistral-medium-3.5 bei Vibe (Standard: Einstellung des Backends)" },
                     "worktree": { "type": "boolean", "description": "Eigener Git-Worktree und Branch (Standard: an)" },
                     "difficulty": { "type": "string", "enum": ["simple", "standard", "complex"], "description": "Schwierigkeit laut dir als Kurator. Ohne model wählt Brise damit Arbeiter-Modell und Denkstufe aus dem Pool (einfach/normal → günstig, komplex → mittel)." },
-                    "thinking": { "type": "string", "description": "Denkstufe des Arbeiters (off, low, medium, high, max); Standard nach difficulty" }
+                    "thinking": { "type": "string", "description": "Denkstufe des Arbeiters (off, low, medium, high, max); Standard nach difficulty" },
+                    "budget": { "type": "number", "description": "Budget dieser Teilaufgabe in Euro (höchstens das restliche Laufbudget)" },
+                    "reason": { "type": "string", "description": "Kurze Begründung deiner Wahl (Modell, Denkstufe, Budget) – erscheint im Protokoll" }
                 },
                 "required": ["title", "task"]
             }
@@ -1391,8 +1595,33 @@ pub fn tools() -> Vec<Value> {
             "inputSchema": { "type": "object", "properties": { "session": session, "text": { "type": "string" } }, "required": ["session", "text"] }
         }),
         json!({
+            "name": "available_models",
+            "description": "Erlaubte Arbeiter-Modelle mit Preis je Token, gemessener t/s und Latenz aus dem Nutzungsjournal, Kontextgröße, Denkstufen und Stärken, dazu das restliche Laufbudget. Vor jeder Zuordnung lesen.",
+            "inputSchema": { "type": "object", "properties": {} },
+            "annotations": { "readOnlyHint": true }
+        }),
+        json!({
+            "name": "reassign_session",
+            "description": "Weist einer Untersession einen anderen Arbeiter zu – stärker, schwächer oder anderes Backend – mit Denkstufe und optional neuem Budget. \
+                Gleiches Backend: Wechsel in derselben Session (läuft sie, ab der nächsten Nachricht); anderes Backend: neue Session im selben Worktree. \
+                feedback (optional) wird ihr als Nachricht geschickt. reason ist Pflicht und erscheint im Protokoll.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "session": session,
+                    "backend": { "type": "string" },
+                    "model": { "type": "string" },
+                    "thinking": { "type": "string" },
+                    "budget": { "type": "number" },
+                    "feedback": { "type": "string" },
+                    "reason": { "type": "string" }
+                },
+                "required": ["session", "reason"]
+            }
+        }),
+        json!({
             "name": "escalate_session",
-            "description": "Hebt eine fertige Untersession auf die nächststärkere Stufe des Arbeiter-Pools, wenn ihr Ergebnis die Prüfung nicht besteht. \
+            "description": "Rückfall ohne eigene Wahl: hebt eine fertige Untersession auf die nächststärkere Stufe des Arbeiter-Pools, wenn ihr Ergebnis die Prüfung nicht besteht. \
                 Gleiches Backend: Modellwechsel in derselben Session, sonst neue Session im selben Worktree. feedback = konkret, was fehlt oder falsch ist (Testausgabe, Review). \
                 Kleine Korrekturen lieber mit send_message.",
             "inputSchema": { "type": "object", "properties": { "session": session, "feedback": { "type": "string" } }, "required": ["session", "feedback"] }
@@ -1411,7 +1640,8 @@ pub fn tools() -> Vec<Value> {
     ]
 }
 
-const TOOL_NAMES: &[&str] = &["start_session", "list_sessions", "get_session", "send_message", "escalate_session", "stop_session", "merge_session"];
+const TOOL_NAMES: &[&str] =
+    &["start_session", "list_sessions", "get_session", "send_message", "available_models", "reassign_session", "escalate_session", "stop_session", "merge_session"];
 
 /// Werkzeugaufruf im MCP-Prozess: an die laufende App weiterreichen.
 pub fn call_tool(name: &str, args: &Value) -> Option<CmdResult<String>> {
@@ -1484,6 +1714,17 @@ mod tests {
         assert_eq!(pick_from(&same, 1, |_| Some(1.0), tps).unwrap().model, "schnell");
         assert_eq!((level_tier("simple"), level_tier("standard")), (1, 1));
         assert_eq!(level_thinking("complex"), "high");
+    }
+
+    #[test]
+    fn model_strengths() {
+        assert!(strengths("claude-opus-5-5").contains("Architektur"));
+        assert!(strengths("glm-5-3").contains("günstig"));
+        assert!(strengths("mistral-medium-3.5").contains("ausgewogen"));
+        assert_eq!(strengths("unbekannt-xy"), "keine Angaben");
+        // Decision ohne Felder (ältere state.json) bleibt lesbar.
+        let s: Sub = serde_json::from_str(r#"{"id":"a","status":"done"}"#).unwrap();
+        assert!(s.decisions.is_empty() && s.budget.is_none());
     }
 
     #[test]

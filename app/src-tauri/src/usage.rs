@@ -566,6 +566,22 @@ pub fn price_per_mtok(model: &str) -> Option<f64> {
     Some((p.input + p.output) * pricer.factor(p))
 }
 
+/// Preis je Million Tokens (Eingabe, Ausgabe) in € und die Bezeichnung laut Preistabelle.
+pub fn price_detail(model: &str) -> Option<(f64, f64, String)> {
+    let pricer = Pricer::new();
+    let p = pricer.find(model)?;
+    let f = pricer.factor(p);
+    Some((p.input * f, p.output * f, p.label.clone()))
+}
+
+/// Messwerte eines Modells laut Journal (30 Tage): mittlere t/s, mittlere Zeit bis zum ersten Token (ms), Zahl der Turns.
+pub fn model_perf(model: &str) -> (Option<f64>, Option<f64>, usize) {
+    let now = now_ms();
+    let recs: Vec<Record> = read_range(now.saturating_sub(30 * 86_400_000), now).into_iter().filter(|r| r.model == model && r.kind == "chat").collect();
+    let avg = |v: Vec<f64>| (!v.is_empty()).then(|| v.iter().sum::<f64>() / v.len() as f64);
+    (avg(recs.iter().filter_map(|r| r.output_tps).collect()), avg(recs.iter().filter_map(|r| r.ttft_ms.map(|t| t as f64)).collect()), recs.len())
+}
+
 /// Mittlere Output-Tokens je Sekunde eines Modells laut Journal (letzte 30 Tage).
 pub fn model_tps(model: &str) -> Option<f64> {
     let now = now_ms();
