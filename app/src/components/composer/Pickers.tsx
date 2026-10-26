@@ -236,6 +236,7 @@ export function ThinkingPicker({ session }: { session?: Session }) {
                     </span>
                     {e.phase === "live" && <span className="ml-1 rounded bg-accent-soft px-1 text-[0.85em] text-accent">während der Arbeit</span>}
                     <span className="block text-muted">{e.reason}</span>
+                    {e.probabilities && <ProbabilityBar probs={e.probabilities} chosen={e.to} />}
                   </span>
                 </div>
               ))}
@@ -244,5 +245,25 @@ export function ThinkingPicker({ session }: { session?: Session }) {
         )}
       </MenuContent>
     </Menu>
+  );
+}
+
+/** Wahrscheinlichkeiten eines Decision-Modells als schmale Balken. */
+function ProbabilityBar({ probs, chosen }: { probs: Record<string, number>; chosen: string }) {
+  const order = ["off", "low", "medium", "high", "max"];
+  const entries = Object.entries(probs).sort((a, b) => order.indexOf(a[0]) - order.indexOf(b[0]));
+  return (
+    <span className="mt-1 flex gap-1" aria-label="Wahrscheinlichkeiten">
+      {entries.map(([k, p]) => (
+        <span key={k} className="min-w-0 flex-1" title={`${THINKING_LABEL[k] ?? k}: ${Math.round(p * 100)} %`}>
+          <span className="block h-1 overflow-hidden rounded bg-hover">
+            <span className={clsx("block h-full rounded", k === chosen ? "bg-accent" : "bg-muted/50")} style={{ width: `${Math.max(3, p * 100)}%` }} />
+          </span>
+          <span className="block truncate text-[0.82em] tabular-nums text-muted">
+            {THINKING_LABEL[k] ?? k} {Math.round(p * 100)} %
+          </span>
+        </span>
+      ))}
+    </span>
   );
 }

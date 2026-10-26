@@ -178,10 +178,22 @@ export function Conversation({ session }: { session: Session }) {
                   return (
                     <div key={item.id} data-brise="user-message" className="flex flex-col items-end gap-1.5 fade-in">
                       <div className="max-w-[85%] whitespace-pre-wrap rounded-2xl rounded-br-md bg-user px-4 py-2.5 selectable">{item.text}</div>
-                      {item.routed && (
-                        <span className="inline-flex items-center gap-1 text-[0.76em] text-muted" title={item.routed.reason}>
-                          <Wand2 className="h-3 w-3" /> Auto: {item.routed.model}
-                          <span className="opacity-70">· {LEVEL_LABEL[item.routed.level]}</span>
+                      {(item.routed || item.zdr) && (
+                        <span className="inline-flex items-center gap-1 text-[0.76em] text-muted" title={item.routed?.reason}>
+                          {item.routed && (
+                            <>
+                              <Wand2 className="h-3 w-3" /> Auto: {item.routed.model}
+                              <span className="opacity-70">· {LEVEL_LABEL[item.routed.level]}</span>
+                              {item.routed.probabilities?.[item.routed.level] != null && (
+                                <span className="opacity-70">{Math.round(item.routed.probabilities[item.routed.level] * 100)} %</span>
+                              )}
+                            </>
+                          )}
+                          {item.zdr && (
+                            <span className="rounded bg-ok-soft px-1 font-medium text-ok" title="Ging an ein Cortecs-Modell ohne Datenspeicherung (Zero Data Retention)">
+                              ZDR
+                            </span>
+                          )}
                         </span>
                       )}
                       {item.attachments && item.attachments.length > 0 && (

@@ -220,6 +220,7 @@ pub struct StartupReport {
 pub async fn startup_check(app: tauri::AppHandle) -> CmdResult<StartupReport> {
     let mut changed = crate::skills::install_bundled(&app).unwrap_or(false);
     changed |= crate::skills::write_agent_profiles().unwrap_or(false);
+    changed |= crate::cortecs::ensure_vibe_config().await.unwrap_or(false);
     if read_key().is_none() {
         return Ok(StartupReport { changed, new_models: vec![] });
     }

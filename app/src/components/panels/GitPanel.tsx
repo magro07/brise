@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { ArrowDown, ArrowUp, Check, GitBranch, GitCommitHorizontal, Minus, Plus, RefreshCw, Sparkles, Undo2 } from "lucide-react";
 import { api, type GitStatus } from "../../lib/acp";
-import { useStore } from "../../lib/store";
+import { helperProvider, useStore } from "../../lib/store";
 import { relativeTime } from "../../lib/format";
 import { Button, IconButton, Menu, MenuContent, MenuItem, MenuLabel, MenuSeparator, MenuTrigger, Spinner, clsx } from "../ui";
 import { askText, confirmAction } from "../../lib/dialogs";
@@ -221,7 +221,9 @@ export function GitPanel({ cwd }: { cwd: string }) {
                 onClick={() =>
                   run("msg", async () => {
                     if (!staged.length) await api.git(cwd, "stage_all");
-                    setMessage(await api.commitMessage(cwd, useStore.getState().prefs.assistModel));
+                    const provider = helperProvider(cwd);
+                    if (!provider) throw new Error("Dieses Projekt nutzt nur Modelle ohne Datenspeicherung – dafür fehlt der Cortecs-Key.");
+                    setMessage(await api.commitMessage(cwd, useStore.getState().prefs.assistModel, provider));
                   })
                 }
               >

@@ -110,12 +110,14 @@ export const api = {
   startupCheck: () => invoke<{ changed: boolean; newModels: CatalogModel[] }>("startup_check"),
   listSkills: (cwd?: string) => invoke<SkillInfo[]>("list_skills", { cwd: cwd ?? null }),
   npxAvailable: () => invoke<boolean>("npx_available"),
-  classifyTask: (text: string, history: string | undefined, model: string) =>
-    invoke<{ level: "simple" | "standard" | "complex"; reason: string }>("classify_task", { text, history: history ?? null, model }),
-  projectSuggestions: (cwd: string, recent: string[], model: string, refresh = false) => invoke<Suggestion[]>("project_suggestions", { cwd, recent, refresh, model }),
-  adjustReasoning: (task: string, progress: string, current: string, model: string) =>
-    invoke<{ level: string; reason: string }>("adjust_reasoning", { task, progress, current, model }),
-  commitMessage: (cwd: string, model: string) => invoke<string>("commit_message", { cwd, model }),
+  /** `provider`: "mistral" (Task-Modell) oder "cortecs" (Decision-Modelle mit ZDR). */
+  classifyTask: (text: string, history: string | undefined, model: string, provider?: string) =>
+    invoke<Decision<"simple" | "standard" | "complex">>("classify_task", { text, history: history ?? null, model, provider: provider ?? null }),
+  projectSuggestions: (cwd: string, recent: string[], model: string, refresh = false, provider?: string) =>
+    invoke<Suggestion[]>("project_suggestions", { cwd, recent, refresh, model, provider: provider ?? null }),
+  adjustReasoning: (task: string, progress: string, current: string, model: string, provider?: string) =>
+    invoke<Decision<string>>("adjust_reasoning", { task, progress, current, model, provider: provider ?? null }),
+  commitMessage: (cwd: string, model: string, provider?: string) => invoke<string>("commit_message", { cwd, model, provider: provider ?? null }),
   gitStatus: (cwd: string) => invoke<GitStatus>("git_status", { cwd }),
   gitDiff: (cwd: string, path: string, staged: boolean) => invoke<string>("git_diff", { cwd, path, staged }),
   gitShowHead: (cwd: string, path: string) => invoke<string>("git_show_head", { cwd, path }),
@@ -144,6 +146,17 @@ export const api = {
   syncPrefs: (prefs: unknown) => invoke<void>("sync_prefs", { prefs }),
   ext: <T = Record<string, unknown>>(method: string, params: Record<string, unknown> = {}) => invoke<T>("ext", { method, params }),
 };
+
+/** Antwort einer Entscheidung; Cortecs liefert zusätzlich Wahrscheinlichkeiten. */
+export interface Decision<L extends string> {
+  level: L;
+  reason: string;
+  probabilities?: Record<string, number>;
+  provider?: string;
+  model?: string;
+  ms?: number;
+  costEur?: number;
+}
 
 export interface IndexStatus {
   indexed: boolean;

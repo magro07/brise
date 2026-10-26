@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
-import { ArrowUp, AtSign, FileText, Image, Mic, Paperclip, Slash, Square, X } from "lucide-react";
-import { basename, useStore, type Attachment, type Session, type SlashCommand } from "../../lib/store";
+import { ArrowUp, AtSign, FileText, Image, Mic, Paperclip, ShieldCheck, Slash, Square, X } from "lucide-react";
+import { basename, isZdr, useStore, type Attachment, type Session, type SlashCommand } from "../../lib/store";
+import { cortecs, type SensitiveVerdict } from "../../lib/cortecs";
+import { SensitiveNotice } from "./SensitiveNotice";
 import { IconButton, Tip, clsx } from "../ui";
 import { VoiceRecorder } from "./VoiceRecorder";
 import { ContextMeter, ModePicker, OptionPicker, ThinkingPicker } from "./Pickers";
@@ -60,6 +62,9 @@ export function Composer({ session, project, focused = true }: { session?: Sessi
   const focusedRef = useRef(focused);
   focusedRef.current = focused;
   const recordingHere = recording && focused;
+  const [checking, setChecking] = useState(false);
+  const [flagged, setFlagged] = useState<{ verdict: SensitiveVerdict; text: string; attachments: Attachment[] } | null>(null);
+  const zdrActive = useStore((s) => (session ? isZdr(s, session) : s.prefs.zdrProjects.includes(project)));
 
   // Von außen eingefügter Text (z. B. Treffer der semantischen Suche).
   useEffect(() => {
@@ -173,13 +178,32 @@ export function Composer({ session, project, focused = true }: { session?: Sessi
     }
   };
 
-  const submit = () => {
-    const t = text.trim();
-    if (!t || running || disabled) return;
-    send(t, attachments);
+  const dispatch = (t: string, list: Attachment[], opts?: { zdr?: boolean }) => {
+    send(t, list, opts);
     setText("");
     setAttachments([]);
     setCursor(0);
+    setFlagged(null);
+  };
+
+  /** Vor dem Senden: sensible Daten? Nur nötig, wenn das Ziel kein ZDR-Modell ist. */
+  const submit = async () => {
+    const t = text.trim();
+    if (!t || running || disabled || checking) return;
+    const st = useStore.getState();
+    const model = String(session?.config.find((o) => o.id === "model")?.currentValue ?? st.draft.model ?? "");
+    const safe = zdrActive || (!st.prefs.autoModel && st.cortecs.models.includes(model));
+    if (st.prefs.sensitivityCheck && !safe && !t.startsWith("/")) {
+      setChecking(true);
+      const files = attachments.filter((a) => a.kind === "file").map((a) => a.path);
+      const verdict = await cortecs.checkSensitivity(t, files, project, st.cortecs.key).catch(() => null);
+      setChecking(false);
+      if (verdict?.flagged) {
+        setFlagged({ verdict, text: t, attachments });
+        return;
+      }
+    }
+    dispatch(t, attachments);
   };
 
   const attach = async () => {
@@ -190,6 +214,23 @@ export function Composer({ session, project, focused = true }: { session?: Sessi
 
   return (
     <div data-brise="composer" className="@container relative">
+      {flagged && (
+        <SensitiveNotice
+          verdict={flagged.verdict}
+          project={project}
+          onZdr={() => dispatch(flagged.text, flagged.attachments, { zdr: true })}
+          onSend={() => dispatch(flagged.text, flagged.attachments)}
+          onAlways={() => {
+            const prefs = useStore.getState().prefs;
+            useStore.getState().setPrefs({ zdrProjects: [...new Set([...prefs.zdrProjects, project])] });
+            dispatch(flagged.text, flagged.attachments, { zdr: true });
+          }}
+          onClose={() => {
+            setFlagged(null);
+            ref.current?.focus();
+          }}
+        />
+      )}
       {suggestions.length > 0 && (
         <div className="absolute bottom-full left-0 right-0 mb-2 overflow-hidden rounded-xl border border-line bg-elev p-1 shadow-pop fade-in">
           <div className="flex items-center gap-1.5 px-2.5 pb-1 pt-1.5 text-[0.75em] font-medium uppercase tracking-wide text-muted">
@@ -289,6 +330,13 @@ export function Composer({ session, project, focused = true }: { session?: Sessi
           <ModePicker session={session} />
           <OptionPicker session={session} id="model" />
           <ThinkingPicker session={session} />
+          {zdrActive && (
+            <Tip label="Nur Cortecs-Modelle ohne Datenspeicherung (Zero Data Retention)" side="top">
+              <span data-brise="zdr-badge" className="ml-1 inline-flex h-6 items-center gap-1 rounded-md bg-ok-soft px-1.5 text-[0.78em] font-medium text-ok">
+                <ShieldCheck className="h-3 w-3" /> ZDR
+              </span>
+            </Tip>
+          )}
           <div className="flex-1" />
           <ContextMeter session={session} />
           <Tip label={recording ? "Aufnahme beenden und übernehmen" : "Spracheingabe (Voxtral)"}>
@@ -316,12 +364,12 @@ export function Composer({ session, project, focused = true }: { session?: Sessi
           ) : (
             <button
               onClick={submit}
-              disabled={!text.trim() || disabled}
+              disabled={!text.trim() || disabled || checking}
               className="ml-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-accent text-accent-fg transition hover:brightness-110 disabled:bg-line-strong disabled:text-muted"
               aria-label="Senden (Enter)"
-              title="Senden (Enter)"
+              title={checking ? "Prüfe auf sensible Daten …" : "Senden (Enter)"}
             >
-              <ArrowUp className="h-4 w-4" />
+              {checking ? <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-current border-t-transparent" /> : <ArrowUp className="h-4 w-4" />}
             </button>
           )}
         </div>

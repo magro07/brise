@@ -31,12 +31,14 @@ import { looksSecret, maskSecrets } from "../../lib/format";
 import { Button, Spinner, Switch, clsx } from "../ui";
 import { MODE_INFO } from "../composer/Pickers";
 import { confirmAction } from "../../lib/dialogs";
+import { CortecsView } from "./CortecsSettings";
 
 const SECTIONS = [
   { id: "general", label: "Allgemein", icon: Palette },
   { id: "account", label: "Konto", icon: UserRound },
   { id: "models", label: "Modelle & Kontext", icon: Cpu },
   { id: "permissions", label: "Freigaben & Sicherheit", icon: ShieldCheck },
+  { id: "cortecs", label: "Cortecs & Datenschutz", icon: ShieldCheck },
   { id: "agents", label: "Agents & Subagents", icon: Bot },
   { id: "skills", label: "Skills", icon: Sparkles },
   { id: "web", label: "Websuche & Recherche", icon: Globe },
@@ -142,7 +144,7 @@ interface FieldProps {
   options?: { value: string; label: string }[];
 }
 
-function Row({ title, description, control, warn, reset }: { title: ReactNode; description?: ReactNode; control: ReactNode; warn?: boolean; reset?: () => void }) {
+export function Row({ title, description, control, warn, reset }: { title: ReactNode; description?: ReactNode; control: ReactNode; warn?: boolean; reset?: () => void }) {
   return (
     <div className={clsx("flex items-center gap-6 px-4 py-3.5", warn && "bg-bad-soft/60")}>
       <div className="min-w-0 flex-1">
@@ -206,7 +208,7 @@ function Field({ name, prop, value, onChange, options }: FieldProps) {
   return <Row title={label} description={description} control={control} warn={name === "bypass_tool_permissions" && !!effective} reset={reset} />;
 }
 
-function Card({ title, children, description }: { title?: string; description?: ReactNode; children: ReactNode }) {
+export function Card({ title, children, description }: { title?: string; description?: ReactNode; children: ReactNode }) {
   return (
     <section className="mb-6">
       {title && <h3 className="mb-1 text-[0.95em] font-semibold">{title}</h3>}
@@ -436,6 +438,8 @@ export function SettingsView() {
           )}
 
           {section === "skills" && <SkillsView values={values} write={write} />}
+
+          {section === "cortecs" && <CortecsView onModelsChanged={() => setDirty(true)} />}
 
           {section === "permissions" && (
             <>

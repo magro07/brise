@@ -112,6 +112,10 @@ pub fn spawn(
             command.env("PATH", joined);
         }
     }
+    // Cortecs-Modelle in Vibe lesen den Schlüssel aus der Umgebung (`api_key_env_var`).
+    if let Some(key) = crate::cortecs::read_key() {
+        command.env("CORTECS_API_KEY", key);
+    }
     command
         .args(args)
         .stdin(Stdio::piped())

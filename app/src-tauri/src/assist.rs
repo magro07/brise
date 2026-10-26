@@ -39,9 +39,26 @@ async fn quick_json(model: &str, system: &str, user: &str, timeout: u64) -> CmdR
     serde_json::from_str(text).map_err(|e| format!("Kein gültiges JSON: {e}"))
 }
 
+/// Entscheidungen über Cortecs (Decisions-API bzw. Chat, immer mit ZDR)?
+/// `provider` kommt aus der Einstellung „Entscheidungen“ der Oberfläche.
+fn via_cortecs(provider: &Option<String>) -> bool {
+    provider.as_deref() == Some(crate::cortecs::PROVIDER)
+}
+
+/// Chat-Antwort im JSON-Modus beim gewählten Anbieter.
+async fn helper_json(provider: &Option<String>, feature: &str, model: Option<&str>, system: &str, user: &str, timeout: u64) -> CmdResult<Value> {
+    if via_cortecs(provider) {
+        return crate::cortecs::chat_json(feature, system, user, None, timeout).await;
+    }
+    quick_json(model.unwrap_or(FAST_MODEL), system, user, timeout).await
+}
+
 /// Stuft eine Aufgabe für die Auto-Modellwahl ein: simple, standard oder complex.
 #[tauri::command]
-pub async fn classify_task(text: String, history: Option<String>, model: Option<String>) -> CmdResult<Value> {
+pub async fn classify_task(text: String, history: Option<String>, model: Option<String>, provider: Option<String>) -> CmdResult<Value> {
+    if via_cortecs(&provider) {
+        return crate::cortecs::classify_task(&text, history.as_deref(), None).await;
+    }
     const SYSTEM: &str = "Du ordnest Aufgaben für einen Coding-Agenten einer Stufe zu, damit das passende Modell gewählt wird. \
         simple: kurze Fragen, Erklärungen, kleine lokale Änderungen, Umbenennungen, Formatierung. \
         standard: übliche Features, Bugfixes in wenigen Dateien, Tests schreiben. \
@@ -128,7 +145,7 @@ fn cache_path(cwd: &str) -> PathBuf {
 /// Vier Vorschläge, zugeschnitten auf Projekt, Git-Stand und letzte Sessions.
 /// Zwischengespeichert, bis sich HEAD/Status ändert oder 12 Stunden vergehen.
 #[tauri::command]
-pub async fn project_suggestions(cwd: String, recent: Vec<String>, refresh: Option<bool>, model: Option<String>) -> CmdResult<Value> {
+pub async fn project_suggestions(cwd: String, recent: Vec<String>, refresh: Option<bool>, model: Option<String>, provider: Option<String>) -> CmdResult<Value> {
     let root = PathBuf::from(&cwd);
     let state = git_output(&root, &["rev-parse", "HEAD"]).unwrap_or_default() + &git_output(&root, &["status", "--porcelain"]).unwrap_or_default();
     let fingerprint: String = Sha256::digest(state.as_bytes()).iter().take(8).map(|b| format!("{b:02x}")).collect();
@@ -149,7 +166,7 @@ pub async fn project_suggestions(cwd: String, recent: Vec<String>, refresh: Opti
         Keine allgemeinen Floskeln. Wiederhole keine Aufgaben aus den letzten Sessions. \
         Antworte als JSON: {\"suggestions\":[{\"title\":\"max. 4 Wörter\",\"description\":\"ein kurzer Satz\",\"prompt\":\"vollständige Anweisung an den Agenten auf Deutsch\",\"icon\":\"bug|test|docs|refactor|feature|explain|git|perf|security\"}]}";
     let user = format!("Projekt: {cwd}\n\n{brief}\n\nLetzte Sessions in diesem Projekt: {}", if recent.is_empty() { "keine".into() } else { recent.join("; ") });
-    let v = quick_json(model.as_deref().unwrap_or(FAST_MODEL), SYSTEM, &user, 20).await?;
+    let v = helper_json(&provider, "Vorschläge", model.as_deref(), SYSTEM, &user, 30).await?;
     let suggestions = v["suggestions"].clone();
     if !suggestions.is_array() {
         return Err("Keine Vorschläge erhalten".into());
@@ -161,7 +178,7 @@ pub async fn project_suggestions(cwd: String, recent: Vec<String>, refresh: Opti
 
 /// Formuliert eine Commit-Nachricht aus dem gestagten Diff.
 #[tauri::command]
-pub async fn commit_message(cwd: String, model: Option<String>) -> CmdResult<String> {
+pub async fn commit_message(cwd: String, model: Option<String>, provider: Option<String>) -> CmdResult<String> {
     let root = PathBuf::from(&cwd);
     let mut diff = git_output(&root, &["diff", "--cached", "--stat"]).unwrap_or_default();
     diff.push_str("\n");
@@ -173,14 +190,17 @@ pub async fn commit_message(cwd: String, model: Option<String>) -> CmdResult<Str
     const SYSTEM: &str = "Formuliere eine Git-Commit-Nachricht für den Diff. Halte dich an Sprache und Stil der bisherigen Commits \
         (falls vorhanden, sonst Deutsch): Betreffzeile im Imperativ, max. 72 Zeichen, optional Leerzeile und kurze Stichpunkte. \
         Antworte als JSON: {\"message\":\"...\"}";
-    let v = quick_json(model.as_deref().unwrap_or(FAST_MODEL), SYSTEM, &format!("Bisherige Commits:\n{log}\n\nDiff:\n{diff}"), 20).await?;
+    let v = helper_json(&provider, "Commit-Nachricht", model.as_deref(), SYSTEM, &format!("Bisherige Commits:\n{log}\n\nDiff:\n{diff}"), 30).await?;
     v["message"].as_str().map(str::to_string).ok_or_else(|| "Keine Nachricht erhalten".into())
 }
 
 /// Prüft während eines laufenden Turns, ob die Denkstufe passt.
 /// `progress` ist eine kurze Zusammenfassung der bisherigen Schritte.
 #[tauri::command]
-pub async fn adjust_reasoning(task: String, progress: String, current: String, model: Option<String>) -> CmdResult<Value> {
+pub async fn adjust_reasoning(task: String, progress: String, current: String, model: Option<String>, provider: Option<String>) -> CmdResult<Value> {
+    if via_cortecs(&provider) {
+        return crate::cortecs::adjust_reasoning(&task, &progress, &current, None).await;
+    }
     const SYSTEM: &str = "Du steuerst den Reasoning-Aufwand eines Coding-Agenten (GLM-5.3) während er arbeitet. \
         Stufen: low (Routine: lesen, suchen, einfache Änderungen), high (normale Entwicklungsarbeit), max (Fehler, die sich wiederholen, \
         schwierige Logik, Architektur, viele abhängige Schritte). Wechsle nur, wenn es klar nützt – jeder Wechsel kostet Cache. \

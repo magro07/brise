@@ -15,6 +15,7 @@ import {
   type SessionSummary,
 } from "./acp";
 import { load, save } from "./persist";
+import { cortecs } from "./cortecs";
 import type { Suggestion } from "./acp";
 
 // ---------- Modell ----------
@@ -58,10 +59,14 @@ export interface Routed {
   model: string;
   level: "simple" | "standard" | "complex";
   reason: string;
+  /** Wahrscheinlichkeiten je Stufe (Cortecs-Decision-Modelle). */
+  probabilities?: Record<string, number>;
+  /** Prompt ging an ein Modell mit Zero Data Retention. */
+  zdr?: boolean;
 }
 
 export type Item =
-  | { type: "user"; id: string; text: string; attachments?: Attachment[]; routed?: Routed }
+  | { type: "user"; id: string; text: string; attachments?: Attachment[]; routed?: Routed; zdr?: boolean }
   | { type: "assistant"; id: string; text: string }
   | { type: "thought"; id: string; text: string }
   | ToolItem
@@ -124,6 +129,8 @@ export interface Session {
   thinkingLog: ThinkingEvent[];
   /** Aufgabe des laufenden Turns – Kontext fürs Nachsteuern. */
   currentTask?: string;
+  /** Session nur mit Modellen ohne Datenspeicherung (Cortecs ZDR). */
+  zdr?: boolean;
 }
 
 export interface ThinkingEvent {
@@ -132,6 +139,8 @@ export interface ThinkingEvent {
   to: string;
   reason: string;
   phase: "start" | "live";
+  /** Wahrscheinlichkeiten je Stufe, wenn ein Cortecs-Decision-Modell entschied. */
+  probabilities?: Record<string, number>;
 }
 
 export type Phase = "connecting" | "no-vibe" | "error" | "login" | "ready";
@@ -167,6 +176,14 @@ export interface Prefs {
   fim: boolean;
   /** Einführung schon gesehen. */
   tourDone: boolean;
+  /** Wer Brises Entscheidungen trifft: Mistral Small oder Cortecs-Decision-Modelle (ZDR). */
+  decisionProvider: "mistral" | "cortecs";
+  /** Prompts vor dem Senden auf sensible Daten prüfen. */
+  sensitivityCheck: boolean;
+  /** Projekte, die nur Modelle ohne Datenspeicherung nutzen. */
+  zdrProjects: string[];
+  /** Vibe-Alias des sicheren Modells für „Auf Cortecs (ZDR) wechseln“. */
+  zdrModel: string;
 }
 
 export interface OpenFile {
@@ -240,6 +257,8 @@ interface State {
   quickActions: Suggestion[];
   terminalOpen: boolean;
   editor: { files: OpenFile[]; active: string | null };
+  /** Cortecs-Schlüssel vorhanden und Aliase der Cortecs-Modelle (alle mit ZDR). */
+  cortecs: { key: boolean; models: string[] };
 }
 
 interface Actions {
@@ -273,7 +292,9 @@ interface Actions {
   selectSession(id: string): Promise<void>;
   openChildSession(childId: string, cwd: string): Promise<void>;
   deleteSession(id: string): Promise<void>;
-  send(text: string, attachments: Attachment[]): Promise<void>;
+  /** `zdr`: diese Session ab jetzt nur mit Modellen ohne Datenspeicherung. */
+  send(text: string, attachments: Attachment[], opts?: { zdr?: boolean }): Promise<void>;
+  refreshCortecs(): Promise<void>;
   cancel(): Promise<void>;
   answerPermission(key: string, optionId: string | null): Promise<void>;
   setOption(configId: string, value: string, sessionId?: string): Promise<void>;
@@ -439,6 +460,29 @@ function applyCss(css: string) {
   el.textContent = css;
 }
 
+// ---------- ZDR (Cortecs) ----------
+
+/** Läuft diese Session nur mit Modellen ohne Datenspeicherung? */
+export function isZdr(st: { prefs: Prefs }, s?: Session): boolean {
+  return !!s && (!!s.zdr || st.prefs.zdrProjects.includes(s.cwd));
+}
+
+/**
+ * Wer entscheidet (Einstufung, Denkstufe)? In ZDR-Sessions nur Cortecs – sonst
+ * ginge der Prompt doch an Mistral. Ohne Cortecs-Key dann gar kein Modell.
+ */
+function deciderFor(st: { prefs: Prefs; cortecs: State["cortecs"] }, s?: Session): "mistral" | "cortecs" | null {
+  if (isZdr(st, s)) return st.cortecs.key ? "cortecs" : null;
+  return st.prefs.decisionProvider === "cortecs" && st.cortecs.key ? "cortecs" : "mistral";
+}
+
+/** Anbieter für Brises Helfer (Vorschläge, Commit-Nachricht) in einem Projekt; null = nicht erlaubt. */
+export function helperProvider(cwd: string): "mistral" | "cortecs" | null {
+  const st = useStore.getState();
+  if (st.prefs.zdrProjects.includes(cwd)) return st.cortecs.key ? "cortecs" : null;
+  return st.prefs.decisionProvider === "cortecs" && st.cortecs.key ? "cortecs" : "mistral";
+}
+
 // ---------- Store ----------
 
 const initialPrefs: Prefs = {
@@ -458,6 +502,10 @@ const initialPrefs: Prefs = {
   autoBaseModel: "glm-5-3",
   fim: true,
   tourDone: false,
+  decisionProvider: "mistral",
+  sensitivityCheck: true,
+  zdrProjects: [],
+  zdrModel: "cortecs-glm-5-3",
   ...load<Partial<Prefs>>("prefs", {}),
 };
 
@@ -539,6 +587,8 @@ export const useStore = create<State & Actions>((set, get) => {
     const current = String(opt?.currentValue ?? "");
     const levels = (opt?.options ?? []).map((o) => o.value);
     if (!levels.length) return;
+    const decider = deciderFor(st, s);
+    if (!decider) return;
     sig.busy = true;
     const progress = s.items
       .slice(-14)
@@ -546,14 +596,14 @@ export const useStore = create<State & Actions>((set, get) => {
       .filter(Boolean)
       .join("\n");
     api
-      .adjustReasoning(s.currentTask ?? "", `${progress}\nSignal: ${trigger}`, current, st.prefs.assistModel)
+      .adjustReasoning(s.currentTask ?? "", `${progress}\nSignal: ${trigger}`, current, st.prefs.assistModel, decider)
       .then(async (r) => {
         const target = nearestThinking(r.level, levels);
         if (!target || target === current || !get().sessions[sid]?.running) return;
         await get().setOption("thinking", target, sid);
         patchSession(sid, (x) => ({
           ...x,
-          thinkingLog: [...x.thinkingLog, { at: Date.now(), from: current, to: target, reason: r.reason || trigger!, phase: "live" }],
+          thinkingLog: [...x.thinkingLog, { at: Date.now(), from: current, to: target, reason: `${trigger} · ${r.reason}`, phase: "live", probabilities: r.probabilities }],
         }));
       })
       .catch(() => {})
@@ -601,6 +651,7 @@ export const useStore = create<State & Actions>((set, get) => {
     composerInsert: null,
     newModels: [],
     quickActions: [],
+    cortecs: { key: false, models: [] },
     terminalOpen: false,
     editor: { files: [], active: null },
 
@@ -829,6 +880,7 @@ export const useStore = create<State & Actions>((set, get) => {
         generation = info.generation;
         set({ connectInfo: info, auth: info.auth, phase: info.auth?.authenticated ? "ready" : "login" });
         if (info.auth?.authenticated) get().refreshIndex();
+        get().refreshCortecs();
       } catch (e) {
         set(String(e) === "VIBE_NOT_FOUND" ? { phase: "no-vibe" } : { phase: "error", error: String(e) });
       } finally {
@@ -943,7 +995,16 @@ export const useStore = create<State & Actions>((set, get) => {
       });
     },
 
-    async send(text, attachments) {
+    async refreshCortecs() {
+      try {
+        const [status, models] = await Promise.all([cortecs.status(), api.configuredModels()]);
+        set({ cortecs: { key: status.keyPresent, models: models.filter((m) => m.provider === "cortecs").map((m) => m.alias) } });
+      } catch {
+        /* ohne Cortecs läuft alles wie bisher */
+      }
+    },
+
+    async send(text, attachments, opts) {
       const st = get();
       const project = st.activeProject;
       if (!project) return;
@@ -987,9 +1048,28 @@ export const useStore = create<State & Actions>((set, get) => {
       }
 
       const sid = id;
+      if (opts?.zdr) patchSession(sid, (s) => ({ ...s, zdr: true }));
+      const zdr = isZdr(get(), get().sessions[sid]);
+      if (zdr) {
+        // Vor allem anderen: Modell ohne Datenspeicherung setzen.
+        const modelOption = get().sessions[sid]?.config.find((o) => o.id === "model");
+        const available = (modelOption?.options ?? []).map((o) => o.value);
+        const safe = [get().prefs.zdrModel, ...get().cortecs.models].find((m) => available.includes(m));
+        if (!safe) {
+          pushItem(sid, { type: "notice", id: uid(), text: "Kein Cortecs-Modell mit Zero Data Retention eingerichtet – Prompt nicht gesendet. Cortecs-Key in den Einstellungen hinterlegen.", tone: "error" });
+          return;
+        }
+        if (modelOption?.currentValue !== safe && !get().cortecs.models.includes(String(modelOption?.currentValue))) {
+          await get().setOption("model", safe, sid);
+        }
+      }
       const blocks: ContentBlock[] = [{ type: "text", text }];
       for (const a of attachments) {
-        if (a.kind === "document") {
+        if (a.kind === "document" && zdr) {
+          // Mistral OCR speichert nicht garantiert nichts – Vibe liest die Datei selbst.
+          const uri = /^[A-Za-z]:/.test(a.path) ? `file:///${a.path.replace(/\\/g, "/")}` : `file://${a.path}`;
+          blocks.push({ type: "resource_link", uri: encodeURI(uri), name: a.name });
+        } else if (a.kind === "document") {
           // PDF/Office per Mistral OCR als Text mitgeben.
           try {
             const text = await api.ocrDocument(a.path);
@@ -1018,7 +1098,7 @@ export const useStore = create<State & Actions>((set, get) => {
         ...s,
         running: true,
         turnStarted: started,
-        items: [...s.items, { type: "user", id: userItemId, text, attachments }],
+        items: [...s.items, { type: "user", id: userItemId, text, attachments, zdr: zdr || undefined }],
       }));
 
       // Auto: Aufgabe einstufen. Standard: GLM-5.3 fest, Denkstufe passend setzen.
@@ -1028,20 +1108,22 @@ export const useStore = create<State & Actions>((set, get) => {
       const prefs = get().prefs;
       patchSession(sid, (s) => ({ ...s, currentTask: text }));
       signals[sid] = { failStreak: 0, readStreak: 0, lastAdjust: Date.now(), busy: false };
+      const decider = deciderFor(get(), get().sessions[sid]);
       if (prefs.autoModel && modelOption?.options?.length && !text.startsWith("/")) {
         const history = current.items
           .filter((i) => i.type === "user")
           .slice(-4, -1)
           .map((i) => (i.type === "user" ? i.text : ""))
           .join("\n");
-        const verdict = await api
-          .classifyTask(text, history, prefs.assistModel)
-          .catch(() => ({ level: heuristicLevel(text), reason: "Schätzung ohne KI" }));
-        const available = modelOption.options.map((o) => o.value);
+        const fallback = { level: heuristicLevel(text), reason: "Schätzung ohne KI", probabilities: undefined };
+        const verdict = decider ? await api.classifyTask(text, history, prefs.assistModel, decider).catch(() => fallback) : fallback;
+        const zdrModels = get().cortecs.models;
+        const available = modelOption.options.map((o) => o.value).filter((m) => !zdr || zdrModels.includes(m));
         const needsVision = attachments.some((a) => a.kind === "image");
+        const base = zdr ? prefs.zdrModel : prefs.autoBaseModel;
         const model =
-          prefs.autoStrategy === "reasoning" && available.includes(prefs.autoBaseModel) && !(needsVision && /glm-5-3$/.test(prefs.autoBaseModel))
-            ? prefs.autoBaseModel
+          prefs.autoStrategy === "reasoning" && available.includes(base) && !(needsVision && /glm-5-3$/.test(base))
+            ? base
             : pickModel(verdict.level, prefs.routing, available, needsVision);
         if (model && model !== modelOption.currentValue) await get().setOption("model", model, sid).catch(() => {});
         let thinkingLabel: string | undefined;
@@ -1055,7 +1137,7 @@ export const useStore = create<State & Actions>((set, get) => {
             await get().setOption("thinking", target, sid).catch(() => {});
             patchSession(sid, (s) => ({
               ...s,
-              thinkingLog: [...s.thinkingLog, { at: Date.now(), from, to: target, reason: verdict.reason, phase: "start" }],
+              thinkingLog: [...s.thinkingLog, { at: Date.now(), from, to: target, reason: verdict.reason, phase: "start", probabilities: verdict.probabilities }],
             }));
           }
           thinkingLabel = target ?? from;
@@ -1065,7 +1147,16 @@ export const useStore = create<State & Actions>((set, get) => {
           ...s,
           items: s.items.map((i) =>
             i.id === userItemId && i.type === "user"
-              ? { ...i, routed: { model: thinkingLabel ? `${name} · Denken ${THINKING_LABEL[thinkingLabel] ?? thinkingLabel}` : name, level: verdict.level, reason: verdict.reason } }
+              ? {
+                  ...i,
+                  routed: {
+                    model: thinkingLabel ? `${name} · Denken ${THINKING_LABEL[thinkingLabel] ?? thinkingLabel}` : name,
+                    level: verdict.level,
+                    reason: verdict.reason,
+                    probabilities: verdict.probabilities,
+                    zdr,
+                  },
+                }
               : i,
           ),
         }));
