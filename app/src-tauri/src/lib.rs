@@ -20,6 +20,7 @@ mod models;
 mod skills;
 mod terminal;
 mod usage;
+mod policy;
 mod installer;
 mod rpc;
 mod selftest;
@@ -108,6 +109,9 @@ pub fn run() {
                 eprintln!("Cortecs-Proxy: {e}");
             }
             collab::start(app.handle());
+            if let Err(err) = policy::apply() {
+                eprintln!("Team-Richtlinie anwenden: {err}");
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -244,6 +248,12 @@ pub fn run() {
             collab::team::collab_team_projects,
             collab::team::collab_team_profile,
             collab::team::collab_teams,
+            collab::team::collab_team_set_admin,
+            collab::team::collab_team_remove_member,
+            collab::team::collab_team_set_policy,
+            collab::team::collab_team_claim,
+            collab::team::collab_team_usage,
+            policy::policy_effective,
             design::design_root,
             design::design_read,
             design::design_write,

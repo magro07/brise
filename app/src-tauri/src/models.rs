@@ -221,6 +221,7 @@ fn fix_thinking_levels() -> CmdResult<bool> {
 /// Fügt ein Modell aus dem Katalog (oder frei benannt) hinzu.
 #[tauri::command]
 pub async fn add_model(name: String, alias: Option<String>, display_name: Option<String>) -> CmdResult<()> {
+    crate::policy::check_section("models")?;
     let catalog = model_catalog().await.unwrap_or_default();
     let info = catalog.iter().find(|m| m.id == name || m.aliases.contains(&name));
     let alias = alias.filter(|a| !a.is_empty()).unwrap_or_else(|| name.clone());
@@ -233,6 +234,7 @@ pub async fn add_model(name: String, alias: Option<String>, display_name: Option
 
 #[tauri::command]
 pub fn remove_model(alias: String) -> CmdResult<()> {
+    crate::policy::check_section("models")?;
     edit_config(|doc| {
         if let Some(arr) = doc.get_mut("models").and_then(Item::as_array_of_tables_mut) {
             arr.retain(|t| t.get("alias").and_then(|v| v.as_str()) != Some(alias.as_str()));

@@ -18,6 +18,9 @@ pub struct TeamSecret {
     pub name: String,
     pub relay: String,
     pub key: String,
+    /// Ed25519-ID des Besitzers (aus dem Einladungslink). Fehlt bei alten Teams.
+    #[serde(default)]
+    pub owner: Option<String>,
     /// Gemeinsame Projektliste (zuletzt bekannter Stand).
     #[serde(default)]
     pub projects: serde_json::Value,

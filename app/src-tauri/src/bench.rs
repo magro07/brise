@@ -374,6 +374,7 @@ pub fn bench_get(id: String) -> CmdResult<Benchmark> {
 /// Speichert eine Definition; ohne `id` wird eine neue Datei aus dem Namen angelegt.
 #[tauri::command]
 pub fn bench_save(mut bench: Benchmark) -> CmdResult<String> {
+    crate::policy::check_section("bench")?;
     bench.normalize()?;
     std::fs::create_dir_all(dir()).map_err(|e| e.to_string())?;
     if bench.id.is_empty() {
@@ -400,6 +401,7 @@ pub fn bench_save(mut bench: Benchmark) -> CmdResult<String> {
 /// Löscht die Definition; Läufe bleiben für den Verlauf erhalten, außer mit `runs`.
 #[tauri::command]
 pub fn bench_delete(id: String, runs: Option<bool>) -> CmdResult<()> {
+    crate::policy::check_section("bench")?;
     if !valid_id(&id) {
         return Err(format!("Ungültige Benchmark-ID: {id}"));
     }

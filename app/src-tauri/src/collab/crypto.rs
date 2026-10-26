@@ -45,6 +45,11 @@ impl Identity {
         self.0.to_bytes()
     }
 
+    /// Signatur über beliebige Bytes (base64url), z. B. für den Team-Stand.
+    pub fn sign(&self, msg: &[u8]) -> String {
+        b64(&self.0.sign(msg).to_bytes())
+    }
+
     /// Öffentlicher Schlüssel als Teilnehmer-ID.
     pub fn id(&self) -> String {
         b64(self.0.verifying_key().as_bytes())

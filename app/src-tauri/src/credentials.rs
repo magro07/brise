@@ -109,6 +109,7 @@ pub async fn check(key: &str) -> CmdResult<KeyCheck> {
 /// Prüft und speichert einen eingefügten Schlüssel.
 #[tauri::command]
 pub async fn save_api_key(key: String) -> CmdResult<KeyCheck> {
+    crate::policy::check_section("account")?;
     let key = key.trim().to_string();
     if key.len() < 16 || key.contains(char::is_whitespace) {
         return Ok(KeyCheck { valid: false, message: "Das sieht nicht nach einem Mistral-Schlüssel aus.".into(), models: 0 });

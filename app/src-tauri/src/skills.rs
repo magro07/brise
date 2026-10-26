@@ -66,7 +66,7 @@ pub fn install_bundled(app: &tauri::AppHandle) -> CmdResult<bool> {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SkillInfo {
-    name: String,
+    pub name: String,
     description: String,
     path: String,
     /// "brise", "user" oder "project"

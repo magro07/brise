@@ -155,10 +155,11 @@ Für die Usage-Anzeige (Paket B) meldet Rust beim Host nach jedem Turn das Tauri
 Ein Team ist ein dauerhafter Raum auf dem Relay mit eigenem Schlüssel:
 
 ```
-brise://team/<team-id>?relay=<url>&name=<name>#<team-schlüssel>
+brise://team/<team-id>?relay=<url>&name=<name>&owner=<besitzer-id>#<team-schlüssel>
 ```
 
-Wer den Link hat, gehört dazu. Team-ID und Schlüssel speichert jedes Mitglied
+Wer den Link hat, gehört dazu. `owner` ist die Ed25519-ID dessen, der das Team
+angelegt hat; sie ist der Vertrauensanker für Admin-Rechte (fehlt bei alten Links). Team-ID und Schlüssel speichert jedes Mitglied
 (siehe Identität), Brise verbindet beim Start alle Teams. Frames wie oben,
 signiert mit der eigenen Identität, AAD mit der Team-ID.
 
@@ -166,7 +167,16 @@ signiert mit der eigenen Identität, AAD mit der Team-ID.
 |---|---|---|
 | `announce` | `id, name, backends: [{id, label, plan, active}], sessions: [{sessionId, title, project, backend, billedTo, policy, link, running, participants}]` | alle 25 s und bei Änderungen. Nach 75 s Stille gilt ein Mitglied als abwesend. |
 | `projects` | `id, items: [{id, name, repo?, note?, addedBy?}], at` | gemeinsame Projektliste, der neueste Stand (`at`) gewinnt |
+| `state` | `id, doc: {by, sig, body}` | signierter Team-Stand: Admins, Richtlinien, entfernte Mitglieder, Audit-Log. Jeder reicht den neuesten an Nachzügler weiter. |
 | `bye` | `id` | Mitglied verlässt das Team |
+
+Der Team-Stand ist unabhängig vom Frame signiert
+(`Ed25519(by, "brise-team-v1:" + team + ":" + body)`) und wird nur übernommen,
+wenn `by` der Besitzer oder ein bisheriger Admin ist und die Version steigt.
+Einzelheiten, Richtlinien und Grenzen der Durchsetzung:
+`docs/adr/0005-team-workspaces.md`. Hosts lehnen Gast-Prompts von Mitgliedern ab,
+deren Team-Limit für geteilte Abos (`sharedDailyPrompts`, `sharedDailyTokens`)
+erreicht ist, und buchen deren Nutzung in `<Datenordner>/team-usage.json`.
 
 In `sessions` steht der Beitritts-Link der geteilten Session. Teammitglieder
 treten mit einem Klick bei; der Host erkennt sie an der Identität und gibt ihnen
@@ -212,6 +222,6 @@ Anhänge erscheinen nur mit Namen, ohne Pfad.
 - `brise://`-Links werden noch nicht vom System geöffnet, sie werden eingefügt.
 - Präsenz beschränkt sich auf online/abwesend. „Tippt gerade“ und Kommentare
   folgen mit D3.
-- Teams haben keinen Admin: Wer den Team-Link hat, ist Mitglied. Zum Ausschluss
-  ein neues Team anlegen.
+- Entfernte Teammitglieder verlieren Team-Rolle und Sichtbarkeit, können den
+  Team-Raum aber bis zu einer Schlüsselrotation weiter mitlesen (ADR 0005).
 - Ein Team über das LAN-Relay ist nur erreichbar, solange Brise beim Anleger läuft.

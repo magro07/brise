@@ -145,6 +145,7 @@ async fn check(key: &str) -> CmdResult<KeyCheck> {
 
 #[tauri::command]
 pub async fn cortecs_save_key(key: String) -> CmdResult<KeyCheck> {
+    crate::policy::check_section("cortecs")?;
     let key = key.trim().to_string();
     if key.len() < 16 || key.contains(char::is_whitespace) {
         return Ok(KeyCheck { valid: false, message: "Das sieht nicht nach einem Cortecs-Schlüssel aus.".into(), models: 0 });
@@ -159,6 +160,7 @@ pub async fn cortecs_save_key(key: String) -> CmdResult<KeyCheck> {
 
 #[tauri::command]
 pub fn cortecs_delete_key() -> CmdResult<()> {
+    crate::policy::check_section("cortecs")?;
     match entry().and_then(|e| e.delete_credential()) {
         Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
         Err(e) => Err(e.to_string()),
@@ -201,9 +203,17 @@ pub fn settings() -> Settings {
 }
 
 #[tauri::command]
-pub fn cortecs_save_settings(settings: Settings) -> CmdResult<()> {
+pub fn cortecs_save_settings(mut settings: Settings) -> CmdResult<()> {
+    crate::policy::check_section("cortecs")?;
+    let p = crate::policy::effective().policy;
+    settings.eu_native |= p.eu_native;
+    settings.secrecy203 |= p.secrecy203;
+    write_settings(&settings)
+}
+
+pub fn write_settings(settings: &Settings) -> CmdResult<()> {
     let _ = std::fs::create_dir_all(data_dir());
-    std::fs::write(settings_path(), serde_json::to_vec_pretty(&settings).map_err(|e| e.to_string())?).map_err(|e| e.to_string())
+    std::fs::write(settings_path(), serde_json::to_vec_pretty(settings).map_err(|e| e.to_string())?).map_err(|e| e.to_string())
 }
 
 /// Felder, die Brise in jede Cortecs-Anfrage setzt. ZDR immer.
@@ -394,6 +404,7 @@ pub async fn ensure_vibe_config() -> CmdResult<bool> {
 /// Fügt ein Cortecs-Modell zu Vibe hinzu – nur Modelle mit ZDR.
 #[tauri::command]
 pub async fn cortecs_add_model(id: String) -> CmdResult<String> {
+    crate::policy::check_section("cortecs")?;
     let catalog = catalog().await?;
     let info = catalog.iter().find(|m| m.id == id).ok_or("Cortecs kennt dieses Modell nicht.")?;
     if !info.zdr {
@@ -421,6 +432,7 @@ pub async fn cortecs_add_model(id: String) -> CmdResult<String> {
 /// nimmt Vibe stattdessen das Modell der Session (bei ZDR: Cortecs).
 #[tauri::command]
 pub fn cortecs_utility_active(on: bool) -> CmdResult<bool> {
+    crate::policy::check_section("cortecs")?;
     edit_config(|doc| {
         if on {
             if !doc.contains_key("utility_models") {
@@ -451,7 +463,7 @@ pub struct Status {
     settings: Settings,
     utility_active: bool,
     /// In Vibe eingetragene Cortecs-Modelle (Aliase).
-    vibe_models: Vec<String>,
+    pub vibe_models: Vec<String>,
     decision_models: Vec<(String, String)>,
     secrecy_providers: Vec<String>,
 }

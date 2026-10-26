@@ -86,6 +86,7 @@ pub fn json_to_table(item: &Value) -> CmdResult<toml_edit::Table> {
 /// `value = null` entfernt den Eintrag, Vibe nimmt dann wieder seinen Standard.
 #[tauri::command]
 pub fn write_config_value(key: Vec<String>, value: Value) -> CmdResult<()> {
+    crate::policy::check_config_write(&key, &value)?;
     if key.is_empty() {
         return Err("Leerer Schlüssel".into());
     }

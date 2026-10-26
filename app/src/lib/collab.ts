@@ -10,6 +10,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type { PermissionRequest } from "./acp";
 import { load, save } from "./persist";
+import type { TeamState } from "./policy";
 import { basename, useStore, type Item, type Session } from "./store";
 
 export type CollabRole = "viewer" | "collaborator" | "approver";
@@ -93,6 +94,12 @@ export interface TeamView {
   me: string;
   members: Member[];
   projects: TeamProject[];
+  /** Besitzer des Teams (fehlt bei alten Teams). */
+  owner: string | null;
+  /** Ich darf Rollen und Richtlinien ändern. */
+  admin: boolean;
+  /** Signierter Team-Stand: Admins, Richtlinien, Audit-Log. */
+  state: TeamState | null;
 }
 
 export interface Queued {
@@ -627,6 +634,15 @@ export function initCollab(): () => void {
     ),
     // Team
     listen<TeamView>("collab:team", (e) => useCollab.setState((s) => ({ teams: { ...s.teams, [e.payload.id]: e.payload } }))),
+    // Ein Admin hat mich entfernt: Brise hat das Team schon verlassen.
+    listen<{ id: string; name: string }>("collab:team-removed", (e) => {
+      useCollab.setState((s) => {
+        const teams = { ...s.teams };
+        delete teams[e.payload.id];
+        return { teams };
+      });
+      if (useCollab.getState().prefs.shareTeam === e.payload.id) useCollab.getState().setPrefs({ shareTeam: "" });
+    }),
   ];
 
   // Prompts, Turn-Enden und Hinweise entstehen im Store, nicht bei Vibe.

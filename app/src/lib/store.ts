@@ -18,6 +18,7 @@ import {
 } from "./acp";
 import { load, save } from "./persist";
 import { cortecs } from "./cortecs";
+import { allowedPrefs } from "./policy";
 import { promptWithReserve } from "./accounts";
 import type { Suggestion } from "./acp";
 import { budgetModel, perfEvent, perfFinish, perfStart, reportTurn, type TurnPerf } from "../components/usage/usage";
@@ -947,7 +948,11 @@ export const useStore = create<State & Actions>((set, get) => {
     set: (partial) => set(partial),
 
     setPrefs: (p) => {
-      const prefs = { ...get().prefs, ...p };
+      // Vom Team-Admin gesperrte Bereiche bleiben unverändert – ohne Update,
+      // sonst laufen Effekte, die einen Wert korrigieren wollen, im Kreis.
+      const allowed = allowedPrefs(p);
+      if (allowed !== p && Object.entries(allowed).every(([k, v]) => JSON.stringify(v) === JSON.stringify(get().prefs[k as keyof Prefs]))) return;
+      const prefs = { ...get().prefs, ...allowed };
       save("prefs", prefs);
       applyTheme(prefs.theme);
       applyFontSize(prefs.fontSize);

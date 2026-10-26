@@ -410,6 +410,7 @@ fn host_frame(app: &AppHandle, inner: &Mutex<Inner>, session_id: &str, frame: &[
     let Some(h) = g.hosts.get(session_id) else { return };
     let Some((from, body)) = crypto::open(&h.link.key, &h.link.room, frame) else { return };
     let in_team = team::is_member(&g, &from);
+    let limits = team::shared_limits(&g, &from);
     let Some(h) = g.hosts.get_mut(session_id) else { return };
     // Eigene Frames kommen beim Neuverbinden aus dem Puffer des Relays zurück.
     if from == h.me.id() || h.blocked.contains(&from) {
@@ -474,7 +475,8 @@ fn host_frame(app: &AppHandle, inner: &Mutex<Inner>, session_id: &str, frame: &[
                 return;
             }
             let id = body["id"].as_str().map(str::to_string).unwrap_or_else(message_id);
-            if let Some(reason) = h.prompt_refusal(&from) {
+            let queued = h.queue.iter().filter(|q| q.author_id == from).count() as u32;
+            if let Some(reason) = h.prompt_refusal(&from).or_else(|| team::limit_refusal(limits, &from, queued, &h.name)) {
                 h.send(json!({ "t": "rejected", "to": from, "ref": id, "reason": reason }));
                 return;
             }
@@ -721,6 +723,7 @@ pub fn collab_publish(app: AppHandle, state: State<'_, CollabState>, session_id:
                 if let Some(p) = author.as_ref().and_then(|a| h.participants.get_mut(a)) {
                     p.roll_day();
                     p.tokens += tokens;
+                    team::book(&p.id, &p.name, 0, tokens);
                     author_name = json!(p.name);
                     usage_changed = true;
                 }
@@ -820,6 +823,7 @@ pub fn collab_queue_take(app: AppHandle, state: State<'_, CollabState>, session_
         if let Some(p) = h.participants.get_mut(&item.author_id) {
             p.roll_day();
             p.prompts += 1;
+            team::book(&p.id, &p.name, 1, 0);
         }
         h.next_author = Some(item.author_id.clone());
         h.send_roster();

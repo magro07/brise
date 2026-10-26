@@ -4,6 +4,7 @@ import { THINKING_LABEL, useStore, type Session } from "../../lib/store";
 import { tokens } from "../../lib/format";
 import { useCaps, useSessionBackend } from "../../lib/backends";
 import { Menu, MenuContent, MenuItem, MenuLabel, MenuSeparator, MenuTrigger, Ring, Tip, clsx } from "../ui";
+import { modeAllowed, modelAllowed, usePolicy } from "../../lib/policy";
 
 export const MODE_INFO: Record<string, { label: string; description: string; icon: LucideIcon }> = {
   ask: { label: "Alles fragen", description: "Jede Aktion braucht deine Freigabe", icon: Hand },
@@ -56,9 +57,11 @@ export function ModePicker({ session }: { session?: Session }) {
   const setOption = useStore((s) => s.setOption);
   const current = value("mode") ?? "accept-edits";
   const info = MODE_INFO[current];
-  const list: { id: string; name: string; description?: string }[] = modes.length
-    ? modes
-    : Object.keys(MODE_INFO).map((id) => ({ id, name: MODE_INFO[id].label }));
+  const effective = usePolicy((s) => s.effective);
+  // Vom Team-Admin gesperrte Modi gar nicht erst anbieten.
+  const list: { id: string; name: string; description?: string }[] = (modes.length ? modes : Object.keys(MODE_INFO).map((id) => ({ id, name: MODE_INFO[id].label }))).filter(
+    (m) => m.id === current || modeAllowed(m.id, effective),
+  );
   return (
     <Menu>
       <MenuTrigger asChild>
@@ -94,6 +97,7 @@ export function OptionPicker({ session, id }: { session?: Session; id: "model" |
   const autoCapable = useCaps(useSessionBackend(session)).autoModel;
   const auto = useStore((s) => s.prefs.autoModel) && autoCapable;
   const setPrefs = useStore((s) => s.setPrefs);
+  const effective = usePolicy((s) => s.effective);
   const option = config.find((o) => o.id === id);
   if (!option?.options?.length) return null;
   const current = value(id);
@@ -121,7 +125,7 @@ export function OptionPicker({ session, id }: { session?: Session; id: "model" |
               <MenuSeparator />
             </>
           )}
-          {option.options.map((o) => (
+          {option.options.filter((o) => o.value === current || modelAllowed(o.value, effective)).map((o) => (
             <MenuItem
               key={o.value}
               checked={!auto && o.value === current}

@@ -21,6 +21,7 @@ import {
   RotateCcw,
   Search,
   ShieldCheck,
+  Lock,
   SlidersHorizontal,
   Trash2,
   UserRound,
@@ -47,6 +48,7 @@ import { BenchPage } from "../bench/BenchPage";
 import { CortecsView } from "./CortecsSettings";
 import { CollabSettings } from "../collab/CollabSettings";
 import { SecretsCard } from "./SecretsSettings";
+import { managedBy, sectionAccess, usePolicy } from "../../lib/policy";
 
 const SECTIONS = [
   { id: "general", label: "Allgemein", icon: Palette },
@@ -253,7 +255,9 @@ export function SettingsView() {
   const [dirty, setDirty] = useState(false);
   const [query, setQuery] = useState("");
   const vibe = useStore((s) => !!s.agents.vibe);
-  const sections = SECTIONS.filter((s) => vibe || !VIBE_SECTIONS.has(s.id));
+  const effective = usePolicy((s) => s.effective);
+  const sections = SECTIONS.filter((s) => (vibe || !VIBE_SECTIONS.has(s.id)) && sectionAccess(s.id, effective) !== "hidden");
+  const access = sectionAccess(section, effective);
 
   const reload = useCallback(async () => {
     try {
@@ -321,7 +325,8 @@ export function SettingsView() {
             )}
           >
             <s.icon className="h-4 w-4 text-muted" />
-            {s.label}
+            <span className="flex-1">{s.label}</span>
+            {sectionAccess(s.id, effective) === "read" && <Lock className="h-3.5 w-3.5 text-muted" aria-label="vom Admin verwaltet" />}
           </button>
         ))}
       </nav>
@@ -346,6 +351,20 @@ export function SettingsView() {
             </div>
           )}
 
+          {access !== "edit" && (
+            <div className="mb-4 flex items-start gap-3 rounded-xl border border-line bg-panel px-4 py-3 text-[0.92em]" data-testid="policy-banner">
+              <Lock className="mt-0.5 h-4 w-4 shrink-0 text-muted" />
+              <div>
+                <div className="font-semibold">Vom Admin verwaltet</div>
+                <div className="text-fg-2">
+                  {access === "hidden" ? "Dieser Bereich ist ausgeblendet." : "Du kannst diese Einstellungen ansehen, aber nicht ändern."} Festgelegt {managedBy(effective)}.
+                </div>
+              </div>
+            </div>
+          )}
+
+          {access !== "hidden" && (
+          <fieldset disabled={access !== "edit"} className="m-0 min-w-0 border-0 p-0">
           {section === "backends" && <AgentsSettings />}
 
           {section === "general" && (
@@ -580,6 +599,8 @@ export function SettingsView() {
                 {advanced.map(([k]) => field(k))}
               </Card>
             </>
+          )}
+          </fieldset>
           )}
         </div>
       </div>

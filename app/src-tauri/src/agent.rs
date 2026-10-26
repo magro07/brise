@@ -192,6 +192,7 @@ async fn auth_of(backend: &str, conn: &Connection) -> Value {
 /// laufender Agent übernommen, etwa nach einem Neuladen der Oberfläche.
 #[tauri::command]
 pub async fn agent_connect(app: AppHandle, state: State<'_, AgentState>, reuse: bool, backend: Option<String>) -> CmdResult<ConnectInfo> {
+    crate::policy::check_backend(backend.as_deref().unwrap_or(DEFAULT_BACKEND))?;
     connect_backend(&app, &state, &backend.unwrap_or_else(|| DEFAULT_BACKEND.into()), reuse).await
 }
 
@@ -439,6 +440,7 @@ pub async fn login(app: AppHandle, state: State<'_, AgentState>) -> CmdResult<Va
 
 #[tauri::command]
 pub async fn sign_out(state: State<'_, AgentState>) -> CmdResult<Value> {
+    crate::policy::check_section("account")?;
     call(&state, "_auth/signOut", json!({})).await?;
     call(&state, "_auth/status", json!({})).await
 }
@@ -492,6 +494,7 @@ pub async fn new_session(
     account: Option<String>,
 ) -> CmdResult<Value> {
     let backend = backend.unwrap_or_else(|| DEFAULT_BACKEND.into());
+    crate::policy::check_backend(&backend)?;
     let account = (backend == DEFAULT_BACKEND).then(|| account.unwrap_or_else(|| crate::accounts::for_project(&cwd)));
     let conn = match &account {
         Some(a) => account_connection(&app, &state, a).await?,
@@ -502,6 +505,7 @@ pub async fn new_session(
     let mut r = conn.request("session/new", json!({ "cwd": cwd, "mcpServers": servers })).await.map_err(|e| e.to_string())?;
     if let Some(id) = r["sessionId"].as_str() {
         crate::secrets::bind_tag(&tag, id);
+        crate::policy::note_session(id, &r);
         remember(&state, id, &backend);
         if let Some(a) = &account {
             bind(&app, id, a);
@@ -537,6 +541,7 @@ pub async fn load_session(
     if let Some(a) = &account {
         bind(&app, &session_id, a);
     }
+    crate::policy::note_session(&session_id, &result);
     Ok(result)
 }
 
@@ -648,6 +653,7 @@ pub async fn list_sessions(state: State<'_, AgentState>, cwd: Option<String>, ba
 /// `prompt` sind fertige ACP-Content-Blöcke (Text, resource_link, image).
 #[tauri::command]
 pub async fn prompt(app: AppHandle, state: State<'_, AgentState>, session_id: String, prompt: Vec<Value>) -> CmdResult<Value> {
+    crate::policy::check_prompt(&session_id, &session_backend(&state, &session_id))?;
     session_connection(&app, &state, &session_id)
         .await?
         .request("session/prompt", json!({ "sessionId": session_id, "prompt": prompt }))
@@ -664,8 +670,20 @@ pub async fn set_config_option(
     config_id: String,
     value: Value,
 ) -> CmdResult<Value> {
+    let text = value.as_str().unwrap_or_default().to_string();
+    match config_id.as_str() {
+        "model" => crate::policy::check_model(&text)?,
+        "mode" => crate::policy::check_mode(&text)?,
+        _ => {}
+    }
     let params = json!({ "sessionId": session_id, "configId": config_id, "value": value });
-    session_call(&app, &state, &session_id, "session/set_config_option", params).await
+    let r = session_call(&app, &state, &session_id, "session/set_config_option", params).await?;
+    match config_id.as_str() {
+        "model" => crate::policy::note_model(&session_id, &text),
+        "mode" => crate::policy::note_mode(&session_id, &text),
+        _ => {}
+    }
+    Ok(r)
 }
 
 #[tauri::command]
@@ -714,7 +732,10 @@ pub async fn cancel(app: AppHandle, state: State<'_, AgentState>, session_id: St
 
 #[tauri::command]
 pub async fn set_mode(app: AppHandle, state: State<'_, AgentState>, session_id: String, mode_id: String) -> CmdResult<Value> {
-    session_call(&app, &state, &session_id, "session/set_mode", json!({ "sessionId": session_id, "modeId": mode_id })).await
+    crate::policy::check_mode(&mode_id)?;
+    let r = session_call(&app, &state, &session_id, "session/set_mode", json!({ "sessionId": session_id, "modeId": mode_id })).await?;
+    crate::policy::note_mode(&session_id, &mode_id);
+    Ok(r)
 }
 
 #[tauri::command]

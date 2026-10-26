@@ -2,6 +2,7 @@ import { Users } from "lucide-react";
 import { useCollab } from "../../lib/collab";
 import { Button, Switch, clsx } from "../ui";
 import { RolePicker } from "./ShareDialog";
+import { TeamAdmin } from "./TeamAdmin";
 
 function Row({ title, description, control }: { title: string; description?: string; control: React.ReactNode }) {
   return (
@@ -36,6 +37,9 @@ export function CollabSettings() {
           </Button>
         </div>
       </section>
+      {teams.map((t) => (
+        <TeamAdmin key={t.id} team={t} />
+      ))}
       <section className="mb-6">
         <h3 className="mb-1 text-[0.95em] font-semibold">Verbindung</h3>
         <p className="mb-2 text-[0.88em] text-muted">

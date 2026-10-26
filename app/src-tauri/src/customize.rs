@@ -91,6 +91,17 @@ const PREFS: &[(&str, &str)] = &[
     ("accent", "Akzentfarbe als CSS-Farbe, z. B. \"#e8590c\" (null = Standard)"),
 ];
 
+/// Einstellungsbereich einer Oberflächen-Einstellung (für Team-Richtlinien).
+fn pref_section(key: &str) -> &'static str {
+    match key {
+        "sttLanguage" | "autoNarrate" => "voice",
+        "embedModel" | "agentSearch" => "embeddings",
+        "rea" => "agents",
+        "autoModel" | "routing" => "models",
+        _ => "general",
+    }
+}
+
 fn tools() -> Value {
     let mut list = app_tools();
     if let Some(a) = list.as_array_mut() {
@@ -165,6 +176,7 @@ fn call_tool(name: &str, args: &Value) -> CmdResult<String> {
             if !PREFS.iter().any(|(k, _)| *k == key) {
                 return Err(format!("Unbekannte Einstellung {key}"));
             }
+            crate::policy::check_section(pref_section(key))?;
             let mut map = read_settings();
             let overrides = map.entry("overrides").or_insert_with(|| json!({}));
             overrides[key] = args["value"].clone();

@@ -18,6 +18,7 @@ import { DraftHero, NoProject, StartScreen } from "./components/screens/Screens"
 import { NewProjectDialog } from "./components/screens/NewProject";
 import { TextPrompt, Tour } from "./components/screens/Tour";
 import { initCollab } from "./lib/collab";
+import { initPolicy } from "./lib/policy";
 import { ShareDialog } from "./components/collab/ShareDialog";
 import { JoinDialog } from "./components/collab/JoinDialog";
 import { TeamDialog } from "./components/collab/TeamDialog";
@@ -54,6 +55,7 @@ function useBackend() {
     s().connect(true);
     const stopCollab = initCollab();
     const stopSecrets = initSecrets();
+    const stopPolicy = initPolicy();
     api.readCustomization().then((c) => s().applyCustomization({ ...c, settings: { ...c.settings, overrides: undefined } }));
     api.startupProject().then((p) => {
       if (p) s().openProject(p);
@@ -63,6 +65,7 @@ function useBackend() {
       unlisten.forEach((f) => f());
       stopCollab();
       stopSecrets();
+      stopPolicy();
     };
   }, []);
 }

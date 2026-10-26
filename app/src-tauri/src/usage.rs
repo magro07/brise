@@ -491,6 +491,29 @@ pub fn usage_record(mut entry: Record) -> CmdResult<()> {
     Ok(())
 }
 
+/// Kosten (nach aktueller Preistabelle) seit `from` (ms).
+fn spent_since(from: u64) -> f64 {
+    let pricer = Pricer::new();
+    read_range(from, now_ms()).iter().map(|r| pricer.cost(r).0).sum()
+}
+
+/// Heute (UTC) ausgegeben, in Euro.
+pub fn spent_today_eur() -> f64 {
+    let now = now_ms();
+    spent_since(now - now % 86_400_000)
+}
+
+/// Im laufenden Monat (UTC) ausgegeben, in Euro.
+pub fn spent_month_eur() -> f64 {
+    let now = now_ms();
+    let month = year_month(now);
+    let mut day = now - now % 86_400_000;
+    while day >= 86_400_000 && year_month(day - 86_400_000) == month {
+        day -= 86_400_000;
+    }
+    spent_since(day)
+}
+
 // ---------- Einstellungen ----------
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -523,7 +546,13 @@ fn load_settings() -> Settings {
 }
 
 #[tauri::command]
-pub fn usage_save_settings(settings: Settings) -> CmdResult<()> {
+pub fn usage_save_settings(mut settings: Settings) -> CmdResult<()> {
+    if crate::policy::check_section("usage").is_err() {
+        // Vom Admin verwaltet: nur die Buchführung der gezeigten Warnungen übernehmen.
+        let warned = settings.warned;
+        settings = load_settings();
+        settings.warned = warned;
+    }
     let _guard = LOCK.lock().unwrap_or_else(|e| e.into_inner());
     std::fs::create_dir_all(dir()).map_err(|e| e.to_string())?;
     std::fs::write(settings_path(), serde_json::to_vec_pretty(&settings).map_err(|e| e.to_string())?).map_err(|e| e.to_string())
@@ -538,6 +567,7 @@ pub fn usage_prices() -> Value {
 /// `None` stellt die mitgelieferte Tabelle wieder her.
 #[tauri::command]
 pub fn usage_save_prices(table: Option<PriceTable>) -> CmdResult<()> {
+    crate::policy::check_section("usage")?;
     let _guard = LOCK.lock().unwrap_or_else(|e| e.into_inner());
     match table {
         Some(t) => {
