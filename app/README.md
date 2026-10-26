@@ -28,6 +28,8 @@ src-tauri/src/
   models.rs              Mistral-Modellkatalog, Modelle in config.toml, Startprüfung
   skills.rs              mitgelieferte Skills installieren, Skill-Liste
   assist.rs              Auto-Modellwahl, personalisierte Vorschläge, Commit-Nachrichten
+  cortecs.rs             Cortecs: Schlüssel, Modelle für Vibe, ZDR-Proxy, Decisions-API, Kosten
+  sensitive.rs           Prüfung auf sensible Daten (lokaler Vorfilter + Decision-Modell)
   git.rs                 Git über die Kommandozeile, MinGit unter Windows
   terminal.rs            eingebautes Terminal (PTY)
   files.rs               Dateien für den Editor, externe Editoren (VS Code & Co.)
@@ -158,6 +160,31 @@ Sessions erst nach dem ersten Turn, leere tauchen also nirgends auf.
 - **Personalisierte Vorschläge:** Auf der Startseite eines Projekts formuliert Mistral
   Small vier Aufgaben aus Manifest, README, Git-Status, Commits, TODOs und den letzten
   Sessions. Zwischengespeichert, bis sich der Git-Stand ändert oder 12 Stunden um sind.
+
+## Cortecs und Zero Data Retention
+
+[Cortecs](https://cortecs.ai) ist ein europäischer LLM-Router. Mit einem
+Cortecs-Key (Einstellungen → Cortecs & Datenschutz, gespeichert im Schlüsselbund
+unter Dienst `dev.brise.cortecs`, Konto `CORTECS_API_KEY`) bekommt Brise:
+
+- **Modelle ohne Datenspeicherung für Vibe:** Anbieter `cortecs` in Vibes
+  `config.toml` mit GLM-5.3, Kimi K2.7 Code, Qwen 3.8 27B und Mistral Medium 3.5
+  (Aliase `cortecs-…`, mit „Cortecs ZDR“ im Namen). Vibe kann keine zusätzlichen
+  Body-Felder senden, deshalb läuft jeder Aufruf über einen lokalen Proxy in Brise
+  (`127.0.0.1:47318`), der `allow_zero_data_retention: true` setzt. Ohne Brise
+  scheitern diese Modelle, statt ohne ZDR zu senden.
+- **„Achtung, sensible Daten“:** Vor dem Senden prüft Brise Prompt und
+  angehängte Textdateien lokal (IBAN, Steuer-ID, Schlüssel, Gesundheitsdaten,
+  Berufsgeheimnis, EU AI Act …) und bei Treffern mit einem Cortecs-Decision-Modell
+  (ebenfalls ohne Datenspeicherung). Der Hinweis bietet den Wechsel auf ein
+  ZDR-Modell, „Trotzdem senden“ oder „Immer für dieses Projekt ZDR“.
+- **Entscheidungen über Cortecs:** Einstufung und Denkstufe über die
+  Decisions-API mit Wahrscheinlichkeiten (Standard `clef-flash`: 20/20 richtig,
+  ~250 ms, ~1 Cent je 1000 Entscheidungen).
+- **Kosten in EUR** im Nutzungsjournal, so wie Cortecs sie meldet.
+
+Details, Messwerte und Grenzen: [docs/adr/0004-cortecs.md](../docs/adr/0004-cortecs.md).
+Live-Tests mit Schlüssel: `cargo test --lib cortecs::tests -- --ignored --test-threads=1`.
 
 ## Selbstanpassung per Chat
 

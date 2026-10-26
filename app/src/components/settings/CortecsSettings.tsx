@@ -185,7 +185,7 @@ export function CortecsView({ onModelsChanged }: { onModelsChanged: () => void }
           description="Einstufung, Denkstufe und Prüfung auf sensible Daten."
           control={
             <select
-              value={status?.settings.decisionModel ?? "laya"}
+              value={status?.settings.decisionModel ?? "clef-flash"}
               onChange={(e) => saveSettings({ decisionModel: e.target.value })}
               className="h-8 rounded-lg border border-line bg-panel px-2 text-[0.88em]"
               disabled={!status}

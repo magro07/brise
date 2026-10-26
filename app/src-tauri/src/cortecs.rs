@@ -43,12 +43,14 @@ pub const PROVIDER: &str = "cortecs";
 const PROXY_PORT: u16 = 47318;
 
 /// Decision-Modelle (Tag „Decision“). Alle laufen bei ZDR-Anbietern.
+/// Vergleich an 20 Aufgaben in docs/adr/0004-cortecs.md: Clef Flash ist der
+/// beste Kompromiss, Laya ist schneller, aber für Brises Fragen zu ungenau.
 pub const DECISION_MODELS: &[(&str, &str)] = &[
-    ("laya", "Laya (Berget, schnell)"),
-    ("clef-flash", "Clef Flash (Berget)"),
-    ("clef", "Clef (sference)"),
+    ("clef-flash", "Clef Flash (Berget, empfohlen)"),
+    ("clef", "Clef (sference, genauer, 5× teurer)"),
+    ("laya", "Laya (Berget, am schnellsten, ungenau)"),
 ];
-const DEFAULT_DECISION_MODEL: &str = "laya";
+const DEFAULT_DECISION_MODEL: &str = "clef-flash";
 /// Für Antworten mit Text (Vorschläge, Commit-Nachrichten).
 const DEFAULT_CHAT_MODEL: &str = "mistral-small-2603";
 
@@ -1060,6 +1062,164 @@ mod tests {
         println!("vibe: {} | {}", out.status, stdout.trim().chars().take(300).collect::<String>());
         let _ = std::fs::remove_dir_all(&home);
         assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr).chars().take(800).collect::<String>());
+    }
+
+    /// Brise trägt Anbieter und Modelle in eine (temporäre) config.toml ein,
+    /// Vibe liest sie und antwortet über ein Cortecs-Modell.
+    #[tokio::test(flavor = "current_thread")]
+    #[ignore]
+    async fn vibe_config() {
+        let key = read_key().expect("Cortecs-Key im Schlüsselbund");
+        let home = std::env::temp_dir().join("brise-cortecs-config");
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::write(home.join("config.toml"), "active_model = \"cortecs-qwen3-8-27b\"\n\n[[models]]\nname = \"mistral-large-4\"\nprovider = \"mistral\"\nalias = \"mistral-large-4\"\n").unwrap();
+        // SAFETY: einziger Test, der VIBE_HOME setzt; läuft mit --ignored allein.
+        unsafe { std::env::set_var("VIBE_HOME", &home) };
+        start_proxy().unwrap();
+        assert!(ensure_vibe_config().await.unwrap(), "erster Lauf ändert die Datei");
+        assert!(!ensure_vibe_config().await.unwrap(), "zweiter Lauf ändert nichts");
+        assert!(cortecs_utility_active(true).unwrap());
+        assert!(cortecs_add_model("gpt-5-nano".into()).await.is_err(), "Nicht-ZDR-Modell abgelehnt");
+        assert_eq!(cortecs_add_model("gemma-4-31b-it".into()).await.unwrap(), "cortecs-gemma-4-31b-it");
+        let text = std::fs::read_to_string(home.join("config.toml")).unwrap();
+        println!("{text}");
+        assert!(text.contains("mistral-large-4") && text.contains("api_key_env_var = \"CORTECS_API_KEY\"") && !text.contains(&key));
+        let status = cortecs_status();
+        assert_eq!(status.vibe_models.len(), DEFAULT_MODELS.len() + 1);
+        let out = tokio::process::Command::new("vibe")
+            .args(["-p", "Antworte nur mit dem Wort OK.", "--output", "text", "--max-turns", "1", "--workdir"])
+            .arg(&home)
+            .env("CORTECS_API_KEY", &key)
+            .output()
+            .await
+            .unwrap();
+        println!("vibe: {} | {}", out.status, String::from_utf8_lossy(&out.stdout).trim());
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr).chars().take(800).collect::<String>());
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// Vergleich für docs/adr/0004-cortecs.md:
+    /// `cargo test --lib cortecs::tests::eval -- --ignored --nocapture --test-threads=1`.
+    #[tokio::test(flavor = "current_thread")]
+    #[ignore]
+    async fn eval() {
+        const TASKS: &[(&str, &str)] = &[
+            ("simple", "Was macht die Funktion `debounce` in utils.ts?"),
+            ("simple", "Korrigiere den Tippfehler 'Enstellungen' in Settings.tsx"),
+            ("simple", "Benenne die Variable `tmp` in `buffer` um"),
+            ("simple", "Formatiere die Datei main.rs mit rustfmt"),
+            ("simple", "Erklär mir kurz den Unterschied zwischen let und const"),
+            ("simple", "Füge in README.md einen Abschnitt 'Lizenz' mit Apache-2.0 hinzu"),
+            ("standard", "Füge der Einstellungsseite einen Schalter für Benachrichtigungstöne hinzu und speichere ihn in den Prefs"),
+            ("standard", "Schreib Unit-Tests für parse_config in config.rs, inklusive Fehlerfällen"),
+            ("standard", "Der Export als CSV lässt die Kopfzeile weg – finde und behebe den Fehler in export.ts"),
+            ("standard", "Baue eine Paginierung für die Sessionliste in der Sidebar (je 50 Einträge)"),
+            ("standard", "Ergänze den REST-Endpunkt /api/users um Filter nach Rolle und Tests dazu"),
+            ("standard", "Ersetze moment.js durch date-fns in den drei Dateien, die es nutzen"),
+            ("standard", "Füge eine Dark-Mode-Variante für die Diff-Ansicht hinzu"),
+            ("complex", "Migriere die gesamte App von Redux auf Zustand, inklusive aller 40 Slices und Tests"),
+            ("complex", "Unter Last gibt es sporadisch Deadlocks zwischen dem Index-Thread und dem Terminal – finde die Ursache"),
+            ("complex", "Entwirf eine Architektur für Kollaboration in Echtzeit mit CRDTs und einem Relay-Server"),
+            ("complex", "Mach einen Sicherheits-Review der Authentifizierung: Token-Speicherung, CSRF, Session-Fixation"),
+            ("complex", "Die Startzeit ist von 1 s auf 6 s gestiegen; profiliere und optimiere den Start"),
+            ("complex", "Plane die Aufteilung des Monolithen in drei Services mit Migrationspfad ohne Downtime"),
+            ("complex", "Refactore das Plugin-System so, dass Plugins in einer WASM-Sandbox laufen, über alle Module"),
+        ];
+        // Mistral Small laut Vibe (FAST_MODEL_CANDIDATES): 0,10 / 0,30 je Mio. Tokens.
+        async fn mistral(text: &str) -> (String, u64, f64) {
+            let key = crate::credentials::read_key().expect("Mistral-Key");
+            let started = Instant::now();
+            let v: Value = client()
+                .post(format!("{}/chat/completions", crate::credentials::API_BASE))
+                .bearer_auth(key)
+                .timeout(Duration::from_secs(20))
+                .json(&json!({ "model": "mistral-small-latest", "temperature": 0.2, "response_format": { "type": "json_object" },
+                    "messages": [{ "role": "system", "content": crate::assist::CLASSIFY_SYSTEM }, { "role": "user", "content": crate::assist::classify_input(text, None) }] }))
+                .send()
+                .await
+                .unwrap()
+                .json()
+                .await
+                .unwrap();
+            let ms = started.elapsed().as_millis() as u64;
+            let level = serde_json::from_str::<Value>(v["choices"][0]["message"]["content"].as_str().unwrap_or("{}")).unwrap_or_default()["level"].as_str().unwrap_or("?").to_string();
+            let cost = v["usage"]["prompt_tokens"].as_f64().unwrap_or(0.0) * 0.10e-6 + v["usage"]["completion_tokens"].as_f64().unwrap_or(0.0) * 0.30e-6;
+            (level, ms, cost)
+        }
+        let models = ["laya", "clef-flash", "clef"];
+        let mut stats: Vec<(String, usize, usize, Vec<u64>, f64)> = std::iter::once("mistral-small".to_string()).chain(models.iter().map(|m| m.to_string())).map(|m| (m, 0, 0, vec![], 0.0)).collect();
+        println!("| # | erwartet | Mistral Small | laya | clef-flash | clef |\n|---|---|---|---|---|---|");
+        for (n, (want, text)) in TASKS.iter().enumerate() {
+            let mut row = format!("| {} | {want} |", n + 1);
+            let (level, ms, cost) = mistral(text).await;
+            let s = &mut stats[0];
+            s.1 += usize::from(level == *want);
+            s.2 += usize::from((level == "simple" && *want == "complex") || (level == "complex" && *want == "simple"));
+            s.3.push(ms);
+            s.4 += cost;
+            row.push_str(&format!(" {level} ({ms} ms) |"));
+            for (i, m) in models.iter().enumerate() {
+                match classify_task(text, None, Some(m)).await {
+                    Ok(v) => {
+                        let level = v["level"].as_str().unwrap_or("?").to_string();
+                        let ms = v["ms"].as_u64().unwrap_or(0);
+                        let p = v["probabilities"][&level].as_f64().unwrap_or(0.0);
+                        let s = &mut stats[i + 1];
+                        s.1 += usize::from(level == *want);
+                        s.2 += usize::from((level == "simple" && *want == "complex") || (level == "complex" && *want == "simple"));
+                        s.3.push(ms);
+                        s.4 += v["costEur"].as_f64().unwrap_or(0.0);
+                        row.push_str(&format!(" {level} {:.0} % ({ms} ms) |", p * 100.0));
+                    }
+                    Err(e) => row.push_str(&format!(" Fehler: {} |", e.chars().take(60).collect::<String>())),
+                }
+            }
+            println!("{row}");
+        }
+        println!("\n| Modell | richtig | grob falsch | Median | p90 | Kosten je 1000 Entscheidungen |\n|---|---|---|---|---|---|");
+        for (m, ok, bad, mut ms, cost) in stats {
+            ms.sort();
+            let q = |f: f64| ms.get(((ms.len() as f64 - 1.0) * f).round() as usize).copied().unwrap_or(0);
+            println!("| {m} | {ok}/20 | {bad} | {} ms | {} ms | {:.4} € |", q(0.5), q(0.9), cost / 20.0 * 1000.0);
+        }
+
+        const SENSITIVE: &[(bool, &str)] = &[
+            (false, "Schreib eine Funktion, die IBANs validiert, z. B. DE89 3704 0044 0532 0130 00"),
+            (true, "Hier die Patientenliste: Anna Müller, geb. 03.04.1981, Diagnose F32.1, Tel +49 170 1234567 – importier sie in die Datenbank"),
+            (true, "Mein DB-Passwort ist Xk9#mP2!qL, trag es in die .env ein: password=Xk9#mP2!qL"),
+            (false, "Refactore die Funktion parse_config und schreib Tests"),
+            (true, "Baue ein Tool, das Bewerber automatisch nach Lebenslauf rankt und aussortiert"),
+            (true, "Fasse dieses vertrauliche Board-Memo zusammen: Umsatzplanung 2027 sieht 14 Mio. EUR vor, Übernahme der Firma Hansen GmbH geplant"),
+            (false, "Schreibe Tests für die Klasse PatientRepository mit Mock-Daten"),
+            (false, "Ersetze process.env.API_KEY durch einen Config-Loader"),
+            (true, "Mandant Herr Dr. Klaus Berger, Az. 12/2026, schuldet 4.300 €; formuliere ein Mahnschreiben an ihn"),
+            (false, "Erkläre, wie Gesichtserkennung in OpenCV technisch funktioniert"),
+            (true, "Warum funktioniert mein Key sk-proj-AbCdEf1234567890GhIjKlMnOpQrStUv nicht?"),
+            (false, "Validiere im Kontaktformular E-Mail-Adressen wie test@example.com"),
+        ];
+        for model in ["laya", "clef-flash", "clef"] {
+            println!("\n**{model}**\n\n| erwartet | lokal | mit Cortecs | Kategorien | ms |\n|---|---|---|---|---|");
+            let (mut right, mut ms_all) = (0, vec![]);
+            for (want, text) in SENSITIVE {
+                let local = crate::sensitive::check(text, &[], None, false, None).await;
+                let remote = crate::sensitive::check(text, &[], None, true, Some(model)).await;
+                right += usize::from(remote.flagged == *want);
+                if remote.ms > 0 {
+                    ms_all.push(remote.ms);
+                }
+                println!(
+                    "| {} | {} | {} | {} | {} |",
+                    if *want { "sensibel" } else { "unkritisch" },
+                    if local.flagged { "markiert" } else { "–" },
+                    if remote.flagged { "markiert" } else { "–" },
+                    remote.reason,
+                    remote.ms
+                );
+            }
+            ms_all.sort();
+            println!("\n{model}: {right}/12 richtig, Median {} ms", ms_all.get(ms_all.len() / 2).copied().unwrap_or(0));
+        }
     }
 
     #[test]

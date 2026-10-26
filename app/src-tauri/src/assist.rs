@@ -59,11 +59,22 @@ pub async fn classify_task(text: String, history: Option<String>, model: Option<
     if via_cortecs(&provider) {
         return crate::cortecs::classify_task(&text, history.as_deref(), None).await;
     }
-    const SYSTEM: &str = "Du ordnest Aufgaben für einen Coding-Agenten einer Stufe zu, damit das passende Modell gewählt wird. \
+    let user = classify_input(&text, history);
+    let v = quick_json(model.as_deref().unwrap_or(FAST_MODEL), CLASSIFY_SYSTEM, &user, 6).await?;
+    let level = match v["level"].as_str() {
+        Some(l @ ("simple" | "standard" | "complex")) => l,
+        _ => "standard",
+    };
+    Ok(json!({ "level": level, "reason": v["reason"].as_str().unwrap_or("") }))
+}
+
+pub(crate) const CLASSIFY_SYSTEM: &str = "Du ordnest Aufgaben für einen Coding-Agenten einer Stufe zu, damit das passende Modell gewählt wird. \
         simple: kurze Fragen, Erklärungen, kleine lokale Änderungen, Umbenennungen, Formatierung. \
         standard: übliche Features, Bugfixes in wenigen Dateien, Tests schreiben. \
         complex: Architektur, große Refactorings über viele Dateien, schwierige Fehlersuche, Sicherheit, Performance, Planung. \
         Antworte nur als JSON: {\"level\":\"simple|standard|complex\",\"reason\":\"max. 8 Wörter auf Deutsch\"}";
+
+pub(crate) fn classify_input(text: &str, history: Option<String>) -> String {
     let mut user = String::new();
     if let Some(h) = history.filter(|h| !h.is_empty()) {
         user.push_str("Bisheriger Verlauf (Auszug):\n");
@@ -72,12 +83,7 @@ pub async fn classify_task(text: String, history: Option<String>, model: Option<
     }
     user.push_str("Neue Aufgabe:\n");
     user.push_str(&text.chars().take(4000).collect::<String>());
-    let v = quick_json(model.as_deref().unwrap_or(FAST_MODEL), SYSTEM, &user, 6).await?;
-    let level = match v["level"].as_str() {
-        Some(l @ ("simple" | "standard" | "complex")) => l,
-        _ => "standard",
-    };
-    Ok(json!({ "level": level, "reason": v["reason"].as_str().unwrap_or("") }))
+    user
 }
 
 /// Kurzer Steckbrief des Projekts für Vorschläge.

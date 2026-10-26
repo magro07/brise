@@ -211,6 +211,9 @@ fn real_email(m: &str) -> bool {
     !fake_domains.iter().any(|d| domain.starts_with(d) || domain.contains(d)) && !fake_users.iter().any(|u| lower.starts_with(u))
 }
 
+/// Beispiel-IBANs aus Dokumentationen und Testdaten – gültig, aber kein echtes Konto.
+const EXAMPLE_IBANS: &[&str] = &["DE89370400440532013000", "DE02120300000000202051", "DE75512108001245126199", "GB82WEST12345698765432", "AT611904300234573201"];
+
 /// IBAN-Prüfsumme (ISO 13616, mod 97).
 pub fn valid_iban(m: &str) -> bool {
     let s: String = m.chars().filter(|c| !c.is_whitespace()).collect();
@@ -290,8 +293,10 @@ pub fn scan(text: &str, source: &str) -> Vec<(&'static str, Hit)> {
             if rule.check.is_some_and(|c| !c(m.as_str())) {
                 continue;
             }
-            // Steuer-ID ist ohne Stichwort in der Nähe nur ein Verdacht.
-            let strong = rule.strong || (rule.label == "Steuer-ID" && context_of(text, m.start(), m.end()).to_lowercase().contains("steuer"));
+            // Steuer-ID ist ohne Stichwort in der Nähe nur ein Verdacht, Beispiel-IBANs auch.
+            let compact: String = m.as_str().chars().filter(|c| !c.is_whitespace()).collect();
+            let strong = (rule.strong && !EXAMPLE_IBANS.contains(&compact.as_str()))
+                || (rule.label == "Steuer-ID" && context_of(text, m.start(), m.end()).to_lowercase().contains("steuer"));
             let shown = if rule.category == "credentials" || rule.category == "personal" { mask(m.as_str()) } else { m.as_str().chars().take(60).collect() };
             if !out.iter().any(|(_, h)| h.label == rule.label && h.sample == shown) {
                 out.push((rule.category, Hit { label: rule.label.into(), sample: shown, source: source.into(), strong, context: context_of(text, m.start(), m.end()) }));
@@ -388,7 +393,7 @@ pub async fn check(text: &str, attachments: &[String], cwd: Option<&str>, remote
 
     // Ohne Modell: eindeutige Funde oder mehrere Verdachtsmomente in einer Kategorie.
     let local_only = verdict.checked_by == "local";
-    categories.retain(|c| if local_only { c.hits.iter().any(|h| h.strong) || c.hits.len() >= 2 || matches!(c.id, "special" | "secrecy203" | "aiact") } else { c.probability >= THRESHOLD });
+    categories.retain(|c| if local_only { c.hits.iter().any(|h| h.strong) || c.hits.len() >= 2 || matches!(c.id, "special" | "secrecy203" | "aiact" | "credentials") } else { c.probability >= THRESHOLD });
     categories.sort_by(|a, b| b.probability.total_cmp(&a.probability));
     verdict.flagged = !categories.is_empty();
     verdict.reason = categories.iter().map(|c| format!("{} ({})", c.label, pct(c.probability))).collect::<Vec<_>>().join(", ");
