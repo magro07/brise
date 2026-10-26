@@ -1,6 +1,7 @@
-//! Kleine KI-Helfer neben Vibe, über die Mistral-API mit dem Nutzer-Key:
-//! Auto-Modellwahl (Aufgabe einstufen), personalisierte Vorschläge und
-//! Commit-Nachrichten. Alles mit einem schnellen Modell und kurzem Timeout.
+//! Kleine KI-Helfer neben dem Coding-Agenten: Auto-Modellwahl (Aufgabe
+//! einstufen), Denkstufe nachsteuern, personalisierte Vorschläge und
+//! Commit-Nachrichten. Das Modell dahinter ist Mistral Small oder – mit der
+//! Einstellung `decisionProvider` – ein Cortecs-Modell (ZDR, siehe cortecs.rs).
 
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle, ArrowDown, Brain, Check, Wand2, CheckCircle2, ChevronRight, CircleSlash, Copy, FileText, Image, Info, Scale, Square, Volume2 } from "lucide-react";
 import { useStore } from "../../lib/store";
+import { useVoiceAvailable } from "../../lib/backends";
 import type { Item, Session } from "../../lib/store";
 import { duration, tokens } from "../../lib/format";
 import { Spinner, Tip, clsx } from "../ui";
@@ -94,6 +95,7 @@ const LEVEL_LABEL = { simple: "einfach", standard: "normal", complex: "komplex" 
 function MessageActions({ sessionId, itemId, text }: { sessionId: string; itemId: string; text: string }) {
   const narration = useStore((s) => s.narration);
   const { narrate, stopNarration } = useStore.getState();
+  const voice = useVoiceAvailable();
   const [copied, setCopied] = useState(false);
   const active = narration.itemId === itemId && narration.state !== "idle";
   const councilOn = useStore((s) => s.prefs.council.mode !== "off");
@@ -113,7 +115,7 @@ function MessageActions({ sessionId, itemId, text }: { sessionId: string; itemId
           {copied ? <Check className="h-3.5 w-3.5 text-ok" /> : <Copy className="h-3.5 w-3.5" />}
         </button>
       </Tip>
-      <Tip label={active ? "Vorlesen stoppen" : "Vorlesen (Voxtral, als kurze Zusammenfassung)"}>
+      {voice && <Tip label={active ? "Vorlesen stoppen" : "Vorlesen (Voxtral, als kurze Zusammenfassung)"}>
         <button
           className={clsx("flex h-7 items-center gap-1.5 rounded-md px-1.5 hover:bg-hover hover:text-fg", active && "text-accent")}
           onClick={() => (active ? stopNarration() : narrate(sessionId, itemId))}
@@ -128,7 +130,7 @@ function MessageActions({ sessionId, itemId, text }: { sessionId: string; itemId
             <Volume2 className="h-3.5 w-3.5" />
           )}
         </button>
-      </Tip>
+      </Tip>}
       {councilOn && (
         <Tip label="Mit Council prüfen: andere Modelle sehen sich die Änderungen an">
           <button

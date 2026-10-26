@@ -4,13 +4,45 @@ import { invoke } from "@tauri-apps/api/core";
 
 export interface AuthStatus {
   authenticated: boolean;
-  authState: string;
-  signOutAvailable: boolean;
-  customDomain: string | null;
+  /** Nur Vibe (`_auth/status`). */
+  authState?: string;
+  signOutAvailable?: boolean;
+  customDomain?: string | null;
+  /** Andere Backends: z. B. „Claude Max“ und woher die Anmeldung stammt. */
+  label?: string;
+  detail?: string | null;
+  /** Zugangsdaten vorhanden, aber nicht geprüft (Variablen, settings.json). */
+  unverified?: boolean;
+}
+
+/** Was ein Backend über Standard-ACP hinaus kann (backends.rs). */
+export interface BackendCaps {
+  vibeExtensions: boolean;
+  voice: boolean;
+  settingsSchema: boolean;
+  skills: boolean;
+  models: boolean;
+  autoModel: boolean;
+}
+
+export interface BackendInfo {
+  id: string;
+  title: string;
+  description: string;
+  caps: BackendCaps;
+  installed: boolean;
+  managed: boolean;
+  command: string | null;
+  installBlocker: string | null;
+  loginAvailable: boolean;
+  loginHint: string | null;
 }
 
 export interface ConnectInfo {
   generation: number;
+  backend: string;
+  title: string;
+  caps: BackendCaps;
   newModels?: CatalogModel[] | null;
   agentPath: string;
   init: {
@@ -40,6 +72,7 @@ export interface SessionSummary {
   cwd: string;
   title?: string | null;
   updatedAt?: string | null;
+  backend?: string;
 }
 
 export interface PermissionOption {
@@ -73,15 +106,22 @@ export interface ConfigFile {
 }
 
 export const api = {
-  connect: (reuse: boolean) => invoke<ConnectInfo>("agent_connect", { reuse }),
+  connect: (reuse: boolean, backend?: string) => invoke<ConnectInfo>("agent_connect", { reuse, backend: backend ?? null }),
+  disconnectBackend: (backend: string) => invoke<void>("disconnect_backend", { backend }),
+  backends: () => invoke<BackendInfo[]>("backends_list"),
+  backendAuth: (backend: string) => invoke<AuthStatus | null>("backend_auth", { backend }),
+  backendLoginCommand: (backend: string) => invoke<string | null>("backend_login_command", { backend }),
+  installBackend: (backend: string) => invoke<string>("install_backend", { backend }),
+  decisionProviders: () => invoke<{ id: string; title: string; available: boolean }[]>("decision_providers"),
   startupProject: () => invoke<string | null>("startup_project"),
   authStatus: () => invoke<AuthStatus>("auth_status"),
   login: () => invoke<AuthStatus>("login"),
   signOut: () => invoke<AuthStatus>("sign_out"),
-  newSession: (cwd: string, search: boolean, rea: boolean) => invoke<SessionSetup & { sessionId: string }>("new_session", { cwd, search, rea }),
-  loadSession: (cwd: string, sessionId: string, search: boolean, rea: boolean) =>
-    invoke<SessionSetup>("load_session", { cwd, sessionId, search, rea }),
-  listSessions: (cwd?: string) => invoke<{ sessions?: SessionSummary[] }>("list_sessions", { cwd: cwd ?? null }),
+  newSession: (cwd: string, search: boolean, rea: boolean, backend?: string) =>
+    invoke<SessionSetup & { sessionId: string; backend: string }>("new_session", { cwd, search, rea, backend: backend ?? null }),
+  loadSession: (cwd: string, sessionId: string, search: boolean, rea: boolean, backend?: string) =>
+    invoke<SessionSetup>("load_session", { cwd, sessionId, search, rea, backend: backend ?? null }),
+  listSessions: (cwd?: string, backend?: string) => invoke<{ sessions?: SessionSummary[] }>("list_sessions", { cwd: cwd ?? null, backend: backend ?? null }),
   deleteSession: (sessionId: string) => invoke("delete_session", { sessionId }),
   prompt: (sessionId: string, prompt: ContentBlock[]) => invoke<PromptResult>("prompt", { sessionId, prompt }),
   cancel: (sessionId: string) => invoke<void>("cancel", { sessionId }),
@@ -144,7 +184,8 @@ export const api = {
   meterStop: () => invoke<void>("meter_stop"),
   readCustomization: () => invoke<{ settings: Record<string, unknown>; css: string }>("read_customization"),
   syncPrefs: (prefs: unknown) => invoke<void>("sync_prefs", { prefs }),
-  ext: <T = Record<string, unknown>>(method: string, params: Record<string, unknown> = {}) => invoke<T>("ext", { method, params }),
+  /** Vibe-Erweiterungen (`_voice/…`); andere Backends können sie nicht. */
+  ext: <T = Record<string, unknown>>(method: string, params: Record<string, unknown> = {}) => invoke<T>("ext", { method, params, backend: null }),
 };
 
 /** Antwort einer Entscheidung; Cortecs liefert zusätzlich Wahrscheinlichkeiten. */

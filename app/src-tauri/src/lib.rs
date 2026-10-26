@@ -1,5 +1,7 @@
 mod agent;
 mod assist;
+mod backends;
+mod decision;
 mod git;
 mod config;
 mod cortecs;
@@ -115,6 +117,12 @@ pub fn run() {
             agent::set_config_option,
             agent::config_schema,
             agent::delete_session,
+            agent::disconnect_backend,
+            backends::backends_list,
+            backends::backend_auth,
+            backends::backend_login_command,
+            backends::install_backend,
+            decision::decision_providers,
             config::read_config,
             config::write_config_value,
             config::list_project_files,

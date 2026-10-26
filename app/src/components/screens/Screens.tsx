@@ -2,9 +2,11 @@ import { useEffect, useRef, useState } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { AlertTriangle, BookOpen, Bug, CheckCircle2, Download, FileSearch, FolderOpen, FolderPlus, Gauge, GitBranch, Globe, KeyRound, LogIn, RefreshCw, Rocket, ShieldCheck, Sparkles, TestTube2, Wand2 } from "lucide-react";
 import { api, type Suggestion } from "../../lib/acp";
-import { basename, helperProvider, useStore } from "../../lib/store";
+import { basename, draftBackendOf, helperProvider, useStore } from "../../lib/store";
 import { Button, Logo, Spinner, clsx } from "../ui";
 import { pickProject } from "../layout/Sidebar";
+import { BackendChoice } from "../agents/BackendChoice";
+import { BACKEND_SHORT } from "../../lib/backends";
 
 function Shell({ children }: { children: React.ReactNode }) {
   return (
@@ -26,11 +28,12 @@ export function StartScreen() {
       </div>
       {phase === "connecting" && (
         <div className="flex items-center justify-center gap-2 text-muted">
-          <Spinner /> Verbinde mit Mistral Vibe …
+          <Spinner /> Verbinde mit {useStore.getState().prefs.defaultBackend === "vibe" ? "Mistral Vibe" : "dem Agenten"} …
         </div>
       )}
       {phase === "login" && <LoginStep />}
       {phase === "no-vibe" && <InstallStep />}
+      {(phase === "login" || phase === "no-vibe") && <BackendChoice />}
       {phase === "error" && (
         <>
           <div className="mb-3 flex justify-center text-bad">
@@ -216,6 +219,7 @@ export function DraftHero({ project }: { project: string }) {
   const send = useStore((s) => s.send);
   const index = useStore((s) => s.index);
   const quickActions = useStore((s) => s.quickActions);
+  const agentName = useStore((s) => BACKEND_SHORT[draftBackendOf(s)] ?? "Der Agent");
   const [suggestions, setSuggestions] = useState<Suggestion[] | null>(null);
   const [personal, setPersonal] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -246,7 +250,7 @@ export function DraftHero({ project }: { project: string }) {
     <div className="flex flex-1 flex-col items-center justify-center overflow-y-auto px-6 pb-6">
       <Logo size={44} />
       <h1 className="mt-4 text-[1.6em] font-semibold tracking-tight">Was bauen wir in {basename(project)}?</h1>
-      <p className="mt-1 text-muted">Vibe liest den Code, ändert Dateien und fragt bei heiklen Schritten nach.</p>
+      <p className="mt-1 text-muted">{agentName} liest den Code, ändert Dateien und fragt bei heiklen Schritten nach.</p>
       <div className="mt-8 w-full max-w-[720px]">
         <div className="mb-2 flex items-center gap-2 text-[0.78em] text-muted">
           {personal ? <Sparkles className="h-3.5 w-3.5 text-accent" /> : null}

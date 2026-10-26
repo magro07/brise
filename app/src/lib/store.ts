@@ -4,6 +4,7 @@
 import { create } from "zustand";
 import {
   api,
+  type BackendInfo,
   type CatalogModel,
   type AuthStatus,
   type ConfigOption,
@@ -114,6 +115,8 @@ export interface SlashCommand {
 export interface Session {
   id: string;
   cwd: string;
+  /** Agent-Backend, dem die Session gehört (vibe, claude, …). */
+  backend: string;
   title?: string;
   items: Item[];
   pending: PendingPermission[];
@@ -190,6 +193,10 @@ export interface Prefs {
   zdrProjects: string[];
   /** Vibe-Alias des sicheren Modells für „Auf Cortecs (ZDR) wechseln“. */
   zdrModel: string;
+  /** Backend für neue Sessions. */
+  defaultBackend: string;
+  /** Backends, mit denen Brise beim Start verbindet (Sessions in der Sidebar). */
+  enabledBackends: string[];
 }
 
 export interface CouncilPrefs {
@@ -245,10 +252,21 @@ interface DraftConfig {
   thinking?: string;
 }
 
+type Template = { modes: Session["modes"]; config: ConfigOption[]; commands: SlashCommand[] };
+
 interface State {
   phase: Phase;
   error?: string;
+  /** Verbindung zu Vibe (Konto, Einstellungen, Sprache). */
   connectInfo?: ConnectInfo;
+  /** Alle bekannten Backends mit Installationsstand. */
+  backends: BackendInfo[];
+  /** Verbundene Backends mit Init-Daten und Anmeldestatus. */
+  agents: Record<string, ConnectInfo>;
+  /** Backend für die nächste neue Session; null = Standard aus den Einstellungen. */
+  draftBackend: string | null;
+  /** Modi und Optionen je Backend (Vorlage für Auswahlfelder vor dem ersten Prompt). */
+  templates: Record<string, Template>;
   auth: AuthStatus | null;
   login: { waiting: boolean; url?: string; error?: string };
 
@@ -273,7 +291,7 @@ interface State {
   prefs: Prefs;
   draft: DraftConfig;
   /** Modi und Optionen der zuletzt gesehenen Session – für Auswahlfelder vor dem ersten Prompt. */
-  template?: { modes: Session["modes"]; config: ConfigOption[]; commands: SlashCommand[] };
+  template?: Template;
   files: Record<string, string[]>;
   /** Im Hintergrund vorbereitete, noch leere Session je Projekt. */
   prepared: Record<string, string>;
@@ -295,6 +313,12 @@ interface State {
 }
 
 interface Actions {
+  /** Installationsstand aller Backends neu lesen. */
+  refreshBackends(): Promise<void>;
+  /** Mit einem Backend verbinden (startet den Agenten bei Bedarf). */
+  connectBackend(id: string, restart?: boolean): Promise<ConnectInfo | undefined>;
+  /** Backend für die nächste neue Session wählen. */
+  setDraftBackend(id: string | null): void;
   prepare(project: string): Promise<void>;
   /** Vorbereitete Session verwerfen, z. B. weil jetzt ein Suchindex existiert. */
   resetPrepared(project: string): void;
@@ -340,7 +364,8 @@ interface Actions {
   onUpdate(sessionId: string, update: any): void;
   onPermission(key: string, request: PermissionRequest): void;
   onPermissionClosed(key: string, optionId: string | null): void;
-  onClosed(generation: number): void;
+  onClosed(generation: number, backend?: string): void;
+  onBackendAuth(backend: string, status: { kind?: string; label?: string; detail?: string }): void;
 }
 
 // ---------- Hilfen ----------
@@ -350,10 +375,11 @@ const uid = () => `i${++counter}`;
 
 export const basename = (p: string) => p.split(/[\\/]/).filter(Boolean).pop() ?? p;
 
-function emptySession(id: string, cwd: string): Session {
+function emptySession(id: string, cwd: string, backend = "vibe"): Session {
   return {
     id,
     cwd,
+    backend,
     items: [],
     pending: [],
     plan: [],
@@ -540,6 +566,8 @@ const initialPrefs: Prefs = {
   sensitivityCheck: true,
   zdrProjects: [],
   zdrModel: "cortecs-glm-5-3",
+  defaultBackend: "vibe",
+  enabledBackends: ["vibe"],
   ...load<Partial<Prefs>>("prefs", {}),
 };
 initialPrefs.council = { ...COUNCIL_DEFAULTS, ...initialPrefs.council };
@@ -585,8 +613,12 @@ applyFontSize(initialPrefs.fontSize);
 applyAccent(initialPrefs.accent);
 window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => applyTheme(useStore.getState().prefs.theme));
 
-let generation = 0;
+/** Generation je Backend – ein altes `acp:closed` beendet keine neue Verbindung. */
+const generations: Record<string, number> = {};
 let connecting = false;
+
+/** Backend der nächsten neuen Session. */
+export const draftBackendOf = (st: Pick<State, "draftBackend" | "prefs">) => st.draftBackend ?? st.prefs.defaultBackend;
 
 export const useStore = create<State & Actions>((set, get) => {
   const patchSession = (id: string, fn: (s: Session) => Session) =>
@@ -651,11 +683,22 @@ export const useStore = create<State & Actions>((set, get) => {
   };
 
   const rememberTemplate = (s: Session) => {
-    if (s.modes.length || s.config.length) set({ template: { modes: s.modes, config: s.config, commands: s.commands } });
+    if (!s.modes.length && !s.config.length) return;
+    const t: Template = { modes: s.modes, config: s.config, commands: s.commands };
+    set((st) => ({ templates: { ...st.templates, [s.backend]: t }, ...(s.backend === draftBackendOf(st) ? { template: t } : {}) }));
+  };
+
+  const registerAgent = (info: ConnectInfo) => {
+    generations[info.backend] = info.generation;
+    set((st) => ({ agents: { ...st.agents, [info.backend]: info }, ...(info.backend === "vibe" ? { connectInfo: info, auth: info.auth } : {}) }));
   };
 
   return {
     phase: "connecting",
+    backends: [],
+    agents: {},
+    draftBackend: null,
+    templates: {},
     auth: null,
     login: { waiting: false },
     projects: load<string[]>("projects", []),
@@ -760,9 +803,14 @@ export const useStore = create<State & Actions>((set, get) => {
     },
 
     async startRecording() {
-      // Vibe braucht für Sprache eine offene Session.
+      // Vibe braucht für Sprache eine offene Vibe-Session – auch wenn gerade
+      // mit einem anderen Backend gearbeitet wird.
       const project = get().activeProject;
-      if (!get().activeSessionId && project) await get().prepare(project);
+      const vibeOpen = Object.values(get().sessions).some((x) => x.backend === "vibe");
+      if (!vibeOpen && project) {
+        const r = await api.newSession(project, false, false, "vibe");
+        set((s) => ({ sessions: { ...s.sessions, [r.sessionId]: applySetup(emptySession(r.sessionId, project, "vibe"), r) } }));
+      }
       set({ transcript: "" });
       const r = await api.ext<{ ok: boolean; error?: string }>("voice/transcribeStart", { language: get().prefs.sttLanguage });
       if (!r.ok) throw new Error(r.error ?? "Spracheingabe konnte nicht starten");
@@ -866,11 +914,19 @@ export const useStore = create<State & Actions>((set, get) => {
     },
 
     async prepare(project) {
-      if (get().prepared[project] || get().phase !== "ready") return;
-      set((s) => ({ prepared: { ...s.prepared, [project]: "…" } }));
+      const backend = draftBackendOf(get());
+      const existing = get().prepared[project];
+      if (get().phase !== "ready") return;
+      if (existing && (existing === "…" || get().sessions[existing]?.backend === backend)) return;
+      set((s) => {
+        // Vorbereitete Session eines anderen Backends verwerfen, solange sie unbenutzt ist.
+        const sessions = { ...s.sessions };
+        if (existing && !sessions[existing]?.items.some((i) => i.type === "user")) delete sessions[existing];
+        return { sessions, prepared: { ...s.prepared, [project]: "…" } };
+      });
       try {
-        const r = await api.newSession(project, get().prefs.agentSearch, get().prefs.rea);
-        const session = applySetup(emptySession(r.sessionId, project), r);
+        const r = await api.newSession(project, get().prefs.agentSearch, get().prefs.rea, backend);
+        const session = applySetup(emptySession(r.sessionId, project, backend), r);
         set((s) => ({ sessions: { ...s.sessions, [r.sessionId]: session }, prepared: { ...s.prepared, [project]: r.sessionId } }));
         rememberTemplate(session);
       } catch {
@@ -904,20 +960,69 @@ export const useStore = create<State & Actions>((set, get) => {
       }
     },
 
+    async refreshBackends() {
+      const backends = await api.backends().catch(() => get().backends);
+      set({ backends });
+    },
+
+    async connectBackend(id, restart = false) {
+      try {
+        const info = await api.connect(!restart, id);
+        registerAgent(info);
+        return info;
+      } catch (e) {
+        set((st) => {
+          const agents = { ...st.agents };
+          delete agents[id];
+          return { agents };
+        });
+        throw e;
+      }
+    },
+
+    setDraftBackend(id) {
+      // Optionen aus der Vorlage des alten Backends passen nicht zum neuen.
+      set((st) => ({ draftBackend: id, draft: {}, template: st.templates[id ?? st.prefs.defaultBackend] }));
+      const project = get().activeProject;
+      if (project && !get().activeSessionId) get().prepare(project);
+    },
+
     async connect(reuse = false) {
       if (connecting) return;
       connecting = true;
       set({ phase: "connecting", error: undefined });
+      get().refreshBackends();
+      const { defaultBackend, enabledBackends } = get().prefs;
       try {
-        const info = await api.connect(reuse);
-        // Das Backend prüft vor dem Start von Vibe auf neue Modelle.
-        if (info.newModels?.length) set({ newModels: info.newModels });
-        generation = info.generation;
-        set({ connectInfo: info, auth: info.auth, phase: info.auth?.authenticated ? "ready" : "login" });
-        if (info.auth?.authenticated) get().refreshIndex();
+        if (defaultBackend === "vibe" || enabledBackends.includes("vibe")) {
+          try {
+            const info = await get().connectBackend("vibe", !reuse);
+            // Das Backend prüft vor dem Start von Vibe auf neue Modelle.
+            if (info?.newModels?.length) set({ newModels: info.newModels });
+            if (defaultBackend === "vibe") set({ phase: info?.auth?.authenticated ? "ready" : "login" });
+          } catch (e) {
+            if (defaultBackend === "vibe") {
+              set(String(e) === "VIBE_NOT_FOUND" ? { phase: "no-vibe" } : { phase: "error", error: String(e) });
+              return;
+            }
+          }
+        }
+        if (defaultBackend !== "vibe") {
+          // Ohne Vibe ist die Oberfläche trotzdem bereit; Fehler stehen im Banner.
+          try {
+            const info = await get().connectBackend(defaultBackend, !reuse);
+            if (info && !info.auth?.authenticated) set({ error: `${info.title} ist nicht angemeldet – Einstellungen → Agenten.` });
+          } catch (e) {
+            const title = get().backends.find((b) => b.id === defaultBackend)?.title ?? defaultBackend;
+            set({ error: String(e) === "BACKEND_NOT_FOUND" ? `${title} ist nicht installiert – Einstellungen → Agenten.` : `${title}: ${e}` });
+          }
+          set({ phase: "ready" });
+        }
         get().refreshCortecs();
-      } catch (e) {
-        set(String(e) === "VIBE_NOT_FOUND" ? { phase: "no-vibe" } : { phase: "error", error: String(e) });
+        // Weitere aktivierte Backends im Hintergrund, damit ihre Sessions in der Sidebar stehen.
+        const others = enabledBackends.filter((b) => b !== defaultBackend && b !== "vibe");
+        Promise.allSettled(others.map((b) => get().connectBackend(b, false))).then(() => get().refreshIndex());
+        if (get().phase === "ready") get().refreshIndex();
       } finally {
         connecting = false;
       }
@@ -927,7 +1032,12 @@ export const useStore = create<State & Actions>((set, get) => {
       set({ login: { waiting: true } });
       try {
         const auth = await api.login();
-        set({ auth, login: { waiting: false }, phase: auth.authenticated ? "ready" : "login" });
+        set((st) => ({
+          auth,
+          login: { waiting: false },
+          phase: auth.authenticated ? "ready" : "login",
+          agents: st.agents.vibe ? { ...st.agents, vibe: { ...st.agents.vibe, auth } } : st.agents,
+        }));
         if (auth.authenticated) get().refreshIndex();
       } catch (e) {
         set({ login: { waiting: false, error: String(e) } });
@@ -985,13 +1095,14 @@ export const useStore = create<State & Actions>((set, get) => {
       }
       const summary = st.index.find((s) => s.sessionId === id);
       if (!summary) return;
+      const backend = summary.backend ?? "vibe";
       set((s) => ({
-        sessions: { ...s.sessions, [id]: { ...emptySession(id, summary.cwd), title: summary.title ?? undefined, replaying: true } },
+        sessions: { ...s.sessions, [id]: { ...emptySession(id, summary.cwd, backend), title: summary.title ?? undefined, replaying: true } },
         activeSessionId: id,
         activeProject: summary.cwd,
       }));
       try {
-        const r = await api.loadSession(summary.cwd, id, get().prefs.agentSearch, get().prefs.rea);
+        const r = await api.loadSession(summary.cwd, id, get().prefs.agentSearch, get().prefs.rea, backend);
         patchSession(id, (s) => ({ ...applySetup(s, r), replaying: false }));
         rememberTemplate(get().sessions[id]);
       } catch (e) {
@@ -1002,13 +1113,15 @@ export const useStore = create<State & Actions>((set, get) => {
 
     async openChildSession(childId, cwd) {
       if (get().sessions[childId]) return set({ activeSessionId: childId, view: "chat" });
+      const parent = get().activeSessionId ? get().sessions[get().activeSessionId!] : undefined;
+      const backend = parent?.backend ?? "vibe";
       set((s) => ({
-        sessions: { ...s.sessions, [childId]: { ...emptySession(childId, cwd), title: "Subagent", replaying: true, readOnly: true } },
+        sessions: { ...s.sessions, [childId]: { ...emptySession(childId, cwd, backend), title: "Subagent", replaying: true, readOnly: true } },
         activeSessionId: childId,
         view: "chat",
       }));
       try {
-        await api.loadSession(cwd, childId, false, false);
+        await api.loadSession(cwd, childId, false, false, backend);
         patchSession(childId, (s) => ({ ...s, replaying: false }));
       } catch (e) {
         patchSession(childId, (s) => ({ ...s, replaying: false }));
@@ -1045,9 +1158,11 @@ export const useStore = create<State & Actions>((set, get) => {
       if (!project) return;
       let id = st.activeSessionId && st.sessions[st.activeSessionId] ? st.activeSessionId : null;
 
-      // Vorbereitete Session übernehmen und gewählte Optionen anwenden.
+      // Vorbereitete Session übernehmen (wenn sie zum gewählten Backend gehört)
+      // und gewählte Optionen anwenden.
+      const backend = draftBackendOf(st);
       const preparedId = st.prepared[project];
-      if (!id && preparedId && st.sessions[preparedId]) {
+      if (!id && preparedId && st.sessions[preparedId]?.backend === backend) {
         id = preparedId;
         set((s) => {
           const prepared = { ...s.prepared };
@@ -1059,14 +1174,14 @@ export const useStore = create<State & Actions>((set, get) => {
           const current = configId === "mode" ? s.currentMode : s.config.find((o) => o.id === configId)?.currentValue;
           if (value && value !== current) await get().setOption(configId, value);
         }
-        set({ draft: {} });
+        set((s) => ({ draft: {}, draftBackend: null, template: s.templates[s.prefs.defaultBackend] ?? s.template }));
       }
 
       if (!id) {
         try {
-          const r = await api.newSession(project, get().prefs.agentSearch, get().prefs.rea);
+          const r = await api.newSession(project, get().prefs.agentSearch, get().prefs.rea, backend);
           id = r.sessionId;
-          const session = applySetup(emptySession(id, project), r);
+          const session = applySetup(emptySession(id, project, backend), r);
           set((s) => ({ sessions: { ...s.sessions, [id!]: session }, activeSessionId: id }));
           rememberTemplate(session);
           // Vor dem ersten Prompt gewählte Optionen übernehmen.
@@ -1075,7 +1190,7 @@ export const useStore = create<State & Actions>((set, get) => {
             const current = configId === "mode" ? session.currentMode : session.config.find((o) => o.id === configId)?.currentValue;
             if (value && value !== current) await get().setOption(configId, value);
           }
-          set({ draft: {} });
+          set((s) => ({ draft: {}, draftBackend: null, template: s.templates[s.prefs.defaultBackend] ?? s.template }));
         } catch (e) {
           set({ error: `Session konnte nicht gestartet werden: ${e}` });
           return;
@@ -1144,7 +1259,9 @@ export const useStore = create<State & Actions>((set, get) => {
       patchSession(sid, (s) => ({ ...s, currentTask: text }));
       signals[sid] = { failStreak: 0, readStreak: 0, lastAdjust: Date.now(), busy: false };
       const decider = deciderFor(get(), get().sessions[sid]);
-      if (prefs.autoModel && modelOption?.options?.length && !text.startsWith("/")) {
+      // Auto-Modellwahl nur bei Backends, deren Modelle und Denkstufen Brise kennt.
+      const autoCapable = get().agents[current?.backend ?? "vibe"]?.caps.autoModel ?? current?.backend === "vibe";
+      if (prefs.autoModel && autoCapable && modelOption?.options?.length && !text.startsWith("/")) {
         const history = current.items
           .filter((i) => i.type === "user")
           .slice(-4, -1)
@@ -1318,8 +1435,26 @@ export const useStore = create<State & Actions>((set, get) => {
       });
     },
 
-    onClosed(gen) {
-      if (gen === generation) set({ phase: "error", error: "Die Verbindung zu Vibe wurde beendet." });
+    onClosed(gen, backend = "vibe") {
+      if (gen !== generations[backend]) return;
+      const title = get().agents[backend]?.title ?? backend;
+      set((st) => {
+        const agents = { ...st.agents };
+        delete agents[backend];
+        return { agents };
+      });
+      if (backend === get().prefs.defaultBackend && backend === "vibe") set({ phase: "error", error: "Die Verbindung zu Vibe wurde beendet." });
+      else set({ error: `Die Verbindung zu ${title} wurde beendet. Beim nächsten Prompt startet Brise den Agenten neu.` });
+    },
+
+    onBackendAuth(backend, status) {
+      // Claude Code meldet seine Identität selbst (`_auth/status_update`).
+      const agent = get().agents[backend];
+      if (!agent || !status?.kind) return;
+      const authenticated = status.kind !== "none";
+      // „Nicht angemeldet“ der CLI ignorieren, wenn Brise Zugangsdaten aus Variablen bzw. settings.json kennt.
+      if (!authenticated && agent.auth?.authenticated && agent.auth?.unverified) return;
+      set((st) => ({ agents: { ...st.agents, [backend]: { ...agent, auth: { authenticated, label: status.label, detail: status.detail ?? null } } } }));
     },
   };
 });

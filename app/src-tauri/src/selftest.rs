@@ -1,6 +1,9 @@
 //! `brise --self-test`: prüft ohne Fenster die Teile, die je nach Betriebssystem
-//! schiefgehen können – Vibe-Installation, ACP-Start, MCP-Server, Terminal, Git.
-//! Läuft in der CI auf Windows, macOS und Linux.
+//! schiefgehen können – Vibe-Installation, ACP-Start, weitere Agent-Backends,
+//! MCP-Server, Terminal, Git. Läuft in der CI auf Windows, macOS und Linux.
+//!
+//! `BRISE_SELFTEST_PROMPT=1` schickt jedem erreichbaren Backend außerdem einen
+//! echten Mini-Prompt (kostet ein paar Tokens beim jeweiligen Anbieter).
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::process::{Command, Stdio};
@@ -102,6 +105,79 @@ async fn check_acp() -> Result<String, String> {
     ))
 }
 
+/// Startet ein weiteres Backend (Claude Code, Codex, Gemini), legt eine Session
+/// an und schickt auf Wunsch einen Mini-Prompt.
+async fn check_backend(b: &'static dyn crate::backends::Backend, with_prompt: bool) -> Result<String, String> {
+    use crate::rpc::Incoming;
+    let launch = b.locate().ok_or("nicht installiert")?;
+    let (conn, mut events, _child) = crate::rpc::spawn(launch.program.as_os_str(), &launch.args, None).map_err(|e| e.to_string())?;
+    let init = tokio::time::timeout(
+        Duration::from_secs(90),
+        conn.request("initialize", json!({ "protocolVersion": 1, "clientCapabilities": { "fs": { "readTextFile": false, "writeTextFile": false }, "terminal": false } })),
+    )
+    .await
+    .map_err(|_| "Zeitüberschreitung bei initialize".to_string())?
+    .map_err(|e| e.to_string())?;
+    let auth = tokio::task::spawn_blocking(move || b.probe_auth()).await.ok().flatten().unwrap_or(Value::Null);
+    let dir = std::env::temp_dir().join(format!("brise-selftest-{}", b.id()));
+    let _ = std::fs::create_dir_all(&dir);
+    let session = tokio::time::timeout(Duration::from_secs(60), conn.request("session/new", json!({ "cwd": dir.display().to_string(), "mcpServers": [] })))
+        .await
+        .map_err(|_| "Zeitüberschreitung bei session/new".to_string())?
+        .map_err(|e| e.to_string())?;
+    let sid = session["sessionId"].as_str().ok_or("keine sessionId")?.to_string();
+    let modes = session["modes"]["availableModes"].as_array().map_or(0, Vec::len);
+    let models = session["configOptions"].as_array().into_iter().flatten().find(|o| o["id"] == "model").and_then(|o| o["options"].as_array()).map_or(0, Vec::len);
+    let mut detail = format!(
+        "{} {} · {} · {modes} Modi, {models} Modelle · Anmeldung: {}",
+        init["agentInfo"]["title"].as_str().unwrap_or("?"),
+        init["agentInfo"]["version"].as_str().unwrap_or("?"),
+        launch.display(),
+        auth["label"].as_str().unwrap_or("unbekannt")
+    );
+    if with_prompt {
+        let conn2 = conn.clone();
+        let text = Arc::new(std::sync::Mutex::new(String::new()));
+        let sink = text.clone();
+        let collect = tokio::spawn(async move {
+            while let Some(ev) = events.recv().await {
+                match ev {
+                    Incoming::Notification { method, params } if method == "session/update" => {
+                        if params["update"]["sessionUpdate"] == "agent_message_chunk" {
+                            sink.lock().unwrap().push_str(params["update"]["content"]["text"].as_str().unwrap_or(""));
+                        }
+                    }
+                    // Werkzeuge braucht der Mini-Prompt nicht: alles ablehnen.
+                    Incoming::Request { id, method, .. } if method == "session/request_permission" => {
+                        conn2.respond(id, Ok(json!({ "outcome": { "outcome": "cancelled" } })));
+                    }
+                    Incoming::Request { id, method, .. } => conn2.respond(id, Err(crate::rpc::RpcError::method_not_found(&method))),
+                    _ => {}
+                }
+            }
+        });
+        let started = Instant::now();
+        let r = tokio::time::timeout(
+            Duration::from_secs(90),
+            conn.request("session/prompt", json!({ "sessionId": sid, "prompt": [{ "type": "text", "text": "Antworte nur mit dem Wort OK." }] })),
+        )
+        .await
+        .map_err(|_| format!("{detail} · keine Antwort nach 90 s – Anmeldung prüfen (abgelehnte Tokens wiederholt der Agent still)"))?
+        .map_err(|e| e.to_string())?;
+        // Die letzten Updates können kurz nach der Antwort eintreffen.
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        collect.abort();
+        let text = text.lock().unwrap().clone();
+        let stop = r["stopReason"].as_str().unwrap_or("?").to_string();
+        let answer: String = text.trim().chars().take(60).collect();
+        detail.push_str(&format!(" · Prompt: {stop} nach {:.1} s, Antwort „{answer}“", started.elapsed().as_secs_f32()));
+        if stop != "end_turn" || answer.is_empty() {
+            return Err(detail);
+        }
+    }
+    Ok(detail)
+}
+
 pub fn run() -> i32 {
     let started = Instant::now();
     println!("Brise {} Selbsttest auf {}/{}", env!("CARGO_PKG_VERSION"), std::env::consts::OS, std::env::consts::ARCH);
@@ -127,7 +203,32 @@ pub fn run() -> i32 {
         Err(e) => ok &= report("ACP", false, e),
     }
 
-    // 3. Eigene MCP-Server
+    // 3. Weitere Agent-Backends: nur prüfen, was installiert ist (kein Fehlschlag, wenn nicht).
+    //    `BRISE_SELFTEST_INSTALL=claude,codex` installiert fehlende Adapter vorher mit npm.
+    let with_prompt = std::env::var_os("BRISE_SELFTEST_PROMPT").is_some_and(|v| v == "1");
+    let install = std::env::var("BRISE_SELFTEST_INSTALL").unwrap_or_default();
+    for b in crate::backends::all().into_iter().filter(|b| b.id() != crate::backends::DEFAULT_BACKEND) {
+        if b.locate().is_none() && install.split(',').any(|id| id.trim() == b.id()) {
+            let progress: crate::installer::Progress = Arc::new(|stage: &str, line: String| println!("   [{stage}] {line}"));
+            if let Err(e) = rt.block_on(crate::backends::install_node_agent(b.id(), &progress)) {
+                ok &= report(&format!("{}-Installation", b.title()), false, e);
+                continue;
+            }
+        }
+        if b.locate().is_none() {
+            report(b.title(), true, match b.install_blocker() {
+                Some(why) => format!("nicht installiert ({why})"),
+                None => "nicht installiert – in Brise unter Einstellungen → Agenten installierbar".into(),
+            });
+            continue;
+        }
+        match rt.block_on(check_backend(b, with_prompt)) {
+            Ok(info) => ok &= report(b.title(), true, info),
+            Err(e) => ok &= report(b.title(), false, e),
+        }
+    }
+
+    // 4. Eigene MCP-Server
     for (name, flag) in [("MCP brise-app", vec!["--mcp-app"]), ("MCP brise-search", vec!["--mcp-search", "."]), ("MCP brise-council", vec!["--mcp-council", "."])] {
         match check_mcp(&flag) {
             Ok(n) => ok &= report(name, n > 0, format!("{n} Werkzeuge")),
@@ -135,13 +236,13 @@ pub fn run() -> i32 {
         }
     }
 
-    // 4. Terminal
+    // 5. Terminal
     match check_pty() {
         Ok(line) => ok &= report("Terminal (PTY)", true, line),
         Err(e) => ok &= report("Terminal (PTY)", false, e),
     }
 
-    // 5. Git und Schlüsselbund (nur Hinweise, kein Fehlschlag)
+    // 6. Git und Schlüsselbund (nur Hinweise, kein Fehlschlag)
     report("Git", crate::git::find_git().is_some(), crate::git::find_git().map(|p| p.display().to_string()).unwrap_or_else(|| "nicht gefunden – Brise bietet die Installation an".into()));
     report("Mistral-Key", true, if crate::credentials::read_key().is_some() { "vorhanden" } else { "nicht gesetzt (in der CI erwartet)" });
 

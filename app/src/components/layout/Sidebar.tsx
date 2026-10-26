@@ -17,6 +17,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { basename, useStore, type Session } from "../../lib/store";
+import { BackendBadge } from "../agents/BackendPicker";
 import { relativeTime } from "../../lib/format";
 import { IconButton, Kbd, Logo, Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger, Spinner, clsx } from "../ui";
 import { confirmAction } from "../../lib/dialogs";
@@ -44,7 +45,7 @@ export function Sidebar() {
 
   // Sessions je Projekt: Vibes Liste plus gerade erst angelegte, noch nicht gelistete.
   const byProject = useMemo(() => {
-    const map = new Map<string, { id: string; title: string; updatedAt?: string | null }[]>();
+    const map = new Map<string, { id: string; title: string; updatedAt?: string | null; backend?: string }[]>();
     const seen = new Set<string>();
     for (const s of Object.values(sessions)) {
       if (s.readOnly) continue;
@@ -53,14 +54,14 @@ export function Sidebar() {
       if (s.items.length === 0 && !summary?.title) continue;
       seen.add(s.id);
       const list = map.get(s.cwd) ?? [];
-      list.push({ id: s.id, title: s.title ?? summary?.title ?? "Neue Session", updatedAt: summary?.updatedAt ?? new Date().toISOString() });
+      list.push({ id: s.id, title: s.title ?? summary?.title ?? "Neue Session", updatedAt: summary?.updatedAt ?? new Date().toISOString(), backend: s.backend });
       map.set(s.cwd, list);
     }
     for (const s of index) {
       // Ohne Titel = nie benutzt (z. B. eine vorbereitete Session).
       if (seen.has(s.sessionId) || !s.title) continue;
       const list = map.get(s.cwd) ?? [];
-      list.push({ id: s.sessionId, title: s.title ?? "Unbenannte Session", updatedAt: s.updatedAt });
+      list.push({ id: s.sessionId, title: s.title ?? "Unbenannte Session", updatedAt: s.updatedAt, backend: s.backend });
       map.set(s.cwd, list);
     }
     for (const list of map.values()) list.sort((a, b) => (b.updatedAt ?? "").localeCompare(a.updatedAt ?? ""));
@@ -185,6 +186,7 @@ export function Sidebar() {
                       key={s.id}
                       id={s.id}
                       title={s.title}
+                      backend={s.backend}
                       time={relativeTime(s.updatedAt)}
                       active={s.id === activeSessionId && view === "chat"}
                       live={sessions[s.id]}
@@ -276,6 +278,7 @@ function SideButton({
 
 function SessionRow({
   title,
+  backend,
   time,
   active,
   live,
@@ -285,6 +288,7 @@ function SessionRow({
 }: {
   id: string;
   title: string;
+  backend?: string;
   time: string;
   active: boolean;
   live?: Session;
@@ -304,6 +308,7 @@ function SessionRow({
         {live?.running && !waiting && <Spinner className="text-accent" />}
         {waiting && <span className="h-2 w-2 shrink-0 rounded-full bg-warn pulse-dot" title="Wartet auf Freigabe" />}
         <span className="truncate">{title}</span>
+        {backend && <BackendBadge backend={backend} />}
       </button>
       <span className="text-[0.78em] text-muted group-hover:hidden">{time}</span>
       <Menu>
