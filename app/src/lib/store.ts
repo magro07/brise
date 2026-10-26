@@ -70,7 +70,7 @@ export interface Routed {
 }
 
 export type Item =
-  | { type: "user"; id: string; text: string; attachments?: Attachment[]; routed?: Routed; zdr?: boolean }
+  | { type: "user"; id: string; text: string; attachments?: Attachment[]; routed?: Routed; zdr?: boolean; author?: string }
   | { type: "assistant"; id: string; text: string }
   | { type: "thought"; id: string; text: string }
   | ToolItem
@@ -139,6 +139,8 @@ export interface Session {
   currentTask?: string;
   /** Session nur mit Modellen ohne Datenspeicherung (Cortecs ZDR). */
   zdr?: boolean;
+  /** Geteilte Session eines anderen Rechners, der man beigetreten ist (lib/collab.ts). */
+  guest?: { room: string; host: string; role: "viewer" | "collaborator" | "approver" | null; ended?: boolean };
 }
 
 export interface ThinkingEvent {
@@ -350,8 +352,9 @@ interface Actions {
   selectSession(id: string): Promise<void>;
   openChildSession(childId: string, cwd: string): Promise<void>;
   deleteSession(id: string): Promise<void>;
-  /** `zdr`: diese Session ab jetzt nur mit Modellen ohne Datenspeicherung. */
-  send(text: string, attachments: Attachment[], opts?: { zdr?: boolean }): Promise<void>;
+  /** `zdr`: diese Session ab jetzt nur mit Modellen ohne Datenspeicherung.
+   *  `sessionId`/`author`: Prompt eines Gasts in einer geteilten Session ausführen. */
+  send(text: string, attachments: Attachment[], opts?: { zdr?: boolean; sessionId?: string; author?: string }): Promise<void>;
   refreshCortecs(): Promise<void>;
   cancel(): Promise<void>;
   answerPermission(key: string, optionId: string | null): Promise<void>;
@@ -1155,9 +1158,10 @@ export const useStore = create<State & Actions>((set, get) => {
 
     async send(text, attachments, opts) {
       const st = get();
-      const project = st.activeProject;
+      const target = opts?.sessionId ? st.sessions[opts.sessionId] : undefined;
+      const project = target?.cwd ?? st.activeProject;
       if (!project) return;
-      let id = st.activeSessionId && st.sessions[st.activeSessionId] ? st.activeSessionId : null;
+      let id = target ? target.id : st.activeSessionId && st.sessions[st.activeSessionId] ? st.activeSessionId : null;
 
       // Vorbereitete Session übernehmen (wenn sie zum gewählten Backend gehört)
       // und gewählte Optionen anwenden.
@@ -1249,7 +1253,7 @@ export const useStore = create<State & Actions>((set, get) => {
         ...s,
         running: true,
         turnStarted: started,
-        items: [...s.items, { type: "user", id: userItemId, text, attachments, zdr: zdr || undefined }],
+        items: [...s.items, { type: "user", id: userItemId, text, attachments, zdr: zdr || undefined, author: opts?.author }],
       }));
 
       // Auto: Aufgabe einstufen. Standard: GLM-5.3 fest, Denkstufe passend setzen.

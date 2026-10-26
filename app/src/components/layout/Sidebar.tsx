@@ -8,6 +8,8 @@ import {
   Folder,
   FolderOpen,
   FolderPlus,
+  LogIn,
+  Users,
   MoreHorizontal,
   PanelLeftClose,
   Plus,
@@ -21,6 +23,8 @@ import { BackendBadge } from "../agents/BackendPicker";
 import { relativeTime } from "../../lib/format";
 import { IconButton, Kbd, Logo, Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger, Spinner, clsx } from "../ui";
 import { confirmAction } from "../../lib/dialogs";
+import { useCollab } from "../../lib/collab";
+import { TeamPanel } from "../collab/TeamPanel";
 
 const SHOWN_PER_PROJECT = 6;
 
@@ -90,6 +94,8 @@ export function Sidebar() {
         </SideButton>
       </div>
 
+      <TeamPanel />
+
       <div className="mt-3 flex items-center px-4 pb-1 text-[0.78em] font-medium uppercase tracking-wide text-muted">
         <span className="flex-1">Projekte</span>
         <Menu>
@@ -104,6 +110,13 @@ export function Sidebar() {
             </MenuItem>
             <MenuItem icon={<FolderOpen />} onSelect={pickProject}>
               Vorhandenen Ordner öffnen …
+            </MenuItem>
+            <MenuSeparator />
+            <MenuItem icon={<LogIn />} onSelect={() => useCollab.setState({ joinOpen: true })}>
+              Einer Session beitreten …
+            </MenuItem>
+            <MenuItem icon={<Users />} onSelect={() => useCollab.setState({ teamOpen: true })}>
+              Team anlegen oder beitreten …
             </MenuItem>
           </MenuContent>
         </Menu>

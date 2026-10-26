@@ -1,0 +1,37 @@
+# Brise-Relay mit Caddy (automatisches TLS über Let's Encrypt).
+# Vorher: DNS-Eintrag relay.example.org → öffentliche IP, Ports 80/443 am
+# Router auf diesen Docker-Host weiterleiten, RELAY_DOMAIN in .env setzen.
+services:
+  brise-relay:
+    build: ..
+    image: brise-relay:latest
+    restart: unless-stopped
+    environment:
+      BRISE_RELAY_ADDR: 0.0.0.0:8787
+      # BRISE_RELAY_BUFFER: "256"
+      # BRISE_RELAY_MAX_MEMBERS: "32"
+    # Kein Port nach außen: nur Caddy spricht mit dem Relay.
+    expose:
+      - "8787"
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      RELAY_DOMAIN: ${RELAY_DOMAIN:?RELAY_DOMAIN in .env setzen}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - brise-relay
+
+volumes:
+  caddy-data:
+  caddy-config:

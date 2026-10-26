@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex};
 
 use serde::Serialize;
 use serde_json::{json, Value};
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_opener::OpenerExt;
 use tokio::sync::{mpsc, Mutex as AsyncMutex};
 
@@ -713,6 +713,10 @@ pub async fn respond_permission(
     key: String,
     option_id: Option<String>,
 ) -> CmdResult<()> {
+    // Freigaben einer geteilten Session, der man als Gast beigetreten ist.
+    if let Some(rest) = key.strip_prefix("collab:") {
+        return crate::collab::guest_decide(&app.state::<crate::collab::CollabState>(), rest, option_id);
+    }
     let (_, _, conn, id) = state.permissions.lock().unwrap().remove(&key).ok_or("Diese Freigabe ist nicht mehr offen")?;
     let outcome = match &option_id {
         Some(option) => json!({ "outcome": "selected", "optionId": option }),

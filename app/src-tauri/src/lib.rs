@@ -1,5 +1,6 @@
 mod accounts;
 mod agent;
+mod collab;
 mod assist;
 mod backends;
 mod decision;
@@ -95,11 +96,13 @@ pub fn run() {
         .manage(agent::AgentState::default())
         .manage(terminal::Terminals::default())
         .manage(meter::Meter::default())
+        .manage(collab::CollabState::default())
         .setup(|app| {
             customize::watch(app.handle().clone());
             if let Err(e) = cortecs::start_proxy() {
                 eprintln!("Cortecs-Proxy: {e}");
             }
+            collab::start(app.handle());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -209,6 +212,26 @@ pub fn run() {
             cortecs::cortecs_classify_task,
             cortecs::cortecs_adjust_reasoning,
             sensitive::sensitivity_check,
+            collab::collab_share,
+            collab::collab_publish,
+            collab::collab_set_role,
+            collab::collab_set_default_role,
+            collab::collab_remove,
+            collab::collab_queue_take,
+            collab::collab_unshare,
+            collab::collab_join,
+            collab::collab_guest_prompt,
+            collab::collab_guest_cancel,
+            collab::collab_leave,
+            collab::collab_status,
+            collab::collab_set_policy,
+            collab::collab_session_meta,
+            collab::team::collab_team_create,
+            collab::team::collab_team_join,
+            collab::team::collab_team_leave,
+            collab::team::collab_team_projects,
+            collab::team::collab_team_profile,
+            collab::team::collab_teams,
         ])
         .run(tauri::generate_context!())
         .expect("Brise konnte nicht gestartet werden");

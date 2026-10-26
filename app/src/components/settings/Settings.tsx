@@ -25,6 +25,7 @@ import {
   Trash2,
   UserRound,
   Scale,
+  Users,
 } from "lucide-react";
 import { CouncilSettings } from "./CouncilSettings";
 import { api, type CatalogModel, type ConfigFile, type IndexStatus, type JsonSchema, type SkillInfo } from "../../lib/acp";
@@ -42,6 +43,7 @@ import { MODE_INFO } from "../composer/Pickers";
 import { confirmAction } from "../../lib/dialogs";
 import { UsagePage } from "../usage/UsagePage";
 import { CortecsView } from "./CortecsSettings";
+import { CollabSettings } from "../collab/CollabSettings";
 
 const SECTIONS = [
   { id: "general", label: "Allgemein", icon: Palette },
@@ -58,6 +60,7 @@ const SECTIONS = [
   { id: "embeddings", label: "Embeddings & Suche", icon: DatabaseZap },
   { id: "council", label: "Council", icon: Scale },
   { id: "tools", label: "Werkzeuge & MCP", icon: Plug },
+  { id: "collab", label: "Zusammenarbeit", icon: Users },
   { id: "advanced", label: "Erweitert", icon: SlidersHorizontal },
 ] as const;
 
@@ -546,6 +549,7 @@ export function SettingsView() {
 
           {section === "web" && <WebCard values={values} write={write} />}
           {section === "council" && <CouncilSettings />}
+          {section === "collab" && <CollabSettings />}
 
           {section === "tools" && (
             <>

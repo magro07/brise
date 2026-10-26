@@ -17,6 +17,11 @@ import { SettingsView } from "./components/settings/Settings";
 import { DraftHero, NoProject, StartScreen } from "./components/screens/Screens";
 import { NewProjectDialog } from "./components/screens/NewProject";
 import { TextPrompt, Tour } from "./components/screens/Tour";
+import { initCollab } from "./lib/collab";
+import { ShareDialog } from "./components/collab/ShareDialog";
+import { JoinDialog } from "./components/collab/JoinDialog";
+import { TeamDialog } from "./components/collab/TeamDialog";
+import { GuestPane } from "./components/collab/GuestComposer";
 
 /** Backend-Events abonnieren und einmal mit Vibe verbinden. */
 function useBackend() {
@@ -44,6 +49,7 @@ function useBackend() {
       else unlisten.push(...fns);
     });
     s().connect(true);
+    const stopCollab = initCollab();
     api.readCustomization().then((c) => s().applyCustomization({ ...c, settings: { ...c.settings, overrides: undefined } }));
     api.startupProject().then((p) => {
       if (p) s().openProject(p);
@@ -51,6 +57,7 @@ function useBackend() {
     return () => {
       disposed = true;
       unlisten.forEach((f) => f());
+      stopCollab();
     };
   }, []);
 }
@@ -179,7 +186,7 @@ function PaneView({ index, project, last }: { index: number; project: string; la
       <div className="mx-auto w-full max-w-[820px] px-6 pb-5">
         {index === 0 && <NewModelsBanner />}
         {session && <TaskStrip session={session} />}
-        {session && pending ? <PermissionPrompt session={session} pending={pending} /> : <Composer session={session} project={session?.cwd ?? project} focused={focused} />}
+        {session?.guest ? <GuestPane session={session} /> : session && pending ? <PermissionPrompt session={session} pending={pending} /> : <Composer session={session} project={session?.cwd ?? project} focused={focused} />}
       </div>
     </div>
   );
@@ -205,6 +212,9 @@ export default function App() {
       <CommandPalette />
       <NewProjectDialog />
       <TextPrompt />
+      <ShareDialog />
+      <JoinDialog />
+      <TeamDialog />
       <Tour />
     </TooltipProvider>
   );

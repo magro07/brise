@@ -23,7 +23,7 @@ tauri = { version = "2", features = [] }
 tauri-plugin-opener = "2"
 tauri-plugin-dialog = "2"
 anyhow = "1"
-tokio = { version = "1", features = ["fs", "io-std", "io-util", "macros", "net", "process", "rt", "sync"] }
+tokio = { version = "1", features = ["fs", "io-std", "io-util", "macros", "net", "process", "rt", "sync", "time"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 toml_edit = "0.25.17"
@@ -40,6 +40,12 @@ sha2 = "0.11.1"
 portable-pty = "0.9.0"
 cpal = "0.15"
 regex = "1"
+chacha20poly1305 = "0.11.0"
+ed25519-dalek = "3.0.0"
+getrandom = "0.4.3"
+futures-util = "0.3.34"
+tokio-tungstenite = { version = "0.30.0", default-features = false, features = ["connect", "rustls-tls-webpki-roots"] }
+brise-relay = { version = "0.1.0", path = "../../relay" }
 
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
