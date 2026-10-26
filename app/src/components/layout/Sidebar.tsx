@@ -8,6 +8,7 @@ import {
   Folder,
   FolderOpen,
   FolderPlus,
+  LogIn,
   MoreHorizontal,
   PanelLeftClose,
   Plus,
@@ -20,6 +21,7 @@ import { basename, useStore, type Session } from "../../lib/store";
 import { relativeTime } from "../../lib/format";
 import { IconButton, Kbd, Logo, Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger, Spinner, clsx } from "../ui";
 import { confirmAction } from "../../lib/dialogs";
+import { useCollab } from "../../lib/collab";
 
 const SHOWN_PER_PROJECT = 6;
 
@@ -103,6 +105,10 @@ export function Sidebar() {
             </MenuItem>
             <MenuItem icon={<FolderOpen />} onSelect={pickProject}>
               Vorhandenen Ordner öffnen …
+            </MenuItem>
+            <MenuSeparator />
+            <MenuItem icon={<LogIn />} onSelect={() => useCollab.setState({ joinOpen: true })}>
+              Einer Session beitreten …
             </MenuItem>
           </MenuContent>
         </Menu>

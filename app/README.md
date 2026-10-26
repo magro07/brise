@@ -10,6 +10,7 @@ src/
   index.css              Design-Tokens (hell/dunkel), Markdown, Highlighting
   lib/store.ts           globaler Zustand (zustand): Sessions, Projekte, Aktionen
   lib/acp.ts             Typen + Aufrufe der Rust-Commands
+  lib/collab.ts          Kollaboration: Spiegeln (Host), Ansicht aufbauen (Gast)
   components/
     layout/              Sidebar (Projekte → Sessions), Header, Befehlspalette
     chat/                Konversation, Tool-Gruppen, Subagent-Karten, Diff, Markdown
@@ -18,6 +19,7 @@ src/
     settings/            Einstellungen aus Vibes Schema, schreibt config.toml
     screens/             Start, Login, Vibe fehlt, leere Zustände
     ui/                  Buttons, Menüs, Tooltips, Schalter, Ring
+    collab/              Session teilen, beitreten, Gast-Composer, Einstellungen
 src-tauri/src/
   rpc.rs                 JSON-RPC über stdio
   agent.rs               ACP-Commands, Event-Weiterleitung, Login, fs-Handler
@@ -34,6 +36,7 @@ src-tauri/src/
   customize.rs           Selbstanpassung per Chat: MCP-Server brise-app, Live-Übernahme
   meter.rs               Mikrofonpegel für die Wellen-Animation (cpal, nur Messung)
   selftest.rs            `brise --self-test` für die CI auf allen Systemen
+  collab/                Kollaboration: Verschlüsselung, Einladungslinks, Relay-Verbindung, LAN-Relay
 src-tauri/resources/skills/   mitgelieferte Skills (Lizenzen und Quellen in NOTICE.md)
 ```
 
@@ -127,6 +130,37 @@ Umgebungsvariablen:
 Beim Öffnen eines Projekts legt Brise im Hintergrund schon eine leere Session an.
 So stehen Modell und Denkstufe vor dem ersten Prompt bereit. Vibe speichert
 Sessions erst nach dem ersten Turn, leere tauchen also nirgends auf.
+
+## Zusammenarbeit (geteilte Sessions)
+
+Vibe läuft immer nur beim Host. Gäste sehen live mit, Mitarbeiter schlagen Prompts
+vor, Freigeber entscheiden Freigaben. Protokoll: [`docs/collab-protocol.md`](../docs/collab-protocol.md),
+Relay-Dienst: [`relay/`](../relay/README.md).
+
+- **Teilen:** Session-Menü (⋯ in der Kopfzeile) → „Session teilen …“. Brise erzeugt einen
+  Einladungslink `brise://join/<raum>?relay=…#<schlüssel>.<host>` und stellt die Session auf
+  „Alles fragen“. Der Dialog zeigt Teilnehmer (Rolle ändern, Freigabe entziehen) und die
+  Warteschlange der Gast-Prompts („Ausführen“, Verwerfen, optional automatisch).
+- **Beitreten:** Strg+K → „Einer Session beitreten …“ oder Sidebar → Projekt-Menü. Die Session
+  öffnet sich als nur lesbarer Tab. Mitarbeiter bekommen ein Eingabefeld für Vorschläge.
+- **Verbindung:** Standard ist „Direkt im LAN“: Brise startet das Relay selbst (Port 47800,
+  Firewall freigeben). Für Gäste von außerhalb unter Einstellungen → Zusammenarbeit die
+  Adresse eines eigenen Relays eintragen (`wss://…`).
+- **Was Gäste sehen:** Konversation und Diffs. Werkzeug-Ausgaben (gelesene Dateien,
+  Befehlsausgaben) nur, wenn „Werkzeug-Ausgaben zeigen“ an ist. Alles ist Ende-zu-Ende
+  verschlüsselt (XChaCha20-Poly1305), Rollen signiert der Host (Ed25519).
+
+Zwei Instanzen auf einem Rechner testen, z. B. unter Xvfb:
+
+```bash
+Xvfb :77 -screen 0 2440x860x24 &
+export DISPLAY=:77 GDK_BACKEND=x11 WEBKIT_DISABLE_DMABUF_RENDERER=1 LIBGL_ALWAYS_SOFTWARE=1
+XDG_DATA_HOME=/tmp/host/data XDG_CONFIG_HOME=/tmp/host/cfg ./src-tauri/target/debug/brise ~/projekt &
+XDG_DATA_HOME=/tmp/gast/data XDG_CONFIG_HOME=/tmp/gast/cfg ./src-tauri/target/debug/brise &
+```
+
+Eigene `XDG_*`-Ordner trennen die Oberflächen-Daten der Instanzen, Vibe und der
+Schlüsselbund bleiben gemeinsam.
 
 ## Modelle, Skills, Werkzeuge
 

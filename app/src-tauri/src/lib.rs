@@ -1,4 +1,5 @@
 mod agent;
+mod collab;
 mod assist;
 mod git;
 mod config;
@@ -84,6 +85,7 @@ pub fn run() {
         .manage(agent::AgentState::default())
         .manage(terminal::Terminals::default())
         .manage(meter::Meter::default())
+        .manage(collab::CollabState::default())
         .setup(|app| {
             customize::watch(app.handle().clone());
             Ok(())
@@ -154,6 +156,18 @@ pub fn run() {
             meter::meter_stop,
             customize::read_customization,
             customize::sync_prefs,
+            collab::collab_share,
+            collab::collab_publish,
+            collab::collab_set_role,
+            collab::collab_set_default_role,
+            collab::collab_remove,
+            collab::collab_queue_take,
+            collab::collab_unshare,
+            collab::collab_join,
+            collab::collab_guest_prompt,
+            collab::collab_guest_cancel,
+            collab::collab_leave,
+            collab::collab_status,
         ])
         .run(tauri::generate_context!())
         .expect("Brise konnte nicht gestartet werden");

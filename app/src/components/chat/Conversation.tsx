@@ -162,7 +162,7 @@ export function Conversation({ session }: { session: Session }) {
         }}
       >
         <div className="mx-auto max-w-[820px] px-6 pb-8 pt-6">
-          {session.readOnly && (
+          {session.readOnly && !session.guest && (
             <div className="mb-4 flex items-center gap-2 rounded-lg border border-line bg-panel px-3 py-2 text-[0.88em] text-muted">
               <Info className="h-4 w-4" /> Verlauf eines Subagenten – nur lesbar.
             </div>
@@ -177,6 +177,7 @@ export function Conversation({ session }: { session: Session }) {
                 case "user":
                   return (
                     <div key={item.id} data-brise="user-message" className="flex flex-col items-end gap-1.5 fade-in">
+                      {item.author && <span className="text-[0.76em] text-muted">{item.author}</span>}
                       <div className="max-w-[85%] whitespace-pre-wrap rounded-2xl rounded-br-md bg-user px-4 py-2.5 selectable">{item.text}</div>
                       {item.routed && (
                         <span className="inline-flex items-center gap-1 text-[0.76em] text-muted" title={item.routed.reason}>

@@ -1,9 +1,11 @@
-import { ChevronRight, MoreHorizontal, PanelLeftOpen, PanelRight, SquareTerminal, Trash2 } from "lucide-react";
+import { ChevronRight, MoreHorizontal, PanelLeftOpen, PanelRight, Share2, SquareTerminal, Trash2 } from "lucide-react";
 import { shortcut } from "../../lib/platform";
 import { basename, useStore, type Session } from "../../lib/store";
 import { IconButton, Menu, MenuContent, MenuItem, MenuTrigger, Tip, clsx } from "../ui";
 import { PANEL_TABS, changedFiles, subagents } from "../panels/SidePanel";
 import { confirmAction } from "../../lib/dialogs";
+import { useCollab } from "../../lib/collab";
+import { CollabBadge } from "../collab/CollabBadge";
 
 export function Header({ session }: { session?: Session }) {
   const project = useStore((s) => s.activeProject);
@@ -30,10 +32,12 @@ export function Header({ session }: { session?: Session }) {
         )}
         {project && <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted" />}
         <span className="truncate font-medium">{session ? (session.title ?? "Neue Session") : "Neue Session"}</span>
-        {session?.readOnly && <span className="rounded bg-hover px-1.5 text-[0.75em] text-muted">Subagent</span>}
+        {session?.readOnly && !session.guest && <span className="rounded bg-hover px-1.5 text-[0.75em] text-muted">Subagent</span>}
+        {session?.guest && <CollabBadge session={session} />}
       </div>
 
       <div className="flex items-center gap-0.5">
+        {!session?.guest && <CollabBadge session={session} />}
         {!panel && PANEL_TABS.map((t) => (
           <Tip key={t.id} label={t.label}>
             <button
@@ -63,6 +67,9 @@ export function Header({ session }: { session?: Session }) {
               </button>
             </MenuTrigger>
             <MenuContent align="end">
+              <MenuItem icon={<Share2 />} onSelect={() => useCollab.setState({ shareFor: session.id })}>
+                Session teilen …
+              </MenuItem>
               <MenuItem
                 icon={<Trash2 />}
                 danger

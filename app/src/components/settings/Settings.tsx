@@ -22,6 +22,7 @@ import {
   SlidersHorizontal,
   Trash2,
   UserRound,
+  Users,
 } from "lucide-react";
 import { api, type CatalogModel, type ConfigFile, type IndexStatus, type JsonSchema, type SkillInfo } from "../../lib/acp";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
@@ -31,6 +32,7 @@ import { looksSecret, maskSecrets } from "../../lib/format";
 import { Button, Spinner, Switch, clsx } from "../ui";
 import { MODE_INFO } from "../composer/Pickers";
 import { confirmAction } from "../../lib/dialogs";
+import { CollabSettings } from "../collab/CollabSettings";
 
 const SECTIONS = [
   { id: "general", label: "Allgemein", icon: Palette },
@@ -43,6 +45,7 @@ const SECTIONS = [
   { id: "voice", label: "Sprache", icon: AudioLines },
   { id: "embeddings", label: "Embeddings & Suche", icon: DatabaseZap },
   { id: "tools", label: "Werkzeuge & MCP", icon: Plug },
+  { id: "collab", label: "Zusammenarbeit", icon: Users },
   { id: "advanced", label: "Erweitert", icon: SlidersHorizontal },
 ] as const;
 
@@ -520,6 +523,7 @@ export function SettingsView() {
           )}
 
           {section === "web" && <WebCard values={values} write={write} />}
+          {section === "collab" && <CollabSettings />}
 
           {section === "tools" && (
             <>
