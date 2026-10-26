@@ -11,6 +11,12 @@ fn main() {
         brise_lib::run_mcp_app();
         return;
     }
+    if args.get(1).map(String::as_str) == Some("--mcp-council") {
+        if let Some(cwd) = args.get(2) {
+            brise_lib::run_mcp_council(cwd.clone());
+            return;
+        }
+    }
     if args.get(1).map(String::as_str) == Some("--mcp-search") {
         if let Some(cwd) = args.get(2) {
             brise_lib::run_mcp_search(cwd.clone());

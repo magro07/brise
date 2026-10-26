@@ -22,7 +22,9 @@ import {
   SlidersHorizontal,
   Trash2,
   UserRound,
+  Scale,
 } from "lucide-react";
+import { CouncilSettings } from "./CouncilSettings";
 import { api, type CatalogModel, type ConfigFile, type IndexStatus, type JsonSchema, type SkillInfo } from "../../lib/acp";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { tokens } from "../../lib/format";
@@ -42,6 +44,7 @@ const SECTIONS = [
   { id: "web", label: "Websuche & Recherche", icon: Globe },
   { id: "voice", label: "Sprache", icon: AudioLines },
   { id: "embeddings", label: "Embeddings & Suche", icon: DatabaseZap },
+  { id: "council", label: "Council", icon: Scale },
   { id: "tools", label: "Werkzeuge & MCP", icon: Plug },
   { id: "advanced", label: "Erweitert", icon: SlidersHorizontal },
 ] as const;
@@ -142,7 +145,7 @@ interface FieldProps {
   options?: { value: string; label: string }[];
 }
 
-function Row({ title, description, control, warn, reset }: { title: ReactNode; description?: ReactNode; control: ReactNode; warn?: boolean; reset?: () => void }) {
+export function Row({ title, description, control, warn, reset }: { title: ReactNode; description?: ReactNode; control: ReactNode; warn?: boolean; reset?: () => void }) {
   return (
     <div className={clsx("flex items-center gap-6 px-4 py-3.5", warn && "bg-bad-soft/60")}>
       <div className="min-w-0 flex-1">
@@ -206,7 +209,7 @@ function Field({ name, prop, value, onChange, options }: FieldProps) {
   return <Row title={label} description={description} control={control} warn={name === "bypass_tool_permissions" && !!effective} reset={reset} />;
 }
 
-function Card({ title, children, description }: { title?: string; description?: ReactNode; children: ReactNode }) {
+export function Card({ title, children, description }: { title?: string; description?: ReactNode; children: ReactNode }) {
   return (
     <section className="mb-6">
       {title && <h3 className="mb-1 text-[0.95em] font-semibold">{title}</h3>}
@@ -520,6 +523,7 @@ export function SettingsView() {
           )}
 
           {section === "web" && <WebCard values={values} write={write} />}
+          {section === "council" && <CouncilSettings />}
 
           {section === "tools" && (
             <>

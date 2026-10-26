@@ -128,7 +128,7 @@ pub fn run() -> i32 {
     }
 
     // 3. Eigene MCP-Server
-    for (name, flag) in [("MCP brise-app", vec!["--mcp-app"]), ("MCP brise-search", vec!["--mcp-search", "."])] {
+    for (name, flag) in [("MCP brise-app", vec!["--mcp-app"]), ("MCP brise-search", vec!["--mcp-search", "."]), ("MCP brise-council", vec!["--mcp-council", "."])] {
         match check_mcp(&flag) {
             Ok(n) => ok &= report(name, n > 0, format!("{n} Werkzeuge")),
             Err(e) => ok &= report(name, false, e),

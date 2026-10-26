@@ -25,10 +25,15 @@ import { short } from "../../lib/format";
 import { Spinner, clsx } from "../ui";
 import { Diff } from "./Diff";
 import { Markdown } from "./Markdown";
+import { CouncilToolCard } from "./Council";
+import { councilToolName } from "../../lib/council";
 
 export function isSubagent(t: ToolItem) {
   return !!(t.meta?.agent || t.meta?.task || t.meta?.child_session_id);
 }
+
+/** Eigene Karten statt Zeilen: Subagents und Council. */
+const isCard = (t: ToolItem) => isSubagent(t) || councilToolName(t) != null;
 
 export function toolIcon(t: ToolItem) {
   if (isSubagent(t)) return Bot;
@@ -206,7 +211,7 @@ function summarize(tools: ToolItem[]): string {
 /** Aufeinanderfolgende Werkzeugaufrufe, wie in Claude Code zusammengefasst. */
 export function ToolGroup({ items, cwd, live }: { items: Item[]; cwd: string; live: boolean }) {
   const tools = items.filter((i): i is ToolItem => i.type === "tool");
-  const plain = tools.filter((t) => !isSubagent(t));
+  const plain = tools.filter((t) => !isCard(t));
   const anyRunning = tools.some((t) => t.status === "in_progress" || t.status === "pending");
   const [open, setOpen] = useState(false);
   const collapsible = plain.length > 2;
@@ -228,6 +233,7 @@ export function ToolGroup({ items, cwd, live }: { items: Item[]; cwd: string; li
         {items.map((item, idx) => {
           if (item.type === "tool") {
             if (isSubagent(item)) return <SubagentCard key={item.id} tool={item} cwd={cwd} />;
+            if (councilToolName(item)) return <CouncilToolCard key={item.id} tool={item} cwd={cwd} />;
             if (!expanded && item !== lastRunning) return null;
             return <ToolRow key={item.id} tool={item} cwd={cwd} />;
           }
