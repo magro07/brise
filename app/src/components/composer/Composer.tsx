@@ -6,6 +6,8 @@ import { basename, useStore, type Attachment, type Session, type SlashCommand } 
 import { IconButton, Tip, clsx } from "../ui";
 import { VoiceRecorder } from "./VoiceRecorder";
 import { ContextMeter, ModePicker, OptionPicker, ThinkingPicker } from "./Pickers";
+import { BackendPicker } from "../agents/BackendPicker";
+import { BACKEND_SHORT, useSessionBackend, useVoiceAvailable } from "../../lib/backends";
 
 const IMAGE_EXT = /\.(png|jpe?g|gif|webp)$/i;
 const DOC_EXT = /\.(pdf|docx|pptx)$/i;
@@ -56,6 +58,8 @@ export function Composer({ session, project, focused = true }: { session?: Sessi
   const composerInsert = useStore((s) => s.composerInsert);
   const { startRecording, stopRecording, cancelRecording, set: setStore } = useStore.getState();
   const [voiceBusy, setVoiceBusy] = useState(false);
+  const backend = useSessionBackend(session);
+  const voice = useVoiceAvailable();
   // Bei mehreren Bereichen gehören Drop, Einfügen und Sprache nur dem fokussierten.
   const focusedRef = useRef(focused);
   focusedRef.current = focused;
@@ -250,7 +254,7 @@ export function Composer({ session, project, focused = true }: { session?: Sessi
               ? "Subagenten-Verläufe sind nur lesbar"
               : session
                 ? "Antworten, nachfragen oder nächste Aufgabe …"
-                : `Was soll Vibe in ${basename(project)} tun?  @ für Dateien, / für Befehle`
+                : `Was soll ${BACKEND_SHORT[backend] ?? backend} in ${basename(project)} tun?  @ für Dateien, / für Befehle`
           }
           onChange={(e) => {
             setText(e.target.value);
@@ -286,12 +290,13 @@ export function Composer({ session, project, focused = true }: { session?: Sessi
           <IconButton label="Dateien oder Bilder anhängen" onClick={attach} disabled={disabled}>
             <Paperclip className="h-4 w-4" />
           </IconButton>
+          <BackendPicker session={session} />
           <ModePicker session={session} />
           <OptionPicker session={session} id="model" />
           <ThinkingPicker session={session} />
           <div className="flex-1" />
           <ContextMeter session={session} />
-          <Tip label={recording ? "Aufnahme beenden und übernehmen" : "Spracheingabe (Voxtral)"}>
+          {voice && <Tip label={recording ? "Aufnahme beenden und übernehmen" : "Spracheingabe (Voxtral)"}>
             <button
               onClick={toggleVoice}
               disabled={disabled || voiceBusy}
@@ -303,7 +308,7 @@ export function Composer({ session, project, focused = true }: { session?: Sessi
             >
               {recording ? <Square className="h-3 w-3 fill-current" /> : <Mic className="h-4 w-4" />}
             </button>
-          </Tip>
+          </Tip>}
           {running ? (
             <button
               onClick={() => cancel()}

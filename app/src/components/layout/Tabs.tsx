@@ -1,5 +1,6 @@
 import { Columns2, MoreHorizontal, Plus, X } from "lucide-react";
 import { useStore } from "../../lib/store";
+import { BackendBadge } from "../agents/BackendPicker";
 import { IconButton, Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger, Spinner, clsx } from "../ui";
 
 /** Tab-Leiste eines Bereichs: offene Sessions mit Status. */
@@ -39,6 +40,7 @@ export function TabBar({ index }: { index: number }) {
                 <Spinner className="h-3 w-3 shrink-0 text-accent" />
               ) : null}
               <span className="truncate">{s?.title ?? "Session"}</span>
+              {s && <BackendBadge backend={s.backend} />}
             </button>
             <Menu>
               <MenuTrigger asChild>

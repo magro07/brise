@@ -1,6 +1,7 @@
-//! Kleine KI-Helfer neben Vibe, über die Mistral-API mit dem Nutzer-Key:
-//! Auto-Modellwahl (Aufgabe einstufen), personalisierte Vorschläge und
-//! Commit-Nachrichten. Alles mit einem schnellen Modell und kurzem Timeout.
+//! Kleine KI-Helfer neben dem Coding-Agenten: Auto-Modellwahl (Aufgabe
+//! einstufen), Denkstufe nachsteuern, personalisierte Vorschläge und
+//! Commit-Nachrichten. Das Modell dahinter liefert der `DecisionProvider`
+//! (decision.rs); hier stehen Anweisungen und die Prüfung der Antworten.
 
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -8,35 +9,15 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
-use crate::credentials::{read_key, API_BASE};
+use crate::decision::{self, DecisionRequest, DecisionTask};
 use crate::git::git_output;
 use crate::installer::data_dir;
 
 type CmdResult<T> = Result<T, String>;
 
-const FAST_MODEL: &str = "mistral-small-latest";
-
-/// Chat-Anfrage mit JSON-Antwort.
-async fn quick_json(model: &str, system: &str, user: &str, timeout: u64) -> CmdResult<Value> {
-    let key = read_key().ok_or("Kein Mistral-Schlüssel")?;
-    let body: Value = reqwest::Client::new()
-        .post(format!("{API_BASE}/chat/completions"))
-        .bearer_auth(key)
-        .timeout(Duration::from_secs(timeout))
-        .json(&json!({
-            "model": model,
-            "temperature": 0.2,
-            "response_format": { "type": "json_object" },
-            "messages": [{ "role": "system", "content": system }, { "role": "user", "content": user }]
-        }))
-        .send()
-        .await
-        .map_err(|e| e.to_string())?
-        .json()
-        .await
-        .map_err(|e| e.to_string())?;
-    let text = body["choices"][0]["message"]["content"].as_str().ok_or_else(|| format!("Unerwartete Antwort: {body}"))?;
-    serde_json::from_str(text).map_err(|e| format!("Kein gültiges JSON: {e}"))
+/// Anfrage an den aktiven Entscheidungs-Anbieter, Antwort als JSON.
+async fn quick_json(task: DecisionTask, model: Option<&str>, system: &str, user: &str, timeout: u64) -> CmdResult<Value> {
+    decision::current().decide(task, DecisionRequest { system, user, model, timeout: Duration::from_secs(timeout) }).await
 }
 
 /// Stuft eine Aufgabe für die Auto-Modellwahl ein: simple, standard oder complex.
@@ -55,7 +36,7 @@ pub async fn classify_task(text: String, history: Option<String>, model: Option<
     }
     user.push_str("Neue Aufgabe:\n");
     user.push_str(&text.chars().take(4000).collect::<String>());
-    let v = quick_json(model.as_deref().unwrap_or(FAST_MODEL), SYSTEM, &user, 6).await?;
+    let v = quick_json(DecisionTask::ClassifyTask, model.as_deref(), SYSTEM, &user, 6).await?;
     let level = match v["level"].as_str() {
         Some(l @ ("simple" | "standard" | "complex")) => l,
         _ => "standard",
@@ -149,7 +130,7 @@ pub async fn project_suggestions(cwd: String, recent: Vec<String>, refresh: Opti
         Keine allgemeinen Floskeln. Wiederhole keine Aufgaben aus den letzten Sessions. \
         Antworte als JSON: {\"suggestions\":[{\"title\":\"max. 4 Wörter\",\"description\":\"ein kurzer Satz\",\"prompt\":\"vollständige Anweisung an den Agenten auf Deutsch\",\"icon\":\"bug|test|docs|refactor|feature|explain|git|perf|security\"}]}";
     let user = format!("Projekt: {cwd}\n\n{brief}\n\nLetzte Sessions in diesem Projekt: {}", if recent.is_empty() { "keine".into() } else { recent.join("; ") });
-    let v = quick_json(model.as_deref().unwrap_or(FAST_MODEL), SYSTEM, &user, 20).await?;
+    let v = quick_json(DecisionTask::ProjectSuggestions, model.as_deref(), SYSTEM, &user, 20).await?;
     let suggestions = v["suggestions"].clone();
     if !suggestions.is_array() {
         return Err("Keine Vorschläge erhalten".into());
@@ -173,7 +154,7 @@ pub async fn commit_message(cwd: String, model: Option<String>) -> CmdResult<Str
     const SYSTEM: &str = "Formuliere eine Git-Commit-Nachricht für den Diff. Halte dich an Sprache und Stil der bisherigen Commits \
         (falls vorhanden, sonst Deutsch): Betreffzeile im Imperativ, max. 72 Zeichen, optional Leerzeile und kurze Stichpunkte. \
         Antworte als JSON: {\"message\":\"...\"}";
-    let v = quick_json(model.as_deref().unwrap_or(FAST_MODEL), SYSTEM, &format!("Bisherige Commits:\n{log}\n\nDiff:\n{diff}"), 20).await?;
+    let v = quick_json(DecisionTask::CommitMessage, model.as_deref(), SYSTEM, &format!("Bisherige Commits:\n{log}\n\nDiff:\n{diff}"), 20).await?;
     v["message"].as_str().map(str::to_string).ok_or_else(|| "Keine Nachricht erhalten".into())
 }
 
@@ -190,7 +171,7 @@ pub async fn adjust_reasoning(task: String, progress: String, current: String, m
         task.chars().take(2000).collect::<String>(),
         progress.chars().take(2500).collect::<String>()
     );
-    let v = quick_json(model.as_deref().unwrap_or(FAST_MODEL), SYSTEM, &user, 6).await?;
+    let v = quick_json(DecisionTask::AdjustReasoning, model.as_deref(), SYSTEM, &user, 6).await?;
     let level = match v["level"].as_str() {
         Some(l @ ("low" | "high" | "max")) => l,
         _ => current.as_str(),

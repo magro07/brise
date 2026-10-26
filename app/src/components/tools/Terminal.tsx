@@ -9,6 +9,7 @@ import "@xterm/xterm/css/xterm.css";
 import { Plus, SquareTerminal, X } from "lucide-react";
 import { api } from "../../lib/acp";
 import { basename, useStore } from "../../lib/store";
+import { useTerminalRequest } from "../../lib/backends";
 import { IconButton, clsx } from "../ui";
 
 function cssVar(name: string) {
@@ -28,7 +29,7 @@ function theme() {
 }
 
 /** Ein Terminal-Tab: xterm.js an ein PTY im Backend gekoppelt. */
-function TermView({ cwd, visible, onExit, onTitle }: { cwd: string; visible: boolean; onExit: () => void; onTitle: (t: string) => void }) {
+function TermView({ cwd, visible, onExit, onTitle, command }: { cwd: string; visible: boolean; onExit: () => void; onTitle: (t: string) => void; command?: string }) {
   const box = useRef<HTMLDivElement>(null);
   const fit = useRef<FitAddon | null>(null);
   const term = useRef<XTerm | null>(null);
@@ -57,6 +58,8 @@ function TermView({ cwd, visible, onExit, onTitle }: { cwd: string; visible: boo
       const termId = await api.termOpen(cwd, xterm.cols, xterm.rows);
       if (disposed) return api.termClose(termId);
       id.current = termId;
+      // Kurz warten, bis die Shell ihren Prompt geschrieben hat.
+      if (command) setTimeout(() => api.termWrite(termId, `${command}\r`), 400);
       unlisten.push(await listen<{ id: number; data: string }>("term:data", (e) => e.payload.id === termId && xterm.write(e.payload.data)));
       unlisten.push(await listen<{ id: number }>("term:exit", (e) => e.payload.id === termId && onExit()));
     })();
@@ -100,6 +103,7 @@ function TermView({ cwd, visible, onExit, onTitle }: { cwd: string; visible: boo
 interface Tab {
   key: number;
   title: string;
+  command?: string;
 }
 
 let tabCounter = 0;
@@ -112,11 +116,15 @@ export function TerminalPanel({ cwd }: { cwd: string }) {
   const [active, setActive] = useState<number | null>(null);
   const [height, setHeight] = useState(280);
 
-  const add = () => {
+  const add = (command?: string) => {
     const key = ++tabCounter;
-    setTabs((t) => [...t, { key, title: basename(cwd) }]);
+    setTabs((t) => [...t, { key, title: command ? "Anmeldung" : basename(cwd), command }]);
     setActive(key);
   };
+  const request = useTerminalRequest();
+  useEffect(() => {
+    if (request.command) add(request.command);
+  }, [request.seq]);
   const close = (key: number) => {
     setTabs((t) => {
       const rest = t.filter((x) => x.key !== key);
@@ -127,7 +135,7 @@ export function TerminalPanel({ cwd }: { cwd: string }) {
   };
 
   useEffect(() => {
-    if (open && tabs.length === 0) add();
+    if (open && tabs.length === 0 && !useTerminalRequest.getState().command) add();
   }, [open]);
 
   if (!tabs.length) return null;
@@ -162,7 +170,7 @@ export function TerminalPanel({ cwd }: { cwd: string }) {
             </button>
           </div>
         ))}
-        <IconButton label="Neues Terminal" size="sm" onClick={add}>
+        <IconButton label="Neues Terminal" size="sm" onClick={() => add()}>
           <Plus className="h-3.5 w-3.5" />
         </IconButton>
         <div className="flex-1" />
@@ -176,6 +184,7 @@ export function TerminalPanel({ cwd }: { cwd: string }) {
             key={t.key}
             cwd={cwd}
             visible={open && active === t.key}
+            command={t.command}
             onExit={() => close(t.key)}
             onTitle={(title) => setTabs((all) => all.map((x) => (x.key === t.key ? { ...x, title: title || x.title } : x)))}
           />

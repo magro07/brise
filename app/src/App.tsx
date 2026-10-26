@@ -29,7 +29,8 @@ function useBackend() {
       listen<{ key: string; request: PermissionRequest }>("acp:permission", (e) => s().onPermission(e.payload.key, e.payload.request)),
       listen<{ key: string; optionId: string | null }>("acp:permission-closed", (e) => s().onPermissionClosed(e.payload.key, e.payload.optionId)),
       listen<{ url: string }>("acp:login-url", (e) => useStore.setState((st) => ({ login: { ...st.login, url: e.payload.url } }))),
-      listen<{ generation: number }>("acp:closed", (e) => s().onClosed(e.payload.generation)),
+      listen<{ generation: number; backend?: string }>("acp:closed", (e) => s().onClosed(e.payload.generation, e.payload.backend)),
+      listen<{ backend: string; status: { kind?: string; label?: string; detail?: string } }>("acp:backend-auth", (e) => s().onBackendAuth(e.payload.backend, e.payload.status)),
       listen<{ method: string; params: unknown }>("acp:notification", (e) => s().onNotification(e.payload.method, e.payload.params)),
       listen<{ stage: string; line: string }>("install:progress", (e) =>
         useStore.setState((st) => ({ install: { ...st.install, lines: [...st.install.lines.slice(-200), e.payload.line] } })),

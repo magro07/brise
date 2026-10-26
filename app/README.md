@@ -1,8 +1,10 @@
 # Brise – App
 
 Tauri 2 + React + TypeScript + Tailwind 4 + Radix. Das Rust-Backend startet
-`vibe-acp` und spricht mit ihm über das Agent Client Protocol. Die Oberfläche
-bekommt alles als Tauri-Events.
+Coding-Agenten – Mistral Vibe (`vibe-acp`), Claude Code, Codex, Gemini CLI – und
+spricht mit ihnen über das Agent Client Protocol (siehe
+[ADR 0001](../docs/adr/0001-agent-backends.md)). Die Oberfläche bekommt alles als
+Tauri-Events.
 
 ```
 src/
@@ -10,9 +12,11 @@ src/
   index.css              Design-Tokens (hell/dunkel), Markdown, Highlighting
   lib/store.ts           globaler Zustand (zustand): Sessions, Projekte, Aktionen
   lib/acp.ts             Typen + Aufrufe der Rust-Commands
+  lib/backends.ts        Backend-Kurznamen, Capabilities, Terminal-Befehle
   components/
     layout/              Sidebar (Projekte → Sessions), Header, Befehlspalette
     chat/                Konversation, Tool-Gruppen, Subagent-Karten, Diff, Markdown
+    agents/              Agent-Wahl, Backend-Badges, Einstellungen „Agenten“
     composer/            Eingabe mit @/Slash, Modus/Modell/Denkstufe, Freigaben, Aufgaben
     panels/              Seitenpanel: Änderungen, Kontext, Subagents, Aufgaben
     settings/            Einstellungen aus Vibes Schema, schreibt config.toml
@@ -20,14 +24,16 @@ src/
     ui/                  Buttons, Menüs, Tooltips, Schalter, Ring
 src-tauri/src/
   rpc.rs                 JSON-RPC über stdio
-  agent.rs               ACP-Commands, Event-Weiterleitung, Login, fs-Handler
+  agent.rs               ACP-Commands, ein Prozess je Backend, Session-Routing, Events, fs-Handler
+  backends.rs            bekannte Agenten: finden, installieren (uv/npm), Anmeldung, Capabilities
+  decision.rs            DecisionProvider: Task-Modell für Brises Entscheidungen (heute Mistral)
   config.rs              config.toml lesen/schreiben (toml_edit, mit Backup), Dateien, Bilder
   credentials.rs         Mistral-Key prüfen/speichern (Schlüsselbund wie Vibe, sonst .env)
   installer.rs           lädt uv und installiert Vibe in Brises Datenordner
   embeddings.rs          Projektindex + semantische Suche, MCP-Server-Modus
   models.rs              Mistral-Modellkatalog, Modelle in config.toml, Startprüfung
   skills.rs              mitgelieferte Skills installieren, Skill-Liste
-  assist.rs              Auto-Modellwahl, personalisierte Vorschläge, Commit-Nachrichten
+  assist.rs              Auto-Modellwahl, personalisierte Vorschläge, Commit-Nachrichten (über decision.rs)
   git.rs                 Git über die Kommandozeile, MinGit unter Windows
   terminal.rs            eingebautes Terminal (PTY)
   files.rs               Dateien für den Editor, externe Editoren (VS Code & Co.)
@@ -53,6 +59,38 @@ eingefügtem Vibe-Key bzw. API-Key. Der Key wird gegen `GET /v1/models` geprüft
 dort gespeichert, wo Vibe ihn selbst ablegt: im Schlüsselbund unter Dienst
 `ai.mistral.vibe`, Konto `MISTRAL_API_KEY`, ersatzweise in `$VIBE_HOME/.env`.
 
+## Mehrere Agenten (Backends)
+
+Brise kann neben Mistral Vibe weitere ACP-Agenten nutzen. Jede Session gehört einem
+Agenten; welcher, steht als Badge an Session und Tab, sobald mehr als einer im Spiel ist.
+
+| Agent | Wie Brise ihn startet | Anmeldung |
+|---|---|---|
+| Mistral Vibe | `vibe-acp` (uv-Installation wie unten) | Mistral-Konto oder Key, in Brise |
+| Claude Code | `claude-agent-acp` aus dem PATH oder `npm install @agentclientprotocol/claude-agent-acp` in `<Datenordner>/backends/claude`, gestartet mit `node` (Node.js ≥ 22) | Claude-Code-Anmeldung: „Anmelden“ führt `… --cli auth login --claudeai` im eingebauten Terminal aus (Claude Pro/Max). Variablen wie `ANTHROPIC_API_KEY` und `~/.claude/settings.json` gelten ebenfalls |
+| OpenAI Codex | `codex-acp` bzw. `@agentclientprotocol/codex-acp` | `codex login` oder `OPENAI_API_KEY` |
+| Gemini CLI | `gemini --acp` bzw. `@google/gemini-cli` | Google-Login beim ersten `gemini` oder `GEMINI_API_KEY` |
+
+- **Neue Session:** Im Eingabefeld wählt „Agent“ das Backend für die nächste Session
+  (erscheint, sobald mehr als ein Agent installiert ist). Standard unter
+  Einstellungen → Agenten.
+- **Einstellungen → Agenten:** installiert, angemeldet (bei Zugangsdaten aus Variablen
+  oder `settings.json` mit „nicht geprüft“), Installieren, Anmelden, Neu verbinden,
+  Standard-Agent, welche Agenten beim Start verbinden (deren Sessions stehen dann in
+  der Seitenleiste).
+- **Capabilities:** Vibe-Erweiterungen (Konto, Einstellungen aus dem Schema, Skills,
+  Modellverwaltung, Auto-Modellwahl) gibt es nur für Vibe-Sessions; ohne
+  Vibe-Verbindung blendet Brise diese Einstellungsabschnitte aus. Sprache (Voxtral)
+  läuft über Vibe und steht allen Sessions zur Verfügung, wenn Vibe angemeldet ist.
+  Modus, Modell, Freigaben, Diffs, Plan, Slash-Befehle und Sessions-Liste kommen
+  per Standard-ACP vom jeweiligen Agenten.
+- **Ohne Vibe:** Auf dem Startbildschirm bietet Brise „Mit Claude Code arbeiten“ bzw.
+  „… installieren und nutzen“ an. Ist ein anderer Agent Standard, braucht Brise beim
+  Start kein Vibe.
+- **Entscheidungen:** Einstufen, Denkstufe, Vorschläge und Commit-Nachrichten laufen
+  über `DecisionProvider` (heute Mistral Small). Weitere Anbieter (z. B. „Cortex AI“)
+  kommen als zweite Implementierung in `decision.rs` dazu.
+
 ## Entwickeln
 
 Voraussetzungen unter Fedora (einmalig):
@@ -73,7 +111,12 @@ npm run tauri build               # Installer bauen
 
 Umgebungsvariablen:
 
-- `BRISE_ACP_TRACE=/tmp/acp.log` schreibt den gesamten ACP-Verkehr mit.
+- `BRISE_ACP_TRACE=/tmp/acp.log` schreibt den gesamten ACP-Verkehr mit (weitere
+  Backends in `/tmp/acp.log.<backend>`).
+- `brise --self-test` prüft Vibe, ACP, alle installierten Agenten (Start, Session),
+  MCP-Server, Terminal und Git. `BRISE_SELFTEST_PROMPT=1` schickt jedem Agenten
+  zusätzlich einen echten Mini-Prompt, `BRISE_SELFTEST_INSTALL=claude` installiert
+  den Claude-Adapter vorher, falls er fehlt.
 - `VIBE_HOME=/tmp/vibe-clean` startet Vibe mit eigener, leerer Konfiguration.
   Die Anmeldung aus dem Schlüsselbund gilt weiter.
 

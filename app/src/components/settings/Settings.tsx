@@ -12,6 +12,7 @@ import {
   DatabaseZap,
   Download,
   Bot,
+  Boxes,
   Cpu,
   KeyRound,
   Palette,
@@ -27,6 +28,10 @@ import { api, type CatalogModel, type ConfigFile, type IndexStatus, type JsonSch
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { tokens } from "../../lib/format";
 import { useStore, type Theme } from "../../lib/store";
+import { AgentsSettings } from "../agents/AgentsSettings";
+
+/** Abschnitte, die Vibes Konfiguration brauchen – ohne Vibe-Verbindung ausgeblendet. */
+const VIBE_SECTIONS = new Set(["account", "models", "permissions", "agents", "skills", "web", "voice", "advanced"]);
 import { looksSecret, maskSecrets } from "../../lib/format";
 import { Button, Spinner, Switch, clsx } from "../ui";
 import { MODE_INFO } from "../composer/Pickers";
@@ -34,10 +39,11 @@ import { confirmAction } from "../../lib/dialogs";
 
 const SECTIONS = [
   { id: "general", label: "Allgemein", icon: Palette },
+  { id: "backends", label: "Agenten", icon: Boxes },
   { id: "account", label: "Konto", icon: UserRound },
   { id: "models", label: "Modelle & Kontext", icon: Cpu },
   { id: "permissions", label: "Freigaben & Sicherheit", icon: ShieldCheck },
-  { id: "agents", label: "Agents & Subagents", icon: Bot },
+  { id: "agents", label: "Vibe-Agents & Subagents", icon: Bot },
   { id: "skills", label: "Skills", icon: Sparkles },
   { id: "web", label: "Websuche & Recherche", icon: Globe },
   { id: "voice", label: "Sprache", icon: AudioLines },
@@ -142,7 +148,7 @@ interface FieldProps {
   options?: { value: string; label: string }[];
 }
 
-function Row({ title, description, control, warn, reset }: { title: ReactNode; description?: ReactNode; control: ReactNode; warn?: boolean; reset?: () => void }) {
+export function Row({ title, description, control, warn, reset }: { title: ReactNode; description?: ReactNode; control: ReactNode; warn?: boolean; reset?: () => void }) {
   return (
     <div className={clsx("flex items-center gap-6 px-4 py-3.5", warn && "bg-bad-soft/60")}>
       <div className="min-w-0 flex-1">
@@ -206,7 +212,7 @@ function Field({ name, prop, value, onChange, options }: FieldProps) {
   return <Row title={label} description={description} control={control} warn={name === "bypass_tool_permissions" && !!effective} reset={reset} />;
 }
 
-function Card({ title, children, description }: { title?: string; description?: ReactNode; children: ReactNode }) {
+export function Card({ title, children, description }: { title?: string; description?: ReactNode; children: ReactNode }) {
   return (
     <section className="mb-6">
       {title && <h3 className="mb-1 text-[0.95em] font-semibold">{title}</h3>}
@@ -230,6 +236,8 @@ export function SettingsView() {
   const [error, setError] = useState<string | null>(null);
   const [dirty, setDirty] = useState(false);
   const [query, setQuery] = useState("");
+  const vibe = useStore((s) => !!s.agents.vibe);
+  const sections = SECTIONS.filter((s) => vibe || !VIBE_SECTIONS.has(s.id));
 
   const reload = useCallback(async () => {
     try {
@@ -240,9 +248,10 @@ export function SettingsView() {
   }, []);
 
   useEffect(() => {
+    if (!vibe) return;
     reload();
     api.configSchema().then((r) => setSchema(r.schema)).catch((e) => setError(String(e)));
-  }, [reload]);
+  }, [reload, vibe]);
 
   const write = async (key: string[], value: unknown) => {
     try {
@@ -286,7 +295,7 @@ export function SettingsView() {
         <button className="mb-3 flex h-8 items-center gap-2 rounded-lg px-2 text-fg-2 hover:bg-hover hover:text-fg" onClick={() => setView("chat")}>
           <ArrowLeft className="h-4 w-4" /> Zurück
         </button>
-        {SECTIONS.map((s) => (
+        {sections.map((s) => (
           <button
             key={s.id}
             onClick={() => setView("settings", s.id)}
@@ -320,6 +329,8 @@ export function SettingsView() {
               </Button>
             </div>
           )}
+
+          {section === "backends" && <AgentsSettings />}
 
           {section === "general" && (
             <>

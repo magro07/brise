@@ -2,6 +2,7 @@ import { Brain, ChevronDown, Cpu, FilePen, Hand, Sparkles, Wand2, Zap, type Luci
 import type { ConfigOption } from "../../lib/acp";
 import { THINKING_LABEL, useStore, type Session } from "../../lib/store";
 import { tokens } from "../../lib/format";
+import { useCaps, useSessionBackend } from "../../lib/backends";
 import { Menu, MenuContent, MenuItem, MenuLabel, MenuSeparator, MenuTrigger, Ring, Tip, clsx } from "../ui";
 
 export const MODE_INFO: Record<string, { label: string; description: string; icon: LucideIcon }> = {
@@ -9,6 +10,12 @@ export const MODE_INFO: Record<string, { label: string; description: string; ico
   "accept-edits": { label: "Edits automatisch", description: "Dateiänderungen ohne Rückfrage, Befehle mit", icon: FilePen },
   "smart-approve": { label: "Smart", description: "Vibe stuft jede Aktion nach Risiko ein", icon: Sparkles },
   "auto-approve": { label: "Alles automatisch", description: "Keine Rückfragen – mit Vorsicht nutzen", icon: Zap },
+  // Claude Code
+  default: { label: "Alles fragen", description: "Vor jeder Änderung nachfragen", icon: Hand },
+  acceptEdits: { label: "Edits automatisch", description: "Dateiänderungen ohne Rückfrage", icon: FilePen },
+  plan: { label: "Planen", description: "Erst einen Plan erstellen, nichts ändern", icon: Brain },
+  auto: { label: "Claude entscheidet", description: "Claude stuft Freigaben selbst ein", icon: Sparkles },
+  bypassPermissions: { label: "Alles automatisch", description: "Keine Rückfragen – mit Vorsicht nutzen", icon: Zap },
 };
 
 
@@ -84,7 +91,8 @@ export function ModePicker({ session }: { session?: Session }) {
 export function OptionPicker({ session, id }: { session?: Session; id: "model" | "thinking" }) {
   const { config, value } = useOptions(session);
   const setOption = useStore((s) => s.setOption);
-  const auto = useStore((s) => s.prefs.autoModel);
+  const autoCapable = useCaps(useSessionBackend(session)).autoModel;
+  const auto = useStore((s) => s.prefs.autoModel) && autoCapable;
   const setPrefs = useStore((s) => s.setPrefs);
   const option = config.find((o) => o.id === id);
   if (!option?.options?.length) return null;
@@ -100,22 +108,26 @@ export function OptionPicker({ session, id }: { session?: Session; id: "model" |
         </MenuTrigger>
         <MenuContent side="top" className="w-72">
           <MenuLabel>Modell</MenuLabel>
-          <MenuItem
-            icon={<Wand2 />}
-            checked={auto}
-            description="Brise stuft jede Aufgabe ein und wählt das passende Modell"
-            onSelect={() => setPrefs({ autoModel: true })}
-          >
-            Auto
-          </MenuItem>
-          <MenuSeparator />
+          {autoCapable && (
+            <>
+              <MenuItem
+                icon={<Wand2 />}
+                checked={auto}
+                description="Brise stuft jede Aufgabe ein und wählt das passende Modell"
+                onSelect={() => setPrefs({ autoModel: true })}
+              >
+                Auto
+              </MenuItem>
+              <MenuSeparator />
+            </>
+          )}
           {option.options.map((o) => (
             <MenuItem
               key={o.value}
               checked={!auto && o.value === current}
               description={o.description}
               onSelect={() => {
-                setPrefs({ autoModel: false });
+                if (autoCapable) setPrefs({ autoModel: false });
                 setOption("model", o.value);
               }}
             >
