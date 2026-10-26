@@ -3,7 +3,8 @@ import { Sparkles } from "lucide-react";
 import { listen } from "@tauri-apps/api/event";
 import { api, type PermissionRequest } from "./lib/acp";
 import { useActiveSession, useStore } from "./lib/store";
-import { Button, TooltipProvider } from "./components/ui";
+import { Button, TooltipProvider, clsx } from "./components/ui";
+import { TabBar } from "./components/layout/Tabs";
 import { Sidebar } from "./components/layout/Sidebar";
 import { Header } from "./components/layout/Header";
 import { CommandPalette } from "./components/layout/CommandPalette";
@@ -66,6 +67,15 @@ function useShortcuts() {
       else if (key === "b") st.set({ sidebarOpen: !st.sidebarOpen });
       else if (key === "j") st.togglePanel();
       else if (key === "`" || key === "ö" || key === "dead") st.set({ terminalOpen: !st.terminalOpen });
+      else if (key === "w" && st.activeSessionId) st.closeTab(st.focusedPane, st.activeSessionId);
+      else if (key === "\\") st.splitWith(st.activeSessionId);
+      else if (key === "tab") {
+        const pane = st.panes[st.focusedPane];
+        if (!pane?.tabs.length) return;
+        const i = pane.active ? pane.tabs.indexOf(pane.active) : -1;
+        const next = pane.tabs[(i + (e.shiftKey ? -1 : 1) + pane.tabs.length) % pane.tabs.length];
+        st.openTab(next, st.focusedPane);
+      }
       else return;
       e.preventDefault();
     };
@@ -114,6 +124,7 @@ function Workspace() {
   const set = useStore((s) => s.set);
   const phase = useStore((s) => s.phase);
   const prepare = useStore((s) => s.prepare);
+  const panes = useStore((s) => s.panes);
 
   useEffect(() => {
     if (project && !session && phase === "ready") prepare(project);
@@ -129,26 +140,46 @@ function Workspace() {
   }, [project, phase]);
 
   if (!project) return <NoProject />;
-  const pending = session?.pending[0];
   return (
     <div className="flex min-h-0 min-w-0 flex-1">
       <div className="flex min-w-0 flex-1 flex-col">
         <Header session={session} />
-        {session ? <Conversation session={session} /> : <DraftHero project={project} />}
-        <div className="mx-auto w-full max-w-[820px] px-6 pb-5">
-          {error && (
-            <div className="mb-2 flex items-center gap-2 rounded-lg bg-bad-soft px-3 py-2 text-[0.88em] text-bad">
-              <span className="flex-1 selectable">{error}</span>
-              <button onClick={() => set({ error: undefined })}>×</button>
-            </div>
-          )}
-          <NewModelsBanner />
-          {session && <TaskStrip session={session} />}
-          {session && pending ? <PermissionPrompt session={session} pending={pending} /> : <Composer session={session} project={session?.cwd ?? project} />}
+        {error && (
+          <div className="mx-4 mt-2 flex items-center gap-2 rounded-lg bg-bad-soft px-3 py-2 text-[0.88em] text-bad">
+            <span className="flex-1 selectable">{error}</span>
+            <button onClick={() => set({ error: undefined })}>×</button>
+          </div>
+        )}
+        <div className="flex min-h-0 flex-1">
+          {panes.map((_, i) => (
+            <PaneView key={i} index={i} project={project} last={i === panes.length - 1} />
+          ))}
         </div>
         <TerminalPanel cwd={session?.cwd ?? project} />
       </div>
       <SidePanel session={session} />
+    </div>
+  );
+}
+
+/** Ein Bereich: Tabs, Konversation (oder Startseite) und eigener Composer. */
+function PaneView({ index, project, last }: { index: number; project: string; last: boolean }) {
+  const pane = useStore((s) => s.panes[index]);
+  const multiple = useStore((s) => s.panes.length > 1);
+  const session = useStore((s) => (pane?.active ? s.sessions[pane.active] : undefined));
+  const focusPane = useStore((s) => s.focusPane);
+  const focused = useStore((s) => s.focusedPane === index);
+  const pending = session?.pending[0];
+  const showTabs = multiple || (pane?.tabs.length ?? 0) > 0;
+  return (
+    <div className={clsx("flex min-w-0 flex-1 flex-col", !last && "border-r border-line")} onMouseDownCapture={() => focusPane(index)} onFocusCapture={() => focusPane(index)}>
+      {showTabs && <TabBar index={index} />}
+      {session ? <Conversation session={session} /> : <DraftHero project={project} />}
+      <div className="mx-auto w-full max-w-[820px] px-6 pb-5">
+        {index === 0 && <NewModelsBanner />}
+        {session && <TaskStrip session={session} />}
+        {session && pending ? <PermissionPrompt session={session} pending={pending} /> : <Composer session={session} project={session?.cwd ?? project} focused={focused} />}
+      </div>
     </div>
   );
 }

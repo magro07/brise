@@ -53,6 +53,7 @@ fn check_pty() -> Result<String, String> {
     let mut child = pty.slave.spawn_command(cmd).map_err(|e| e.to_string())?;
     drop(pty.slave);
     let mut reader = pty.master.try_clone_reader().map_err(|e| e.to_string())?;
+    let mut writer = pty.master.take_writer().map_err(|e| e.to_string())?;
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
         let mut buf = [0u8; 4096];
@@ -61,7 +62,14 @@ fn check_pty() -> Result<String, String> {
             if n == 0 {
                 break;
             }
-            all.push_str(&String::from_utf8_lossy(&buf[..n]));
+            let chunk = String::from_utf8_lossy(&buf[..n]).to_string();
+            // Windows-ConPTY fragt beim Start die Cursorposition ab und wartet auf
+            // die Antwort (in der App beantwortet das xterm.js).
+            if chunk.contains("\x1b[6n") {
+                let _ = writer.write_all(b"\x1b[1;1R");
+                let _ = writer.flush();
+            }
+            all.push_str(&chunk);
             if all.contains("brise-pty-ok") {
                 let _ = tx.send(all.clone());
                 break;

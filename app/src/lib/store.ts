@@ -119,6 +119,19 @@ export interface Session {
   commands: SlashCommand[];
   /** Nur lesbar, z. B. der Verlauf eines Subagenten. */
   readOnly?: boolean;
+  /** Denkstufe steuert das Task-Modell (bis man sie von Hand wählt). */
+  autoThinking: boolean;
+  thinkingLog: ThinkingEvent[];
+  /** Aufgabe des laufenden Turns – Kontext fürs Nachsteuern. */
+  currentTask?: string;
+}
+
+export interface ThinkingEvent {
+  at: number;
+  from: string;
+  to: string;
+  reason: string;
+  phase: "start" | "live";
 }
 
 export type Phase = "connecting" | "no-vibe" | "error" | "login" | "ready";
@@ -146,6 +159,10 @@ export interface Prefs {
   accent: string | null;
   /** Modell für Brises Helfer: Einstufung, Vorschläge, Commit-Nachrichten. */
   assistModel: string;
+  /** Auto: festes Modell + Denkstufe steuern ("reasoning") oder Modell je Stufe wechseln ("routing"). */
+  autoStrategy: "reasoning" | "routing";
+  /** Modell für Auto mit Denkstufen-Steuerung. */
+  autoBaseModel: string;
   /** Codestral-Vervollständigung im Editor. */
   fim: boolean;
   /** Einführung schon gesehen. */
@@ -164,6 +181,12 @@ export interface InstallState {
   running: boolean;
   lines: string[];
   error?: string;
+}
+
+export interface Pane {
+  tabs: string[];
+  /** null = neue Session (Entwurf) */
+  active: string | null;
 }
 
 interface DraftConfig {
@@ -193,6 +216,9 @@ interface State {
   paletteOpen: boolean;
   newProjectOpen: boolean;
   tourStep: number | null;
+  /** Bereiche nebeneinander, jeder mit eigenen Tabs. */
+  panes: Pane[];
+  focusedPane: number;
   textPrompt: { title: string; placeholder: string; resolve: (v: string | null) => void } | null;
   prefs: Prefs;
   draft: DraftConfig;
@@ -228,6 +254,10 @@ interface Actions {
   narrate(sessionId: string, itemId: string): Promise<void>;
   stopNarration(): Promise<void>;
   insertIntoComposer(text: string): void;
+  focusPane(index: number): void;
+  openTab(id: string, pane?: number): void;
+  closeTab(pane: number, id: string): void;
+  splitWith(id: string | null): void;
   applyCustomization(c: { settings: Record<string, any>; css: string }): void;
   openFile(path: string, diff?: boolean): Promise<void>;
   closeFile(path: string): void;
@@ -279,6 +309,8 @@ function emptySession(id: string, cwd: string): Session {
     replaying: false,
     usage: {},
     commands: [],
+    autoThinking: true,
+    thinkingLog: [],
   };
 }
 
@@ -422,6 +454,8 @@ const initialPrefs: Prefs = {
   routing: { simple: "zai-glm-5-3-flash", standard: "mistral-medium-3.5", complex: "mistral-large-4" },
   accent: null,
   assistModel: "mistral-small-latest",
+  autoStrategy: "reasoning",
+  autoBaseModel: "glm-5-3",
   fim: true,
   tourDone: false,
   ...load<Partial<Prefs>>("prefs", {}),
@@ -434,6 +468,20 @@ function heuristicLevel(text: string): Routed["level"] {
   if (text.length < 140 && /(\?|erkl|was ist|wie heißt|umbenenn|format|tippfehler|typo)/.test(t)) return "simple";
   return "standard";
 }
+
+export const THINKING_LABEL: Record<string, string> = { off: "aus", low: "niedrig", medium: "mittel", high: "hoch", max: "maximal" };
+const LEVEL_TO_THINKING: Record<Routed["level"], string> = { simple: "low", standard: "high", complex: "max" };
+export const THINKING_ORDER = ["off", "low", "medium", "high", "max"];
+
+/** Nächste verfügbare Denkstufe (nicht jedes Modell kann jede). */
+function nearestThinking(wanted: string, available: string[]): string | undefined {
+  if (available.includes(wanted)) return wanted;
+  const w = THINKING_ORDER.indexOf(wanted);
+  return [...available].sort((a, b) => Math.abs(THINKING_ORDER.indexOf(a) - w) - Math.abs(THINKING_ORDER.indexOf(b) - w))[0];
+}
+
+/** Signale im laufenden Turn, die ein Nachsteuern rechtfertigen. */
+const signals: Record<string, { failStreak: number; readStreak: number; lastAdjust: number; busy: boolean }> = {};
 
 /** Nimmt das gewünschte Modell, sonst das nächstbeste verfügbare. */
 function pickModel(level: Routed["level"], routing: Prefs["routing"], available: string[], needsVision: boolean): string | undefined {
@@ -463,6 +511,60 @@ export const useStore = create<State & Actions>((set, get) => {
 
   const pushItem = (id: string, item: Item) => patchSession(id, (s) => ({ ...s, items: [...s.items, item] }));
 
+  /** Denkstufe während der Arbeit nachsteuern – nur bei klaren Signalen, höchstens alle 30 s. */
+  const steerThinking = (sid: string, u: any) => {
+    const st = get();
+    const s = st.sessions[sid];
+    const sig = signals[sid];
+    if (!s || !sig || !st.prefs.autoModel || st.prefs.autoStrategy !== "reasoning" || !s.autoThinking) return;
+    let trigger: string | null = null;
+    if (u.sessionUpdate === "tool_call_update" && u.status) {
+      const tool = s.items.find((i): i is ToolItem => i.type === "tool" && i.toolCallId === u.toolCallId);
+      if (u.status === "failed") {
+        sig.failStreak++;
+        sig.readStreak = 0;
+        if (sig.failStreak >= 2) trigger = `${sig.failStreak} Schritte in Folge fehlgeschlagen`;
+      } else if (u.status === "completed") {
+        sig.failStreak = 0;
+        if (tool && (tool.kind === "read" || tool.kind === "search")) {
+          sig.readStreak++;
+          if (sig.readStreak >= 8) trigger = "lange reine Lese- und Suchphase";
+        } else sig.readStreak = 0;
+      }
+    } else if (u.sessionUpdate === "plan" && (u.entries?.length ?? 0) >= 6) {
+      trigger = `Aufgabenliste mit ${u.entries.length} Schritten`;
+    }
+    if (!trigger || sig.busy || Date.now() - sig.lastAdjust < 30_000) return;
+    const opt = s.config.find((o) => o.id === "thinking");
+    const current = String(opt?.currentValue ?? "");
+    const levels = (opt?.options ?? []).map((o) => o.value);
+    if (!levels.length) return;
+    sig.busy = true;
+    const progress = s.items
+      .slice(-14)
+      .map((i) => (i.type === "tool" ? `- ${i.title} (${i.status})` : i.type === "assistant" ? `- Vibe: ${i.text.slice(0, 160)}` : ""))
+      .filter(Boolean)
+      .join("\n");
+    api
+      .adjustReasoning(s.currentTask ?? "", `${progress}\nSignal: ${trigger}`, current, st.prefs.assistModel)
+      .then(async (r) => {
+        const target = nearestThinking(r.level, levels);
+        if (!target || target === current || !get().sessions[sid]?.running) return;
+        await get().setOption("thinking", target, sid);
+        patchSession(sid, (x) => ({
+          ...x,
+          thinkingLog: [...x.thinkingLog, { at: Date.now(), from: current, to: target, reason: r.reason || trigger!, phase: "live" }],
+        }));
+      })
+      .catch(() => {})
+      .finally(() => {
+        sig.busy = false;
+        sig.lastAdjust = Date.now();
+        sig.failStreak = 0;
+        sig.readStreak = 0;
+      });
+  };
+
   const rememberTemplate = (s: Session) => {
     if (s.modes.length || s.config.length) set({ template: { modes: s.modes, config: s.config, commands: s.commands } });
   };
@@ -484,6 +586,8 @@ export const useStore = create<State & Actions>((set, get) => {
     paletteOpen: false,
     newProjectOpen: false,
     tourStep: null,
+    panes: [{ tabs: [], active: null }],
+    focusedPane: 0,
     textPrompt: null,
     prefs: initialPrefs,
     draft: {},
@@ -616,6 +720,45 @@ export const useStore = create<State & Actions>((set, get) => {
     async stopNarration() {
       await api.ext("voice/narrateCancel");
       set({ narration: { itemId: null, state: "idle" } });
+    },
+
+    focusPane(index) {
+      const pane = get().panes[index];
+      if (!pane || index === get().focusedPane) return;
+      const session = pane.active ? get().sessions[pane.active] : undefined;
+      set({ focusedPane: index, activeSessionId: pane.active, activeProject: session?.cwd ?? get().activeProject });
+    },
+
+    openTab(id, paneIndex) {
+      const i = paneIndex ?? get().focusedPane;
+      set((s) => ({
+        panes: s.panes.map((p, n) => (n === i ? { tabs: p.tabs.includes(id) ? p.tabs : [...p.tabs, id], active: id } : p)),
+        focusedPane: i,
+      }));
+      if (get().activeSessionId !== id) get().selectSession(id);
+    },
+
+    closeTab(paneIndex, id) {
+      set((s) => {
+        let panes = s.panes.map((p, n) => {
+          if (n !== paneIndex) return p;
+          const idx = p.tabs.indexOf(id);
+          const tabs = p.tabs.filter((t) => t !== id);
+          const active = p.active === id ? (tabs[Math.max(0, idx - 1)] ?? null) : p.active;
+          return { tabs, active };
+        });
+        // Leere Zusatzbereiche schließen.
+        if (panes.length > 1 && panes[paneIndex].tabs.length === 0) panes = panes.filter((_, n) => n !== paneIndex);
+        const focusedPane = Math.min(s.focusedPane, panes.length - 1);
+        const active = panes[focusedPane].active;
+        return { panes, focusedPane, activeSessionId: active, activeProject: (active && s.sessions[active]?.cwd) || s.activeProject };
+      });
+    },
+
+    splitWith(id) {
+      if (get().panes.length >= 3) return;
+      set((s) => ({ panes: [...s.panes, { tabs: id ? [id] : [], active: id }], focusedPane: s.panes.length, activeSessionId: id }));
+      if (id) get().selectSession(id);
     },
 
     insertIntoComposer(text) {
@@ -795,6 +938,7 @@ export const useStore = create<State & Actions>((set, get) => {
           sessions,
           index: s.index.filter((x) => x.sessionId !== id),
           activeSessionId: s.activeSessionId === id ? null : s.activeSessionId,
+          panes: s.panes.map((p) => ({ tabs: p.tabs.filter((t) => t !== id), active: p.active === id ? null : p.active })),
         };
       });
     },
@@ -877,29 +1021,56 @@ export const useStore = create<State & Actions>((set, get) => {
         items: [...s.items, { type: "user", id: userItemId, text, attachments }],
       }));
 
-      // Auto-Modellwahl: Aufgabe einstufen und passendes Modell setzen.
+      // Auto: Aufgabe einstufen. Standard: GLM-5.3 fest, Denkstufe passend setzen.
       const current = get().sessions[sid];
       const modelOption = current?.config.find((o) => o.id === "model");
-      if (get().prefs.autoModel && modelOption?.options?.length && !text.startsWith("/")) {
+      const thinkingOption = () => get().sessions[sid]?.config.find((o) => o.id === "thinking");
+      const prefs = get().prefs;
+      patchSession(sid, (s) => ({ ...s, currentTask: text }));
+      signals[sid] = { failStreak: 0, readStreak: 0, lastAdjust: Date.now(), busy: false };
+      if (prefs.autoModel && modelOption?.options?.length && !text.startsWith("/")) {
         const history = current.items
           .filter((i) => i.type === "user")
           .slice(-4, -1)
           .map((i) => (i.type === "user" ? i.text : ""))
           .join("\n");
         const verdict = await api
-          .classifyTask(text, history, get().prefs.assistModel)
+          .classifyTask(text, history, prefs.assistModel)
           .catch(() => ({ level: heuristicLevel(text), reason: "Schätzung ohne KI" }));
         const available = modelOption.options.map((o) => o.value);
-        const model = pickModel(verdict.level, get().prefs.routing, available, attachments.some((a) => a.kind === "image"));
-        if (model) {
-          if (model !== modelOption.currentValue) await get().setOption("model", model, sid).catch(() => {});
-          const name = modelOption.options.find((o) => o.value === model)?.name ?? model;
-          patchSession(sid, (s) => ({
-            ...s,
-            items: s.items.map((i) => (i.id === userItemId && i.type === "user" ? { ...i, routed: { model: name, level: verdict.level, reason: verdict.reason } } : i)),
-          }));
+        const needsVision = attachments.some((a) => a.kind === "image");
+        const model =
+          prefs.autoStrategy === "reasoning" && available.includes(prefs.autoBaseModel) && !(needsVision && /glm-5-3$/.test(prefs.autoBaseModel))
+            ? prefs.autoBaseModel
+            : pickModel(verdict.level, prefs.routing, available, needsVision);
+        if (model && model !== modelOption.currentValue) await get().setOption("model", model, sid).catch(() => {});
+        let thinkingLabel: string | undefined;
+        const sessionNow = get().sessions[sid];
+        if (prefs.autoStrategy === "reasoning" && sessionNow?.autoThinking) {
+          const opt = thinkingOption();
+          const levels = (opt?.options ?? []).map((o) => o.value);
+          const target = nearestThinking(LEVEL_TO_THINKING[verdict.level], levels);
+          const from = String(opt?.currentValue ?? "");
+          if (target && target !== from) {
+            await get().setOption("thinking", target, sid).catch(() => {});
+            patchSession(sid, (s) => ({
+              ...s,
+              thinkingLog: [...s.thinkingLog, { at: Date.now(), from, to: target, reason: verdict.reason, phase: "start" }],
+            }));
+          }
+          thinkingLabel = target ?? from;
         }
+        const name = modelOption.options.find((o) => o.value === model)?.name ?? model ?? "";
+        patchSession(sid, (s) => ({
+          ...s,
+          items: s.items.map((i) =>
+            i.id === userItemId && i.type === "user"
+              ? { ...i, routed: { model: thinkingLabel ? `${name} · Denken ${THINKING_LABEL[thinkingLabel] ?? thinkingLabel}` : name, level: verdict.level, reason: verdict.reason } }
+              : i,
+          ),
+        }));
       }
+
       try {
         const res = await api.prompt(sid, blocks);
         pushItem(sid, {
@@ -972,6 +1143,7 @@ export const useStore = create<State & Actions>((set, get) => {
       patchSession(sessionId, (s) => applyUpdate(s, update));
       const s = get().sessions[sessionId];
       if (s && update.sessionUpdate === "available_commands_update") rememberTemplate(s);
+      if (s?.running) steerThinking(sessionId, update);
     },
 
     onPermission(key, request) {
@@ -1015,6 +1187,17 @@ export const useStore = create<State & Actions>((set, get) => {
       if (gen === generation) set({ phase: "error", error: "Die Verbindung zu Vibe wurde beendet." });
     },
   };
+});
+
+// Die aktive Session ist immer der aktive Tab des fokussierten Bereichs.
+useStore.subscribe((st, prev) => {
+  if (st.activeSessionId === prev.activeSessionId) return;
+  const id = st.activeSessionId;
+  const pane = st.panes[st.focusedPane];
+  if (!pane || pane.active === id) return;
+  useStore.setState({
+    panes: st.panes.map((p, n) => (n === st.focusedPane ? { tabs: id && !p.tabs.includes(id) ? [...p.tabs, id] : p.tabs, active: id } : p)),
+  });
 });
 
 export const useActiveSession = () =>

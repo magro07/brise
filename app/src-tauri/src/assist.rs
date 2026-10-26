@@ -176,3 +176,24 @@ pub async fn commit_message(cwd: String, model: Option<String>) -> CmdResult<Str
     let v = quick_json(model.as_deref().unwrap_or(FAST_MODEL), SYSTEM, &format!("Bisherige Commits:\n{log}\n\nDiff:\n{diff}"), 20).await?;
     v["message"].as_str().map(str::to_string).ok_or_else(|| "Keine Nachricht erhalten".into())
 }
+
+/// Prüft während eines laufenden Turns, ob die Denkstufe passt.
+/// `progress` ist eine kurze Zusammenfassung der bisherigen Schritte.
+#[tauri::command]
+pub async fn adjust_reasoning(task: String, progress: String, current: String, model: Option<String>) -> CmdResult<Value> {
+    const SYSTEM: &str = "Du steuerst den Reasoning-Aufwand eines Coding-Agenten (GLM-5.3) während er arbeitet. \
+        Stufen: low (Routine: lesen, suchen, einfache Änderungen), high (normale Entwicklungsarbeit), max (Fehler, die sich wiederholen, \
+        schwierige Logik, Architektur, viele abhängige Schritte). Wechsle nur, wenn es klar nützt – jeder Wechsel kostet Cache. \
+        Antworte nur als JSON: {\"level\":\"low|high|max\",\"reason\":\"max. 8 Wörter auf Deutsch\"}";
+    let user = format!(
+        "Aufgabe:\n{}\n\nBisheriger Verlauf des Turns:\n{}\n\nAktuelle Stufe: {current}",
+        task.chars().take(2000).collect::<String>(),
+        progress.chars().take(2500).collect::<String>()
+    );
+    let v = quick_json(model.as_deref().unwrap_or(FAST_MODEL), SYSTEM, &user, 6).await?;
+    let level = match v["level"].as_str() {
+        Some(l @ ("low" | "high" | "max")) => l,
+        _ => current.as_str(),
+    };
+    Ok(json!({ "level": level, "reason": v["reason"].as_str().unwrap_or("") }))
+}

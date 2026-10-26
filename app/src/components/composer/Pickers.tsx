@@ -1,6 +1,6 @@
 import { Brain, ChevronDown, Cpu, FilePen, Hand, Sparkles, Wand2, Zap, type LucideIcon } from "lucide-react";
 import type { ConfigOption } from "../../lib/acp";
-import { useStore, type Session } from "../../lib/store";
+import { THINKING_LABEL, useStore, type Session } from "../../lib/store";
 import { tokens } from "../../lib/format";
 import { Menu, MenuContent, MenuItem, MenuLabel, MenuSeparator, MenuTrigger, Ring, Tip, clsx } from "../ui";
 
@@ -11,7 +11,6 @@ export const MODE_INFO: Record<string, { label: string; description: string; ico
   "auto-approve": { label: "Alles automatisch", description: "Keine Rückfragen – mit Vorsicht nutzen", icon: Zap },
 };
 
-const THINKING_LABEL: Record<string, string> = { off: "Aus", low: "Niedrig", medium: "Mittel", high: "Hoch", max: "Maximal" };
 
 function PickerButton({ icon: Icon, label, warn }: { icon: LucideIcon; label: string; warn?: boolean }) {
   return (
@@ -178,5 +177,72 @@ export function ContextMeter({ session }: { session?: Session }) {
         <span className="hidden @[520px]:inline">{Math.round(ratio * 100)} %</span>
       </button>
     </Tip>
+  );
+}
+
+/** Denkstufe: „Auto“ lässt das Task-Modell steuern; Klick zeigt den Verlauf. */
+export function ThinkingPicker({ session }: { session?: Session }) {
+  const { config, value } = useOptions(session);
+  const prefs = useStore((s) => s.prefs);
+  const setOption = useStore((s) => s.setOption);
+  const option = config.find((o) => o.id === "thinking");
+  if (!option?.options?.length) return null;
+  const current = value("thinking");
+  const steering = prefs.autoModel && prefs.autoStrategy === "reasoning";
+  const auto = steering && (session?.autoThinking ?? true);
+  const label = THINKING_LABEL[current ?? ""] ?? current ?? "";
+  const log = session?.thinkingLog ?? [];
+  const setAuto = (on: boolean) => {
+    if (session) useStore.setState((s) => ({ sessions: { ...s.sessions, [session.id]: { ...s.sessions[session.id], autoThinking: on } } }));
+  };
+  return (
+    <Menu>
+      <MenuTrigger asChild>
+        <button aria-label="Denkstufe" data-tour="thinking">
+          <PickerButton icon={Brain} label={auto ? `Auto · ${label}` : `Denken: ${label}`} />
+        </button>
+      </MenuTrigger>
+      <MenuContent side="top" className="w-80">
+        <MenuLabel>Denkstufe</MenuLabel>
+        {steering && (
+          <MenuItem icon={<Wand2 />} checked={auto} description="Das Task-Modell wählt die Stufe pro Anfrage und passt sie während der Arbeit an" onSelect={() => setAuto(true)}>
+            Auto
+          </MenuItem>
+        )}
+        {steering && <MenuSeparator />}
+        {option.options.map((o) => (
+          <MenuItem
+            key={o.value}
+            checked={!auto && o.value === current}
+            onSelect={() => {
+              setAuto(false);
+              setOption("thinking", o.value);
+            }}
+          >
+            {THINKING_LABEL[o.value] ?? o.name}
+          </MenuItem>
+        ))}
+        {log.length > 0 && (
+          <>
+            <MenuSeparator />
+            <MenuLabel>Verlauf</MenuLabel>
+            <div className="max-h-52 overflow-y-auto px-2.5 pb-1.5">
+              {[...log].reverse().map((e, n) => (
+                <div key={n} className="flex items-start gap-2 py-1 text-[0.82em]">
+                  <span className="shrink-0 tabular-nums text-muted">{new Date(e.at).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })}</span>
+                  <span className="min-w-0 flex-1">
+                    <span className="font-medium">
+                      {THINKING_LABEL[e.from] ?? (e.from || "–")} → {THINKING_LABEL[e.to] ?? e.to}
+                    </span>
+                    {e.phase === "live" && <span className="ml-1 rounded bg-accent-soft px-1 text-[0.85em] text-accent">während der Arbeit</span>}
+                    <span className="block text-muted">{e.reason}</span>
+                  </span>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+      </MenuContent>
+    </Menu>
   );
 }

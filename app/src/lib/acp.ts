@@ -113,6 +113,8 @@ export const api = {
   classifyTask: (text: string, history: string | undefined, model: string) =>
     invoke<{ level: "simple" | "standard" | "complex"; reason: string }>("classify_task", { text, history: history ?? null, model }),
   projectSuggestions: (cwd: string, recent: string[], model: string, refresh = false) => invoke<Suggestion[]>("project_suggestions", { cwd, recent, refresh, model }),
+  adjustReasoning: (task: string, progress: string, current: string, model: string) =>
+    invoke<{ level: string; reason: string }>("adjust_reasoning", { task, progress, current, model }),
   commitMessage: (cwd: string, model: string) => invoke<string>("commit_message", { cwd, model }),
   gitStatus: (cwd: string) => invoke<GitStatus>("git_status", { cwd }),
   gitDiff: (cwd: string, path: string, staged: boolean) => invoke<string>("git_diff", { cwd, path, staged }),

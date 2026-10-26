@@ -27,7 +27,12 @@ Für Windows, macOS und Linux. Du brauchst weder Terminal noch API-Key, dein Mis
 - Live-Streaming mit zusammengefassten Werkzeugaufrufen, Diffs, Gedankengang, Subagent-Karten und einer Aufgabenliste mit Fortschritt.
 - Freigaben direkt über dem Eingabefeld. „Immer erlauben“ gibt es nur mit Befehlsmuster, Passwörter werden maskiert.
 - `@` hängt Dateien an, `/` ruft Befehle und Skills auf. Bilder per Drag & Drop.
-- **Auto-Modellwahl:** Mistral Small stuft jede Aufgabe ein. Brise wählt dann zum Beispiel GLM-5.3 Flash, Mistral Medium oder Mistral Large 4.
+- **Auto:** GLM-5.3 arbeitet, und das Task-Modell (Mistral Small, wählbar) setzt die Denkstufe:
+  - Vor jeder Anfrage stuft es die Aufgabe ein.
+  - Während der Arbeit steuert es nach, etwa höher bei wiederholten Fehlern und niedriger bei reinem Lesen.
+  - Ein Klick auf die Denkstufe zeigt jeden Wechsel mit Begründung.
+  - Alternativ wechselt Auto das Modell je nach Aufgabe.
+- **Tabs und geteilte Ansicht:** mehrere Sessions als Tabs, bis zu drei Bereiche nebeneinander, jeder mit eigenem Eingabefeld. Kürzel: Strg/⌘+W, Strg+Tab, Strg/⌘+\.
 - **Modelle:** Mistral Large 4 und GLM-5.3 sind sofort dabei. Bei jedem Start meldet Brise neue Modelle aus Mistrals Katalog, eigene lassen sich hinzufügen.
 
 **Werkzeuge**

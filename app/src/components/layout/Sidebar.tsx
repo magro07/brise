@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { shortcut } from "../../lib/platform";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import {
+  Columns2,
   ChevronRight,
   EyeOff,
   Folder,
@@ -188,6 +189,7 @@ export function Sidebar() {
                       active={s.id === activeSessionId && view === "chat"}
                       live={sessions[s.id]}
                       onClick={() => selectSession(s.id)}
+                      onSplit={() => useStore.getState().splitWith(s.id)}
                       onDelete={async () => {
                         if (await confirmAction(`Session „${s.title}“ endgültig löschen?`, true)) deleteSession(s.id);
                       }}
@@ -279,6 +281,7 @@ function SessionRow({
   live,
   onClick,
   onDelete,
+  onSplit,
 }: {
   id: string;
   title: string;
@@ -287,6 +290,7 @@ function SessionRow({
   live?: Session;
   onClick: () => void;
   onDelete: () => void;
+  onSplit: () => void;
 }) {
   const waiting = (live?.pending.length ?? 0) > 0;
   return (
@@ -312,6 +316,10 @@ function SessionRow({
           </button>
         </MenuTrigger>
         <MenuContent align="end">
+          <MenuItem icon={<Columns2 />} onSelect={onSplit}>
+            Rechts daneben öffnen
+          </MenuItem>
+          <MenuSeparator />
           <MenuItem icon={<Trash2 />} danger onSelect={onDelete}>
             Session löschen
           </MenuItem>

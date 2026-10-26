@@ -753,18 +753,53 @@ function AutoModelCard() {
   const options = useStore((s) => s.template?.config.find((o) => o.id === "model")?.options ?? []);
   return (
     <Card
-      title="Automatische Modellwahl"
-      description="Bei „Auto“ stuft Brise jede Aufgabe mit einem schnellen Modell (Mistral Small) ein und wählt dann das Modell für die Stufe. Unter jeder Nachricht steht, welches gewählt wurde."
+      title="Auto"
+      description="Das Task-Modell stuft jede Anfrage ein. Standard: GLM-5.3 arbeitet, und die Denkstufe wird pro Anfrage gesetzt und während der Arbeit nachgesteuert (z. B. höher bei wiederholten Fehlern, niedriger bei reinem Lesen). Unter jeder Nachricht und per Klick auf die Denkstufe siehst du, was gewählt wurde."
     >
       <Row
         title={
           <span className="flex items-center gap-2">
-            <Wand2 className="h-4 w-4 text-accent" /> Auto-Modellwahl
+            <Wand2 className="h-4 w-4 text-accent" /> Auto aktiv
           </span>
         }
         control={<Switch checked={prefs.autoModel} onChange={(v) => setPrefs({ autoModel: v })} />}
       />
-      {LEVELS.map(([key, label, desc]) => (
+      <Row
+        title="Strategie"
+        control={
+          <select
+            value={prefs.autoStrategy}
+            disabled={!prefs.autoModel}
+            onChange={(e) => setPrefs({ autoStrategy: e.target.value as "reasoning" | "routing" })}
+            className="h-8 min-w-[260px] rounded-lg border border-line bg-elev px-2 text-[0.92em] outline-none focus:border-accent disabled:opacity-50"
+          >
+            <option value="reasoning">Festes Modell, Denkstufe automatisch</option>
+            <option value="routing">Modell je Aufgabe wechseln</option>
+          </select>
+        }
+      />
+      {prefs.autoStrategy === "reasoning" && (
+        <Row
+          title="Modell für Auto"
+          description="Bei Bildern nimmt Brise automatisch ein Modell, das Bilder versteht."
+          control={
+            <select
+              value={prefs.autoBaseModel}
+              disabled={!prefs.autoModel}
+              onChange={(e) => setPrefs({ autoBaseModel: e.target.value })}
+              className="h-8 min-w-[260px] rounded-lg border border-line bg-elev px-2 text-[0.92em] outline-none focus:border-accent disabled:opacity-50"
+            >
+              {!options.some((o) => o.value === prefs.autoBaseModel) && <option value={prefs.autoBaseModel}>{prefs.autoBaseModel}</option>}
+              {options.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.name}
+                </option>
+              ))}
+            </select>
+          }
+        />
+      )}
+      {prefs.autoStrategy === "routing" && LEVELS.map(([key, label, desc]) => (
         <Row
           key={key}
           title={label}

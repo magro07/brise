@@ -5,7 +5,7 @@ import { ArrowUp, AtSign, FileText, Image, Mic, Paperclip, Slash, Square, X } fr
 import { basename, useStore, type Attachment, type Session, type SlashCommand } from "../../lib/store";
 import { IconButton, Tip, clsx } from "../ui";
 import { VoiceRecorder } from "./VoiceRecorder";
-import { ContextMeter, ModePicker, OptionPicker } from "./Pickers";
+import { ContextMeter, ModePicker, OptionPicker, ThinkingPicker } from "./Pickers";
 
 const IMAGE_EXT = /\.(png|jpe?g|gif|webp)$/i;
 const DOC_EXT = /\.(pdf|docx|pptx)$/i;
@@ -37,7 +37,7 @@ function fuzzy(list: string[], query: string, limit = 8): string[] {
   return scored.sort((a, b) => b[0] - a[0]).slice(0, limit).map(([, v]) => v);
 }
 
-export function Composer({ session, project }: { session?: Session; project: string }) {
+export function Composer({ session, project, focused = true }: { session?: Session; project: string; focused?: boolean }) {
   const [text, setText] = useState("");
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [files, setFiles] = useState<string[]>([]);
@@ -56,10 +56,14 @@ export function Composer({ session, project }: { session?: Session; project: str
   const composerInsert = useStore((s) => s.composerInsert);
   const { startRecording, stopRecording, cancelRecording, set: setStore } = useStore.getState();
   const [voiceBusy, setVoiceBusy] = useState(false);
+  // Bei mehreren Bereichen gehören Drop, Einfügen und Sprache nur dem fokussierten.
+  const focusedRef = useRef(focused);
+  focusedRef.current = focused;
+  const recordingHere = recording && focused;
 
   // Von außen eingefügter Text (z. B. Treffer der semantischen Suche).
   useEffect(() => {
-    if (!composerInsert) return;
+    if (!composerInsert || !focusedRef.current) return;
     setText((t) => (t && !t.endsWith(" ") ? `${t} ` : t) + composerInsert.text);
     const m = /^@(\S+)/.exec(composerInsert.text);
     if (m) setAttachments((l) => (l.some((a) => a.path === m[1]) ? l : [...l, { kind: "file", path: m[1], name: basename(m[1]) }]));
@@ -104,11 +108,11 @@ export function Composer({ session, project }: { session?: Session; project: str
     let unlisten: (() => void) | undefined;
     getCurrentWebview()
       .onDragDropEvent((e) => {
-        if (e.payload.type === "enter" || e.payload.type === "over") setDragging(true);
+        if ((e.payload.type === "enter" || e.payload.type === "over") && focusedRef.current) setDragging(true);
         else if (e.payload.type === "leave") setDragging(false);
         else if (e.payload.type === "drop") {
           setDragging(false);
-          addPaths(e.payload.paths);
+          if (focusedRef.current) addPaths(e.payload.paths);
         }
       })
       .then((fn) => (unlisten = fn));
@@ -234,9 +238,9 @@ export function Composer({ session, project }: { session?: Session; project: str
             ))}
           </div>
         )}
-        {recording && <VoiceRecorder onDone={toggleVoice} onCancel={() => cancelRecording()} />}
+        {recordingHere && <VoiceRecorder onDone={toggleVoice} onCancel={() => cancelRecording()} />}
         <textarea
-          hidden={recording}
+          hidden={recordingHere}
           ref={ref}
           value={text}
           rows={1}
@@ -284,7 +288,7 @@ export function Composer({ session, project }: { session?: Session; project: str
           </IconButton>
           <ModePicker session={session} />
           <OptionPicker session={session} id="model" />
-          <OptionPicker session={session} id="thinking" />
+          <ThinkingPicker session={session} />
           <div className="flex-1" />
           <ContextMeter session={session} />
           <Tip label={recording ? "Aufnahme beenden und übernehmen" : "Spracheingabe (Voxtral)"}>

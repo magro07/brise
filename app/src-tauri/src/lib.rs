@@ -128,6 +128,7 @@ pub fn run() {
             assist::classify_task,
             assist::project_suggestions,
             assist::commit_message,
+            assist::adjust_reasoning,
             git::git_status,
             git::git_diff,
             git::git_show_head,
