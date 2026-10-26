@@ -24,6 +24,9 @@ export interface TeamPolicy {
   skills: string[] | null;
   sharedDailyPrompts: number | null;
   sharedDailyTokens: number | null;
+  /** Master-Session: false = Untersessions gesperrt. */
+  orchestra: boolean | null;
+  maxSubSessions: number | null;
 }
 
 export const EMPTY_POLICY: TeamPolicy = {
@@ -42,6 +45,8 @@ export const EMPTY_POLICY: TeamPolicy = {
   skills: null,
   sharedDailyPrompts: null,
   sharedDailyTokens: null,
+  orchestra: null,
+  maxSubSessions: null,
 };
 
 export interface AuditEntry {
@@ -96,6 +101,7 @@ const PREF_SECTION: Record<string, string> = {
   zdrProjects: "cortecs",
   zdrModel: "cortecs",
   defaultBackend: "backends",
+  orchestra: "orchestra",
 };
 
 export const usePolicy = create<{ effective: Effective }>(() => ({
@@ -182,6 +188,7 @@ export const SECTION_LABELS: [string, string][] = [
   ["council", "Council"],
   ["tools", "Werkzeuge & MCP"],
   ["collab", "Zusammenarbeit"],
+  ["orchestra", "Master-Session"],
   ["advanced", "Erweitert"],
 ];
 

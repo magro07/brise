@@ -27,6 +27,7 @@ import {
   UserRound,
   Scale,
   Users,
+  Network,
   FlaskConical,
 } from "lucide-react";
 import { CouncilSettings } from "./CouncilSettings";
@@ -48,6 +49,7 @@ import { BenchPage } from "../bench/BenchPage";
 import { CortecsView } from "./CortecsSettings";
 import { CollabSettings } from "../collab/CollabSettings";
 import { SecretsCard } from "./SecretsSettings";
+import { OrchestraSettings } from "../orchestra/Orchestra";
 import { managedBy, sectionAccess, usePolicy } from "../../lib/policy";
 
 const SECTIONS = [
@@ -67,6 +69,7 @@ const SECTIONS = [
   { id: "council", label: "Council", icon: Scale },
   { id: "tools", label: "Werkzeuge & MCP", icon: Plug },
   { id: "collab", label: "Zusammenarbeit", icon: Users },
+  { id: "orchestra", label: "Master-Session", icon: Network },
   { id: "advanced", label: "Erweitert", icon: SlidersHorizontal },
 ] as const;
 
@@ -576,6 +579,7 @@ export function SettingsView() {
           {section === "web" && <WebCard values={values} write={write} />}
           {section === "council" && <CouncilSettings />}
           {section === "collab" && <CollabSettings />}
+          {section === "orchestra" && <OrchestraSettings />}
 
           {section === "tools" && (
             <>

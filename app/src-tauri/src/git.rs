@@ -220,3 +220,66 @@ pub async fn install_git(app: AppHandle) -> CmdResult<()> {
 pub fn git_available() -> bool {
     find_git().is_some()
 }
+
+// ---------- Worktrees für Untersessions (siehe orchestra.rs) ----------
+
+/// Wurzel des Repos, zu dem `cwd` gehört.
+pub fn repo_root(cwd: &Path) -> Option<PathBuf> {
+    git_output(cwd, &["rev-parse", "--show-toplevel"]).ok().map(|s| PathBuf::from(s.trim())).filter(|p| !p.as_os_str().is_empty())
+}
+
+/// Aktueller Branch; `None` ohne Commits oder bei losgelöstem HEAD.
+pub fn current_branch(cwd: &Path) -> Option<String> {
+    git_output(cwd, &["symbolic-ref", "--quiet", "--short", "HEAD"]).ok().map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
+}
+
+/// Neuer Worktree auf neuem Branch, abgezweigt vom aktuellen Stand.
+pub fn worktree_add(repo: &Path, path: &Path, branch: &str) -> CmdResult<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let path = path.to_string_lossy();
+    git_output(repo, &["worktree", "add", "-b", branch, &path, "HEAD"]).map(|_| ())
+}
+
+/// Entfernt einen Worktree (nur, wenn er sauber ist) und danach den Branch, falls gemerged.
+pub fn worktree_remove(repo: &Path, path: &Path, branch: &str) -> CmdResult<()> {
+    git_output(repo, &["worktree", "remove", &path.to_string_lossy()])?;
+    git_output(repo, &["branch", "-d", branch]).map(|_| ())
+}
+
+/// Commits auf `branch`, die `base` noch nicht hat.
+pub fn ahead_of(cwd: &Path, base: &str, branch: &str) -> u32 {
+    git_output(cwd, &["rev-list", "--count", &format!("{base}..{branch}")]).ok().and_then(|s| s.trim().parse().ok()).unwrap_or(0)
+}
+
+/// Laut `git status`: geänderte versionierte Dateien und nicht versionierte.
+pub fn dirty_files(cwd: &Path) -> (Vec<String>, Vec<String>) {
+    let (mut changed, mut untracked) = (vec![], vec![]);
+    for l in git_output(cwd, &["status", "--porcelain=v1", "--untracked-files=normal"]).unwrap_or_default().lines().filter(|l| l.len() > 3) {
+        if l.starts_with("??") { &mut untracked } else { &mut changed }.push(l[3..].to_string());
+    }
+    (changed, untracked)
+}
+
+/// Kurzfassung der Änderungen von `branch` gegenüber `base` (Commits und Diffstat).
+pub fn branch_summary(cwd: &Path, base: &str, branch: &str) -> (Vec<String>, String) {
+    let range = format!("{base}..{branch}");
+    let commits = git_output(cwd, &["log", "--pretty=format:%h %s", "-20", &range]).unwrap_or_default().lines().map(str::to_string).collect();
+    let stat = git_output(cwd, &["diff", "--shortstat", &format!("{base}...{branch}")]).unwrap_or_default().trim().to_string();
+    (commits, stat)
+}
+
+/// Merged `branch` in den aktuellen Branch von `repo` (immer mit Merge-Commit).
+/// Bei Konflikten wird der Merge abgebrochen; der Fehler nennt die Dateien.
+pub fn merge_branch(repo: &Path, branch: &str, message: &str) -> CmdResult<String> {
+    match git_output(repo, &["merge", "--no-ff", "--no-edit", "-m", message, branch]) {
+        Ok(_) => Ok(git_output(repo, &["rev-parse", "--short", "HEAD"]).unwrap_or_default().trim().to_string()),
+        Err(err) => {
+            let conflicts = git_output(repo, &["diff", "--name-only", "--diff-filter=U"]).unwrap_or_default();
+            let _ = git_output(repo, &["merge", "--abort"]);
+            let files: Vec<&str> = conflicts.lines().filter(|l| !l.is_empty()).collect();
+            Err(if files.is_empty() { err } else { format!("Konflikte in {} – Merge abgebrochen", files.join(", ")) })
+        }
+    }
+}

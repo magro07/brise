@@ -103,6 +103,7 @@ export function UsagePage() {
 
       <Stats />
 
+      <MasterCard records={records} />
       <BudgetCard />
       <ConsoleCard />
       <PricesCard />
@@ -127,6 +128,43 @@ export function UsagePage() {
         </div>
       </div>
     </>
+  );
+}
+
+/** Kosten je Master-Session: eigene Turns plus die ihrer Untersessions. */
+function MasterCard({ records }: { records: UsageRecord[] }) {
+  const titles = useStore((s) => s.sessions);
+  const index = useStore((s) => s.index);
+  const rows = useMemo(() => {
+    const masters = new Set(records.flatMap((r) => (r.master ? [r.master] : [])));
+    return [...masters]
+      .map((m) => {
+        const own = records.filter((r) => r.session === m);
+        const subs = records.filter((r) => r.master === m);
+        const tokens = [...own, ...subs].reduce((a, r) => a + (r.input ?? 0) + (r.output ?? 0), 0);
+        return {
+          id: m,
+          title: titles[m]?.title ?? index.find((x) => x.sessionId === m)?.title ?? own.find((r) => r.title)?.title ?? m.slice(0, 8),
+          sessions: new Set(subs.map((r) => r.session)).size,
+          own: own.reduce((a, r) => a + r.cost, 0),
+          sub: subs.reduce((a, r) => a + r.cost, 0),
+          tokens,
+        };
+      })
+      .sort((a, b) => b.own + b.sub - (a.own + a.sub));
+  }, [records, titles, index]);
+  if (!rows.length) return null;
+  return (
+    <Card title="Master-Sessions" description="Diesen Monat: eigene Turns und die ihrer Untersessions (geschätzt nach Preistabelle).">
+      {rows.map((r) => (
+        <Row
+          key={r.id}
+          title={r.title}
+          description={`${r.sessions} Untersession${r.sessions === 1 ? "" : "s"} · ${r.tokens.toLocaleString("de-DE")} Tokens · selbst ${eur(r.own, 2)}, Untersessions ${eur(r.sub, 2)}`}
+          control={<span className="font-medium tabular-nums">{eur(r.own + r.sub, 2)}</span>}
+        />
+      ))}
+    </Card>
   );
 }
 

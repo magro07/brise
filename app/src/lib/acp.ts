@@ -117,8 +117,9 @@ export const api = {
   authStatus: () => invoke<AuthStatus>("auth_status"),
   login: () => invoke<AuthStatus>("login"),
   signOut: () => invoke<AuthStatus>("sign_out"),
-  newSession: (cwd: string, search: boolean, rea: boolean, backend?: string) =>
-    invoke<SessionSetup & { sessionId: string; backend: string }>("new_session", { cwd, search, rea, backend: backend ?? null }),
+  /** `parent`: Master-Session, wenn eine Untersession entsteht (lib/orchestra.ts). */
+  newSession: (cwd: string, search: boolean, rea: boolean, backend?: string, parent?: string) =>
+    invoke<SessionSetup & { sessionId: string; backend: string }>("new_session", { cwd, search, rea, backend: backend ?? null, parent: parent ?? null }),
   loadSession: (cwd: string, sessionId: string, search: boolean, rea: boolean, backend?: string) =>
     invoke<SessionSetup>("load_session", { cwd, sessionId, search, rea, backend: backend ?? null }),
   listSessions: (cwd?: string, backend?: string) => invoke<{ sessions?: SessionSummary[] }>("list_sessions", { cwd: cwd ?? null, backend: backend ?? null }),

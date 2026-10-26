@@ -25,6 +25,7 @@ import { budgetModel, perfEvent, perfFinish, perfStart, reportTurn, type TurnPer
 import { isDesignPath } from "./design";
 import { isModelPath } from "./model3d";
 import { isBenchPath } from "./bench";
+import { forgetSub, isWorktreePath } from "./orchestra";
 
 // ---------- Modell ----------
 
@@ -81,6 +82,8 @@ export type Item =
   | { type: "decision"; id: string; toolCallId: string; allowed: boolean; label: string }
   | { type: "notice"; id: string; text: string; tone: "info" | "warn" | "error" }
   | { type: "turn"; id: string; stopReason: string; ms: number; tokens?: number; ttftMs?: number; tps?: number }
+  /** Vorschlags- oder Merge-Karte einer Master-Session (lib/orchestra.ts). */
+  | { type: "orch"; id: string; kind: "proposal" | "merge"; ref: string }
   /** Council direkt aus der Oberfläche (z. B. Git-Panel), nicht über den Agenten. */
   | { type: "council"; id: string; tool: string; cwd: string; startedAt: number; runId?: string; error?: string };
 
@@ -204,7 +207,21 @@ export interface Prefs {
   defaultBackend: string;
   /** Backends, mit denen Brise beim Start verbindet (Sessions in der Sidebar). */
   enabledBackends: string[];
+  /** Master-Session (liest auch orchestra.rs über sync_prefs). */
+  orchestra: OrchestraPrefs;
 }
+
+export interface OrchestraPrefs {
+  enabled: boolean;
+  /** Untersessions erst nach Klick auf „Neue Session“ starten. */
+  confirmStart: boolean;
+  /** Höchstzahl gleichzeitiger Untersessions. */
+  maxParallel: number;
+  /** Untersessions standardmäßig im eigenen Git-Worktree. */
+  worktree: boolean;
+}
+
+export const ORCHESTRA_DEFAULTS: OrchestraPrefs = { enabled: true, confirmStart: true, maxParallel: 3, worktree: true };
 
 export interface CouncilPrefs {
   /** auto = Agent fragt von sich aus, request = nur auf Wunsch, off = kein Council */
@@ -356,9 +373,14 @@ interface Actions {
   selectSession(id: string): Promise<void>;
   openChildSession(childId: string, cwd: string): Promise<void>;
   deleteSession(id: string): Promise<void>;
+  /** Neue Session anlegen, ohne sie zu öffnen (Untersessions einer Master-Session). */
+  createSession(cwd: string, backend: string, opts?: { parent?: string; model?: string; title?: string }): Promise<string>;
+  /** Vorhandene Session im Hintergrund laden, ohne sie zu öffnen. */
+  attachSession(id: string, cwd: string, backend: string, title?: string): Promise<void>;
   /** `zdr`: diese Session ab jetzt nur mit Modellen ohne Datenspeicherung.
-   *  `sessionId`/`author`: Prompt eines Gasts in einer geteilten Session ausführen. */
-  send(text: string, attachments: Attachment[], opts?: { zdr?: boolean; sessionId?: string; author?: string }): Promise<void>;
+   *  `sessionId`/`author`: Prompt in einer bestimmten Session (Gast, Master-Session).
+   *  `keepModel`: fest gewähltes Modell behalten (keine Auto-Modellwahl). */
+  send(text: string, attachments: Attachment[], opts?: { zdr?: boolean; sessionId?: string; author?: string; keepModel?: boolean }): Promise<void>;
   refreshCortecs(): Promise<void>;
   cancel(): Promise<void>;
   answerPermission(key: string, optionId: string | null): Promise<void>;
@@ -576,9 +598,11 @@ const initialPrefs: Prefs = {
   zdrModel: "cortecs-glm-5-3",
   defaultBackend: "vibe",
   enabledBackends: ["vibe"],
+  orchestra: ORCHESTRA_DEFAULTS,
   ...load<Partial<Prefs>>("prefs", {}),
 };
 initialPrefs.council = { ...COUNCIL_DEFAULTS, ...initialPrefs.council };
+initialPrefs.orchestra = { ...ORCHESTRA_DEFAULTS, ...initialPrefs.orchestra };
 
 /** Grobe Einstufung ohne Netz, falls die KI-Einstufung nicht antwortet. */
 function heuristicLevel(text: string): Routed["level"] {
@@ -1068,7 +1092,8 @@ export const useStore = create<State & Actions>((set, get) => {
         const index = (r.sessions ?? []).filter((s) => !isDesignPath(s.cwd) && !isModelPath(s.cwd) && !isBenchPath(s.cwd)).sort((a, b) => (b.updatedAt ?? "").localeCompare(a.updatedAt ?? ""));
         const { projects, hiddenProjects } = get();
         const known = new Set(projects);
-        const discovered = [...new Set(index.map((s) => s.cwd))].filter((c) => !known.has(c) && !hiddenProjects.includes(c));
+        // Worktrees von Untersessions sind keine eigenen Projekte.
+        const discovered = [...new Set(index.map((s) => s.cwd))].filter((c) => !known.has(c) && !hiddenProjects.includes(c) && !isWorktreePath(c));
         set({ index, projects: [...projects, ...discovered] });
       } catch {
         /* Liste ist Komfort – Fehler nicht dramatisieren */
@@ -1144,6 +1169,7 @@ export const useStore = create<State & Actions>((set, get) => {
 
     async deleteSession(id) {
       await api.deleteSession(id);
+      forgetSub(id);
       set((s) => {
         const sessions = { ...s.sessions };
         delete sessions[id];
@@ -1154,6 +1180,32 @@ export const useStore = create<State & Actions>((set, get) => {
           panes: s.panes.map((p) => ({ tabs: p.tabs.filter((t) => t !== id), active: p.active === id ? null : p.active })),
         };
       });
+    },
+
+    async createSession(cwd, backend, opts) {
+      const r = await api.newSession(cwd, get().prefs.agentSearch, get().prefs.rea, backend, opts?.parent);
+      const session = { ...applySetup(emptySession(r.sessionId, cwd, backend), r), title: opts?.title };
+      set((s) => ({ sessions: { ...s.sessions, [r.sessionId]: session } }));
+      rememberTemplate(session);
+      if (opts?.model) {
+        const available = session.config.find((o) => o.id === "model")?.options?.map((o) => o.value) ?? [];
+        if (available.length && !available.includes(opts.model)) {
+          pushItem(r.sessionId, { type: "notice", id: uid(), text: `Modell „${opts.model}“ gibt es bei diesem Backend nicht – es bleibt beim Standard.`, tone: "warn" });
+        } else await get().setOption("model", opts.model, r.sessionId);
+      }
+      return r.sessionId;
+    },
+
+    async attachSession(id, cwd, backend, title) {
+      if (get().sessions[id]) return;
+      set((s) => ({ sessions: { ...s.sessions, [id]: { ...emptySession(id, cwd, backend), title, replaying: true } } }));
+      try {
+        const r = await api.loadSession(cwd, id, get().prefs.agentSearch, get().prefs.rea, backend);
+        patchSession(id, (s) => ({ ...applySetup(s, r), replaying: false }));
+      } catch (e) {
+        patchSession(id, (s) => ({ ...s, replaying: false }));
+        throw e;
+      }
     },
 
     async refreshCortecs() {
@@ -1275,7 +1327,7 @@ export const useStore = create<State & Actions>((set, get) => {
       const decider = deciderFor(get(), get().sessions[sid]);
       // Auto-Modellwahl nur bei Backends, deren Modelle und Denkstufen Brise kennt.
       const autoCapable = get().agents[current?.backend ?? "vibe"]?.caps.autoModel ?? current?.backend === "vibe";
-      if (prefs.autoModel && autoCapable && modelOption?.options?.length && !text.startsWith("/")) {
+      if (prefs.autoModel && autoCapable && !opts?.keepModel && modelOption?.options?.length && !text.startsWith("/")) {
         const history = current.items
           .filter((i) => i.type === "user")
           .slice(-4, -1)

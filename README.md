@@ -59,6 +59,10 @@ Protokoll und Sicherheitsmodell: [docs/collab-protocol.md](docs/collab-protocol.
 
 ## Für Power-User
 
+- **Master-Session:** Eine Session plant die Arbeit, schlägt Teilaufgaben als Karten
+  vor und startet sie als eigene Sessions in eigenen Git-Worktrees, gern mit anderem
+  Agenten oder Modell. Sie bekommt eine Notiz, sobald eine fertig ist, prüft das
+  Ergebnis und merged nach deiner Freigabe.
 - **Model Council:** Der Agent holt sich bei Reviews, Fehlersuche oder „ist das
   wirklich fertig?“ zweite Meinungen von anderen Modellen. Die Urteile erscheinen
   als Karte im Chat, mit Kosten und Tageslimit.

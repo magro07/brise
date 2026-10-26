@@ -4,6 +4,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { create } from "zustand";
 import { useStore, type Session, type ToolItem } from "../../lib/store";
+import { subOf } from "../../lib/orchestra";
 
 export interface UsageRecord {
   ts: number;
@@ -20,6 +21,8 @@ export interface UsageRecord {
   project?: string;
   session?: string;
   title?: string;
+  /** Master-Session, die diese Untersession gestartet hat. */
+  master?: string;
   subagents?: number;
   turns?: number;
   toolCalls?: number;
@@ -301,6 +304,7 @@ export async function reportTurn(sid: string, res?: { inputTokens?: number; outp
       session: sid,
       project: s.cwd,
       title: s.title ?? null,
+      master: subOf(sid)?.master ?? null,
       model: String(model ?? "unbekannt"),
       input: Math.max(c.input, res?.inputTokens ?? 0),
       cached: Math.max(c.cached, res?.cachedReadTokens ?? 0),

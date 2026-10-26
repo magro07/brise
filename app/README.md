@@ -188,6 +188,50 @@ Jede Session bekommt dazu den MCP-Server `brise-council` (`brise --mcp-council <
 - Der Skill `council` erklärt dem Agenten, wann er das Council einbezieht und wie er
   Befunde abarbeitet.
 
+## Master-Session (Untersessions)
+
+Eine Session kann Arbeit planen und Teilaufgaben als eigene Sessions laufen lassen –
+wie die Hauptsession in Claude Code Desktop (Konzept: `docs/adr/0006-master-session.md`).
+Dazu bekommt jede Session im MCP-Server `brise-app` diese Werkzeuge:
+
+| Werkzeug | Was es tut |
+|---|---|
+| `start_session(title, task, backend?, model?, worktree?)` | Teilaufgabe vorschlagen bzw. starten, auf Wunsch mit anderem Backend/Modell |
+| `list_sessions` | eigene Untersessions mit Status und Branch |
+| `get_session(session)` | Status, letzter Bericht, Branch, Commits vor der Basis, nicht committete Dateien |
+| `send_message(session, text)` | Nachricht an eine Untersession (läuft sie, nach dem Turn) |
+| `stop_session(session)` | Turn abbrechen, Untersession beenden (Worktree bleibt) |
+| `merge_session(session)` | Freigabe zum Mergen ihres Branches anfragen |
+
+- **Vorschlagskarten:** Mit „Erst nach Bestätigung starten“ (Standard) erscheint jeder
+  Vorschlag als Karte im Chat der Master-Session: **Neue Session** startet sie,
+  **Hier erledigen** gibt die Aufgabe an die Master-Session zurück.
+- **Worktrees:** Untersessions arbeiten standardmäßig in einem eigenen `git worktree` auf
+  dem Branch `brise/<titel>-<xxxx>` (Ordner `<Datenordner>/worktrees/<repo>-<hash>/…`,
+  außerhalb des Repos). Ihr Auftrag beginnt mit einem kurzen Rahmen: Branch, Basis,
+  „committe deine Arbeit“, „schließe mit kurzem Bericht“.
+- **Rückmeldung:** Beendet eine Untersession einen Turn, bekommt die Master-Session eine
+  Notiz (`[Brise · Rückmeldung]`) mit Status, Branch, Commits und Bericht. Wartet sie, geht
+  es sofort weiter; arbeitet sie gerade, wird die Notiz nach ihrem Turn zugestellt.
+- **Mergen nur mit Freigabe:** `merge_session` zeigt eine Karte (Branch → Ziel, Commits,
+  Diffstat). Erst **Mergen** führt `git merge --no-ff` im Ordner der Master-Session aus;
+  danach werden Worktree und Branch entfernt. Bei Konflikten wird abgebrochen
+  (`git merge --abort`) und die Master-Session bekommt die Konfliktdateien.
+- **Oberfläche:** Untersessions stehen in der Seitenleiste eingerückt unter ihrer
+  Master-Session (läuft, wartet auf Freigabe, fertig, Fehler, gestoppt, gemerged); Klick
+  öffnet sie als Tab, im Menü „Rechts daneben öffnen“. Über dem Composer zeigt eine Leiste
+  die Untersessions der Session (Alt+Klick öffnet daneben).
+- **Nutzung:** Jeder Turn einer Untersession landet im Usage-Journal mit `master` und der
+  Funktion „Untersession“; *Einstellungen → Nutzung* zeigt die Kosten je Master-Session.
+- **Grenzen:** *Einstellungen → Master-Session*: an/aus, Bestätigung, gleichzeitige
+  Untersessions (Standard 3), Worktree als Standard. Ist das Monatsbudget erreicht, startet
+  keine Untersession. Team-Admins können die Funktion sperren oder die Zahl begrenzen
+  (Richtlinie `orchestra`, `maxSubSessions`); Backend- und Modell-Listen gelten auch hier.
+- **Kanal:** Der MCP-Server erreicht die laufende App über einen Port auf `127.0.0.1` mit
+  Zufallstoken (nur in der Umgebung der Kindprozesse, gilt bis zum Neustart). Buch führt
+  `<Datenordner>/orchestra/state.json` (ohne Schlüssel). Untersessions bekommen keine
+  Orchestrierungs-Werkzeuge.
+
 ## Benchmarks
 
 Unter *Einstellungen → Benchmarks* legt man eigene Benchmarks an und lässt sie beliebig oft
@@ -555,6 +599,5 @@ Umgebungsvariablen:
 ## Noch offen
 
 - Rückfragen des Agenten (`elicitation`)
-- Worktrees pro Session
 - Bearbeiten von MCP-Servern
 - signierte Installer
