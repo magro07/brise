@@ -26,6 +26,8 @@ import { GuestPane } from "./components/collab/GuestComposer";
 import { DesignView } from "./components/design/DesignView";
 import { SecretPrompt } from "./components/secrets/SecretPrompt";
 import { initSecrets, useSecretRequest } from "./lib/secrets";
+import { initOrchestra } from "./lib/orchestra";
+import { OrchStrip } from "./components/orchestra/Orchestra";
 
 /** Backend-Events abonnieren und einmal mit Vibe verbinden. */
 function useBackend() {
@@ -56,6 +58,7 @@ function useBackend() {
     const stopCollab = initCollab();
     const stopSecrets = initSecrets();
     const stopPolicy = initPolicy();
+    const stopOrchestra = initOrchestra();
     api.readCustomization().then((c) => s().applyCustomization({ ...c, settings: { ...c.settings, overrides: undefined } }));
     api.startupProject().then((p) => {
       if (p) s().openProject(p);
@@ -66,6 +69,7 @@ function useBackend() {
       stopCollab();
       stopSecrets();
       stopPolicy();
+      stopOrchestra();
     };
   }, []);
 }
@@ -195,6 +199,7 @@ function PaneView({ index, project, last }: { index: number; project: string; la
       <div className="mx-auto w-full max-w-[820px] px-6 pb-5">
         {index === 0 && <NewModelsBanner />}
         {session && <TaskStrip session={session} />}
+        {session && <OrchStrip session={session} />}
         {session?.guest ? (
           <GuestPane session={session} />
         ) : session && pending ? (

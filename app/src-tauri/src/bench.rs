@@ -927,7 +927,7 @@ fn current_value(config: &Value, id: &str) -> Option<String> {
 async fn agent_turn(app: &AppHandle, task: &Task, target: &Target, work: &Path, result: &mut TaskResult) -> CmdResult<()> {
     let state = app.state::<AgentState>();
     let cwd = work.display().to_string();
-    let setup = crate::agent::new_session(app.clone(), state.clone(), cwd.clone(), Some(false), Some(false), Some(target.backend.clone()), None).await?;
+    let setup = crate::agent::new_session(app.clone(), state.clone(), cwd.clone(), Some(false), Some(false), Some(target.backend.clone()), None, None).await?;
     let sid = setup["sessionId"].as_str().ok_or("Agent hat keine Session-ID geliefert")?.to_string();
     with_live(|map| map.insert(sid.clone(), Live::default()));
     *CURRENT_SESSION.lock().unwrap() = Some(sid.clone());

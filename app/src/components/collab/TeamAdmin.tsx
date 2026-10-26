@@ -168,6 +168,24 @@ export function PolicyEditor({ initial, onSave, onCancel, saveLabel }: { initial
         />
         <Row title="Erlaubte MCP-Server" description="Namen aus Vibes config.toml." control={<ListField value={p.mcpServers} onChange={(mcpServers) => set({ mcpServers })} placeholder="z. B. git, filesystem" />} />
         <Row title="Erlaubte Skills" control={<ListField value={p.skills} onChange={(skills) => set({ skills })} placeholder="z. B. design-mode" />} />
+        <Row
+          title="Master-Session"
+          description="Darf eine Session weitere Sessions (Untersessions) starten? Höchstzahl gleichzeitig, leer = Einstellung des Mitglieds."
+          control={
+            <div className="flex gap-2">
+              <select
+                value={p.orchestra === false ? "off" : ""}
+                onChange={(e) => set({ orchestra: e.target.value === "off" ? false : null })}
+                className={clsx(input, "w-[130px]")}
+                data-testid="policy-orchestra"
+              >
+                <option value="">erlaubt</option>
+                <option value="off">gesperrt</option>
+              </select>
+              <input type="number" min={1} max={12} value={p.maxSubSessions ?? ""} placeholder="max." disabled={p.orchestra === false} onChange={(e) => set({ maxSubSessions: num(e.target.value) })} className={clsx(input, "w-[80px]")} />
+            </div>
+          }
+        />
       </Card>
       <Card title="Geteilte Abos (wird beim Host durchgesetzt)">
         <Row
@@ -211,6 +229,8 @@ function PolicySummary({ p }: { p: TeamPolicy }) {
   if (p.webSearch != null) items.push(`Websuche ${p.webSearch ? "an" : "aus"}`);
   if (p.mcpServers) items.push(`MCP-Server: ${p.mcpServers.join(", ") || "keine"}`);
   if (p.skills) items.push(`Skills: ${p.skills.join(", ") || "keine"}`);
+  if (p.orchestra === false) items.push("Master-Session gesperrt");
+  else if (p.maxSubSessions != null) items.push(`Höchstens ${p.maxSubSessions} Untersessions gleichzeitig`);
   if (p.sharedDailyPrompts != null) items.push(`${p.sharedDailyPrompts} Prompts pro Tag auf geteilten Abos`);
   if (p.sharedDailyTokens != null) items.push(`${tokens(p.sharedDailyTokens)} Tokens pro Tag auf geteilten Abos`);
   return items.length ? (

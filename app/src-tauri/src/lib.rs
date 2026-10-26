@@ -17,6 +17,7 @@ mod files;
 mod meter;
 mod mistral;
 mod models;
+mod orchestra;
 mod skills;
 mod terminal;
 mod usage;
@@ -109,6 +110,7 @@ pub fn run() {
                 eprintln!("Cortecs-Proxy: {e}");
             }
             collab::start(app.handle());
+            orchestra::start(app.handle());
             if let Err(err) = policy::apply() {
                 eprintln!("Team-Richtlinie anwenden: {err}");
             }
@@ -275,6 +277,15 @@ pub fn run() {
             bench::bench_status,
             bench::bench_run,
             bench::bench_cancel,
+            orchestra::orch_state,
+            orchestra::orch_reply,
+            orchestra::orch_register,
+            orchestra::orch_status,
+            orchestra::orch_accept,
+            orchestra::orch_decline,
+            orchestra::orch_merge,
+            orchestra::orch_reject,
+            orchestra::orch_forget,
         ])
         .run(tauri::generate_context!())
         .expect("Brise konnte nicht gestartet werden");

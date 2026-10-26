@@ -90,6 +90,9 @@ pub struct Record {
     pub session: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
+    /// Master-Session, die diese Untersession gestartet hat (ADR 0006).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub master: Option<String>,
     /// Subagents, die in diesem Turn liefen (ihre Tokens stecken in der Summe).
     #[serde(skip_serializing_if = "is_zero")]
     pub subagents: u64,
@@ -398,6 +401,8 @@ pub struct TurnReport {
     session: String,
     project: Option<String>,
     title: Option<String>,
+    /// Master-Session, falls das eine Untersession ist.
+    master: Option<String>,
     model: String,
     /// Kumulierte Summen der Session laut Vibe.
     input: u64,
@@ -454,7 +459,12 @@ pub fn usage_turn(report: TurnReport) -> CmdResult<Value> {
     }
     let subagents = report.subagents.unwrap_or(0);
     let backend = report.backend.as_deref().filter(|b| !b.is_empty()).unwrap_or("vibe");
-    let mut rec = Record::new("chat", if subagents > 0 { "Chat mit Subagents" } else { "Chat" }, &report.model).project(report.project.as_deref()).backend(backend);
+    let feature = match (report.master.is_some(), subagents > 0) {
+        (true, _) => "Untersession",
+        (false, true) => "Chat mit Subagents",
+        (false, false) => "Chat",
+    };
+    let mut rec = Record::new("chat", feature, &report.model).project(report.project.as_deref()).backend(backend);
     rec.ttft_ms = report.ttft_ms;
     rec.duration_ms = report.duration_ms;
     rec.output_tps = output_tps;
@@ -462,6 +472,7 @@ pub fn usage_turn(report: TurnReport) -> CmdResult<Value> {
     rec.tool_calls = report.tool_calls.unwrap_or(0);
     rec.session = Some(report.session.clone());
     rec.title = report.title.clone();
+    rec.master = report.master.clone();
     rec.input = delta.input;
     rec.cached = delta.cached.min(delta.input);
     rec.output = delta.output;
@@ -473,6 +484,7 @@ pub fn usage_turn(report: TurnReport) -> CmdResult<Value> {
         let mut s = Record::new("search", "Websuche", "web_search").project(report.project.as_deref()).backend("vibe");
         s.session = Some(report.session);
         s.title = report.title;
+        s.master = report.master;
         s.calls = n;
         s.estimated = true;
         record(s);
@@ -543,6 +555,11 @@ fn settings_path() -> PathBuf {
 
 fn load_settings() -> Settings {
     std::fs::read(settings_path()).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
+}
+
+/// Eigenes Monatsbudget in Euro (Einstellungen → Nutzung).
+pub fn monthly_budget_eur() -> Option<f64> {
+    Some(load_settings().budget_eur)
 }
 
 #[tauri::command]

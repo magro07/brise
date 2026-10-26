@@ -63,6 +63,10 @@ pub struct Policy {
     /// Tageslimits auf geteilten Abos (setzt der Host durch).
     pub shared_daily_prompts: Option<u32>,
     pub shared_daily_tokens: Option<u64>,
+    /// Master-Session (ADR 0006): `false` sperrt das Starten von Untersessions.
+    pub orchestra: Option<bool>,
+    /// Höchstzahl gleichzeitiger Untersessions.
+    pub max_sub_sessions: Option<u32>,
 }
 
 /// Modi, die Änderungen ohne Rückfrage ausführen (Vibe und Claude Code).
@@ -110,6 +114,11 @@ impl Policy {
             skills: both(&self.skills, &other.skills),
             shared_daily_prompts: min_opt(self.shared_daily_prompts, other.shared_daily_prompts),
             shared_daily_tokens: min_opt(self.shared_daily_tokens, other.shared_daily_tokens),
+            orchestra: match (self.orchestra, other.orchestra) {
+                (Some(false), _) | (_, Some(false)) => Some(false),
+                (a, b) => a.or(b),
+            },
+            max_sub_sessions: min_opt(self.max_sub_sessions, other.max_sub_sessions),
         }
     }
 
@@ -310,6 +319,7 @@ pub const SECTION_LABELS: &[(&str, &str)] = &[
     ("council", "Council"),
     ("tools", "Werkzeuge & MCP"),
     ("collab", "Zusammenarbeit"),
+    ("orchestra", "Master-Session"),
     ("advanced", "Erweitert"),
 ];
 
@@ -420,6 +430,20 @@ pub fn check_backend(backend: &str) -> CmdResult<()> {
     } else {
         Err(format!("POLICY: Das Backend „{backend}“ ist {} nicht freigegeben.", managed_by(&e)))
     }
+}
+
+/// Darf diese Installation Untersessions starten (Master-Session)?
+pub fn check_orchestra() -> CmdResult<()> {
+    let e = effective();
+    if e.policy.orchestra == Some(false) {
+        return Err(format!("POLICY: Die Master-Session (Untersessions starten) ist {} gesperrt.", managed_by(&e)));
+    }
+    Ok(())
+}
+
+/// Höchstzahl gleichzeitiger Untersessions laut Team-Richtlinie.
+pub fn max_sub_sessions() -> Option<u32> {
+    effective().policy.max_sub_sessions
 }
 
 pub fn check_mode(mode: &str) -> CmdResult<()> {
@@ -653,6 +677,18 @@ mod tests {
         assert_eq!((m.daily_eur, m.monthly_eur), (Some(3.0), Some(40.0)));
         assert_eq!(m.web_search, Some(false));
         assert!(m.require_zdr);
+    }
+
+    #[test]
+    fn orchestra_lock_wins() {
+        let open = Policy { orchestra: Some(true), max_sub_sessions: Some(4), ..Default::default() };
+        let locked = Policy { orchestra: Some(false), max_sub_sessions: Some(2), ..Default::default() };
+        let m = open.merge(&locked);
+        assert_eq!((m.orchestra, m.max_sub_sessions), (Some(false), Some(2)));
+        assert_eq!(open.merge(&Policy::default()).orchestra, Some(true));
+        // Ältere Team-Stände ohne die Felder bleiben lesbar.
+        let old: Policy = serde_json::from_str(r#"{"dailyEur": 3}"#).unwrap();
+        assert_eq!((old.orchestra, old.max_sub_sessions), (None, None));
     }
 
     #[test]

@@ -33,6 +33,11 @@ fn write_settings(map: &Map<String, Value>) -> CmdResult<()> {
     std::fs::write(settings_file(), serde_json::to_vec_pretty(map).unwrap()).map_err(|e| e.to_string())
 }
 
+/// Zuletzt von der Oberfläche gemeldete Einstellungen (Prefs).
+pub fn current_prefs() -> Value {
+    read_settings().remove("current").unwrap_or(Value::Null)
+}
+
 /// Aktuelle Anpassungen für die Oberfläche.
 #[tauri::command]
 pub fn read_customization() -> Value {
@@ -98,6 +103,7 @@ fn pref_section(key: &str) -> &'static str {
         "embedModel" | "agentSearch" => "embeddings",
         "rea" => "agents",
         "autoModel" | "routing" => "models",
+        "orchestra" => "orchestra",
         _ => "general",
     }
 }
@@ -106,6 +112,7 @@ fn tools() -> Value {
     let mut list = app_tools();
     if let Some(a) = list.as_array_mut() {
         a.extend(crate::secrets::tools());
+        a.extend(crate::orchestra::tools());
     }
     list
 }
@@ -166,6 +173,9 @@ fn call_tool(name: &str, args: &Value) -> CmdResult<String> {
     if let Some(result) = crate::secrets::call_tool(name, args) {
         return result;
     }
+    if let Some(result) = crate::orchestra::call_tool(name, args) {
+        return result;
+    }
     match name {
         "brise_get_settings" => {
             let custom = read_customization();
@@ -221,7 +231,11 @@ pub fn run_mcp_server() {
                 "protocolVersion": msg["params"]["protocolVersion"].as_str().unwrap_or("2025-06-18"),
                 "capabilities": { "tools": {} },
                 "serverInfo": { "name": "brise-app", "version": env!("CARGO_PKG_VERSION") },
-                "instructions": format!("Werkzeuge, mit denen du die Desktop-App Brise selbst anpasst, wenn der Nutzer das im Chat wünscht. {}", crate::secrets::MCP_INSTRUCTIONS)
+                "instructions": format!(
+                    "Werkzeuge, mit denen du die Desktop-App Brise selbst anpasst, wenn der Nutzer das im Chat wünscht. {}{}",
+                    crate::secrets::MCP_INSTRUCTIONS,
+                    if crate::orchestra::tools().is_empty() { String::new() } else { format!(" {}", crate::orchestra::MCP_INSTRUCTIONS) }
+                )
             }}),
             "ping" => json!({ "result": {} }),
             "tools/list" => json!({ "result": { "tools": tools() } }),
@@ -242,10 +256,12 @@ pub fn run_mcp_server() {
     }
 }
 
-/// MCP-Eintrag für jede Session; Projekt und Session-Kennung für die Secrets.
-pub fn mcp_entry(cwd: &str, tag: &str) -> Option<Value> {
+/// MCP-Eintrag für jede Session; Projekt und Session-Kennung für die Secrets,
+/// Kanal zur App für die Master-Session (`parent` = Untersession dieser Session).
+pub fn mcp_entry(cwd: &str, tag: &str, parent: Option<&str>) -> Option<Value> {
     let exe = std::env::current_exe().ok()?;
     let mut env = crate::agent::child_env();
     env.extend(crate::secrets::mcp_env(cwd, tag));
+    env.extend(crate::orchestra::mcp_env(tag.strip_prefix("s:"), parent));
     Some(json!({ "name": "brise-app", "command": exe.display().to_string(), "args": ["--mcp-app"], "env": env }))
 }

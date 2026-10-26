@@ -406,7 +406,7 @@ impl Ctx {
 
 /// Session zu einer Kennung: `s:<id>` direkt, sonst die Zuordnung, die Brise
 /// nach `session/new` einträgt.
-fn session_for_tag(tag: &str) -> Option<String> {
+pub(crate) fn session_for_tag(tag: &str) -> Option<String> {
     if let Some(id) = tag.strip_prefix("s:") {
         return Some(id.to_string());
     }

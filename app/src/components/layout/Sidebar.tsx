@@ -26,6 +26,8 @@ import { confirmAction } from "../../lib/dialogs";
 import { useCollab } from "../../lib/collab";
 import { TeamPanel } from "../collab/TeamPanel";
 import { DesignList, ModeSwitch } from "../design/Sidebar";
+import { useOrchestra } from "../../lib/orchestra";
+import { SubRows } from "../orchestra/Orchestra";
 
 const SHOWN_PER_PROJECT = 6;
 
@@ -47,13 +49,15 @@ export function Sidebar() {
   const [query, setQuery] = useState("");
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  // Untersessions stehen unter ihrer Master-Session, nicht im Projekt.
+  const subs = useOrchestra((s) => s.book.subs);
 
   // Sessions je Projekt: Vibes Liste plus gerade erst angelegte, noch nicht gelistete.
   const byProject = useMemo(() => {
     const map = new Map<string, { id: string; title: string; updatedAt?: string | null; backend?: string }[]>();
-    const seen = new Set<string>();
+    const seen = new Set<string>(subs.map((s) => s.id));
     for (const s of Object.values(sessions)) {
-      if (s.readOnly) continue;
+      if (s.readOnly || seen.has(s.id)) continue;
       const summary = index.find((x) => x.sessionId === s.id);
       // Vorbereitete, noch leere Sessions nicht anzeigen.
       if (s.items.length === 0 && !summary?.title) continue;
@@ -71,7 +75,7 @@ export function Sidebar() {
     }
     for (const list of map.values()) list.sort((a, b) => (b.updatedAt ?? "").localeCompare(a.updatedAt ?? ""));
     return map;
-  }, [index, sessions]);
+  }, [index, sessions, subs]);
 
   const q = query.trim().toLowerCase();
 
@@ -199,6 +203,7 @@ export function Sidebar() {
               {!isCollapsed && (
                 <div className="ml-[18px] border-l border-line pl-1.5">
                   {shown.map((s) => (
+                    <div key={s.id}>
                     <SessionRow
                       key={s.id}
                       id={s.id}
@@ -213,6 +218,8 @@ export function Sidebar() {
                         if (await confirmAction(`Session „${s.title}“ endgültig löschen?`, true)) deleteSession(s.id);
                       }}
                     />
+                    <SubRows master={s.id} activeId={view === "chat" ? activeSessionId : null} />
+                    </div>
                   ))}
                   {!q && list.length > SHOWN_PER_PROJECT && (
                     <button

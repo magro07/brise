@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { AlertTriangle, ArrowDown, Brain, Check, Wand2, CheckCircle2, ChevronRight, CircleSlash, Copy, FileText, Image, Info, Scale, Square, Volume2 } from "lucide-react";
+import { AlertTriangle, ArrowDown, Brain, Check, Wand2, CheckCircle2, ChevronRight, CircleSlash, Copy, FileText, Image, Info, Network, Scale, Square, Volume2 } from "lucide-react";
 import { useStore } from "../../lib/store";
 import { agentName, useVoiceAvailable } from "../../lib/backends";
 import type { Item, Session } from "../../lib/store";
@@ -9,6 +9,8 @@ import { Markdown } from "./Markdown";
 import { ToolGroup } from "./ToolCall";
 import { CouncilItemCard } from "./Council";
 import { askAgentForCouncil } from "../../lib/council";
+import { NOTE_AUTHOR } from "../../lib/orchestra";
+import { OpenCards, OrchCard } from "../orchestra/Orchestra";
 
 type Block = { kind: "item"; item: Item } | { kind: "tools"; id: string; items: Item[] };
 
@@ -206,6 +208,15 @@ export function Conversation({ session }: { session: Session }) {
               const item = b.item;
               switch (item.type) {
                 case "user":
+                  if (item.author === NOTE_AUTHOR)
+                    return (
+                      <div key={item.id} data-brise="orch-note" className="rounded-xl border border-dashed border-line-strong bg-panel px-3.5 py-2.5 text-[0.88em] fade-in">
+                        <div className="mb-1 flex items-center gap-1.5 text-[0.85em] font-medium text-muted">
+                          <Network className="h-3.5 w-3.5 text-accent" /> {NOTE_AUTHOR}
+                        </div>
+                        <div className="whitespace-pre-wrap text-fg-2 selectable">{item.text}</div>
+                      </div>
+                    );
                   return (
                     <div key={item.id} data-brise="user-message" className="flex flex-col items-end gap-1.5 fade-in">
                       {item.author && <span className="text-[0.76em] text-muted">{item.author}</span>}
@@ -268,10 +279,13 @@ export function Conversation({ session }: { session: Session }) {
                   return <TurnFooter key={item.id} item={item} />;
                 case "council":
                   return <CouncilItemCard key={item.id} item={item} sessionId={session.id} />;
+                case "orch":
+                  return <OrchCard key={item.id} kind={item.kind} refId={item.ref} />;
                 default:
                   return null;
               }
             })}
+            <OpenCards session={session} />
             {session.running && session.pending.length === 0 && <Working since={session.turnStarted} backend={session.backend} />}
           </div>
         </div>
