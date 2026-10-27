@@ -693,6 +693,8 @@ export function nearestThinking(wanted: string, available: string[]): string | u
   return [...available].sort((a, b) => Math.abs(THINKING_ORDER.indexOf(a) - w) - Math.abs(THINKING_ORDER.indexOf(b) - w))[0];
 }
 
+/** Laufende Optionswechsel je Session und Option – späte Antworten älterer Wahl werden verworfen. */
+const optionSeq: Record<string, number> = {};
 /** Signale im laufenden Turn, die ein Nachsteuern rechtfertigen. */
 const signals: Record<string, { failStreak: number; readStreak: number; lastAdjust: number; busy: boolean }> = {};
 
@@ -1529,15 +1531,30 @@ export const useStore = create<State & Actions>((set, get) => {
         set((s) => ({ draft: { ...s.draft, [configId]: value } }));
         return;
       }
-      let fresh: ConfigOption[] | undefined;
-      if (configId === "mode") await api.setMode(session.id, value);
-      else fresh = ((await api.setConfigOption(session.id, configId, value)) as { configOptions?: ConfigOption[] } | null)?.configOptions;
-      // Ein Modellwechsel ändert die verfügbaren Denkstufen; die Antwort enthält die neue Liste.
-      patchSession(session.id, (s) => ({
-        ...s,
-        currentMode: configId === "mode" ? value : s.currentMode,
-        config: fresh?.length ? fresh : s.config.map((o) => (o.id === configId ? { ...o, currentValue: value } : o)),
-      }));
+      // Sofort anzeigen; der Agent bestätigt danach. Nur die jeweils letzte Wahl zählt.
+      const key = `${session.id}:${configId}`;
+      const seq = (optionSeq[key] ?? 0) + 1;
+      optionSeq[key] = seq;
+      const previous = configId === "mode" ? session.currentMode : session.config.find((o) => o.id === configId)?.currentValue;
+      const show = (v: ConfigOption["currentValue"] | undefined, fresh?: ConfigOption[]) =>
+        patchSession(session.id, (s) => ({
+          ...s,
+          currentMode: configId === "mode" ? String(v ?? s.currentMode) : s.currentMode,
+          config: fresh?.length ? fresh : s.config.map((o) => (o.id === configId ? { ...o, currentValue: v ?? o.currentValue } : o)),
+        }));
+      show(value);
+      try {
+        let fresh: ConfigOption[] | undefined;
+        if (configId === "mode") await api.setMode(session.id, value);
+        else fresh = ((await api.setConfigOption(session.id, configId, value)) as { configOptions?: ConfigOption[] } | null)?.configOptions;
+        // Ein Modellwechsel ändert die verfügbaren Denkstufen; die Antwort enthält die neue Liste.
+        if (optionSeq[key] === seq) show(value, fresh);
+      } catch (e) {
+        if (optionSeq[key] !== seq) return;
+        show(previous);
+        pushItem(session.id, { type: "notice", id: uid(), text: `${configId === "model" ? "Modell" : configId === "thinking" ? "Denkstufe" : "Einstellung"} konnte nicht gewechselt werden: ${e}`, tone: "warn" });
+        throw e;
+      }
     },
 
     async loadFiles(cwd) {
