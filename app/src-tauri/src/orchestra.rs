@@ -692,8 +692,12 @@ async fn choose_worker(
     }
     let level = match difficulty {
         Some(d) => d,
-        // Projekte mit Zero Data Retention: den Auftrag nicht zur Einstufung an Mistral schicken.
-        None if crate::customize::current_prefs()["zdrProjects"].as_array().is_some_and(|z| z.iter().any(|p| p.as_str() == Some(cwd))) => "standard".into(),
+        // Projekte mit Zero Data Retention: den Auftrag nur an ein Modell ohne Datenspeicherung zur Einstufung geben.
+        None if crate::customize::current_prefs()["zdrProjects"].as_array().is_some_and(|z| z.iter().any(|p| p.as_str() == Some(cwd)))
+            && !crate::providers::function_model("decide").is_some_and(|m| crate::providers::is_zdr(&m)) =>
+        {
+            "standard".into()
+        }
         None => crate::assist::classify_task(task.to_string(), None, None, None)
             .await
             .ok()

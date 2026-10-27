@@ -1,52 +1,50 @@
 //! Kleine KI-Helfer neben dem Coding-Agenten: Auto-Modellwahl (Aufgabe
 //! einstufen), Denkstufe nachsteuern, personalisierte Vorschläge und
-//! Commit-Nachrichten. Das Modell dahinter ist Mistral Small oder – mit der
-//! Einstellung `decisionProvider` – ein Cortecs-Modell (ZDR, siehe cortecs.rs).
+//! Commit-Nachrichten. Das Modell dahinter wählt man je Funktion aus allen
+//! konfigurierten Anbietern (providers.rs, Einstellung `taskModels`).
+//! Cortecs-Decision-Modelle (clef, laya) laufen über die Decisions-API
+//! mit Wahrscheinlichkeiten (cortecs.rs).
 
 use std::path::{Path, PathBuf};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
-use crate::credentials::{read_key, API_BASE};
 use crate::git::git_output;
 use crate::installer::data_dir;
+use crate::providers;
 
 type CmdResult<T> = Result<T, String>;
 
-const FAST_MODEL: &str = "mistral-small-latest";
-
-/// Chat-Anfrage mit JSON-Antwort.
-/// `feature` und `cwd` landen im Nutzungsjournal.
+/// Chat-Anfrage mit JSON-Antwort beim Anbieter aus `model` (`anbieter/modell`;
+/// ohne Präfix ein Mistral-Modell). `feature` und `cwd` landen im Nutzungsjournal.
 pub(crate) async fn quick_json(model: &str, system: &str, user: &str, timeout: u64, feature: &str, cwd: Option<&str>) -> CmdResult<Value> {
-    let key = read_key().ok_or("Kein Mistral-Schlüssel")?;
-    let started = std::time::Instant::now();
-    let body: Value = reqwest::Client::new()
-        .post(format!("{API_BASE}/chat/completions"))
-        .bearer_auth(key)
-        .timeout(Duration::from_secs(timeout))
-        .json(&json!({
-            "model": model,
-            "temperature": 0.2,
-            "response_format": { "type": "json_object" },
-            "messages": [{ "role": "system", "content": system }, { "role": "user", "content": user }]
-        }))
-        .send()
-        .await
-        .map_err(|e| e.to_string())?
-        .json()
-        .await
-        .map_err(|e| e.to_string())?;
-    crate::usage::record(crate::usage::Record::new("assist", feature, model).project(cwd).tokens(&body).timed(started, None));
-    let text = body["choices"][0]["message"]["content"].as_str().ok_or_else(|| format!("Unerwartete Antwort: {body}"))?;
-    serde_json::from_str(text).map_err(|e| format!("Kein gültiges JSON: {e}"))
+    providers::chat_json(model, "assist", feature, system, user, timeout, cwd).await
 }
 
-/// Entscheidungen über Cortecs (Decisions-API bzw. Chat, immer mit ZDR)?
-/// `provider` kommt aus der Einstellung „Entscheidungen“ der Oberfläche.
-fn via_cortecs(provider: &Option<String>) -> bool {
-    provider.as_deref() == Some(crate::cortecs::PROVIDER)
+/// Modell für eine Funktion: ausdrücklich übergeben (Oberfläche) oder aus den
+/// Einstellungen. `provider` ist das alte Feld der Oberfläche („cortecs“).
+fn pick(purpose: &str, model: Option<&str>, provider: &Option<String>) -> CmdResult<String> {
+    let model = model.map(str::trim).filter(|m| !m.is_empty());
+    if let Some(m) = model {
+        let m = match provider.as_deref() {
+            // Alte Oberfläche: Anbieter getrennt vom Modell.
+            Some(p) if !m.contains('/') && p != providers::MISTRAL => format!("{p}/{m}"),
+            _ => m.to_string(),
+        };
+        return Ok(m);
+    }
+    if provider.as_deref() == Some(providers::CORTECS) {
+        return Ok(format!("cortecs/{}", if purpose == "decide" { crate::cortecs::settings().decision_model } else { crate::cortecs::settings().chat_model }));
+    }
+    providers::function_model(purpose).ok_or_else(|| "Kein Anbieter mit Schlüssel – bitte unter Einstellungen → Anbieter & Schlüssel einrichten.".into())
+}
+
+/// Decision-Modell bei Cortecs (Decisions-API statt Chat)?
+fn cortecs_decision(model: &str) -> Option<String> {
+    let (p, m) = providers::split_ref(model);
+    (p.id == providers::CORTECS && crate::cortecs::DECISION_MODELS.iter().any(|(id, _)| *id == m)).then_some(m)
 }
 
 /// Chat-Antwort im JSON-Modus beim gewählten Anbieter.
@@ -59,25 +57,28 @@ async fn helper_json(
     timeout: u64,
     cwd: Option<&str>,
 ) -> CmdResult<Value> {
-    if via_cortecs(provider) {
-        return crate::cortecs::chat_json(feature, system, user, None, timeout).await;
+    let mut model = pick("helper", model, provider)?;
+    // Decision-Modelle schreiben keinen Text – dann das Chat-Modell von Cortecs.
+    if cortecs_decision(&model).is_some() {
+        model = format!("cortecs/{}", crate::cortecs::settings().chat_model);
     }
-    quick_json(model.unwrap_or(FAST_MODEL), system, user, timeout, feature, cwd).await
+    quick_json(&model, system, user, timeout, feature, cwd).await
 }
 
 /// Stuft eine Aufgabe für die Auto-Modellwahl ein: simple, standard oder complex.
 #[tauri::command]
 pub async fn classify_task(text: String, history: Option<String>, model: Option<String>, provider: Option<String>) -> CmdResult<Value> {
-    if via_cortecs(&provider) {
-        return crate::cortecs::classify_task(&text, history.as_deref(), None).await;
+    let model = pick("decide", model.as_deref(), &provider)?;
+    if let Some(m) = cortecs_decision(&model) {
+        return crate::cortecs::classify_task(&text, history.as_deref(), Some(&m)).await;
     }
     let user = classify_input(&text, history);
-    let v = quick_json(model.as_deref().unwrap_or(FAST_MODEL), CLASSIFY_SYSTEM, &user, 6, "Einstufung", None).await?;
+    let v = quick_json(&model, CLASSIFY_SYSTEM, &user, 8, "Einstufung", None).await?;
     let level = match v["level"].as_str() {
         Some(l @ ("simple" | "standard" | "complex")) => l,
         _ => "standard",
     };
-    Ok(json!({ "level": level, "reason": v["reason"].as_str().unwrap_or("") }))
+    Ok(json!({ "level": level, "reason": v["reason"].as_str().unwrap_or(""), "model": model }))
 }
 
 pub(crate) const CLASSIFY_SYSTEM: &str = "Du ordnest Aufgaben für einen Coding-Agenten einer Stufe zu, damit das passende Modell gewählt wird. \
@@ -216,8 +217,9 @@ pub async fn commit_message(cwd: String, model: Option<String>, provider: Option
 /// `progress` ist eine kurze Zusammenfassung der bisherigen Schritte.
 #[tauri::command]
 pub async fn adjust_reasoning(task: String, progress: String, current: String, model: Option<String>, provider: Option<String>) -> CmdResult<Value> {
-    if via_cortecs(&provider) {
-        return crate::cortecs::adjust_reasoning(&task, &progress, &current, None).await;
+    let model = pick("decide", model.as_deref(), &provider)?;
+    if let Some(m) = cortecs_decision(&model) {
+        return crate::cortecs::adjust_reasoning(&task, &progress, &current, Some(&m)).await;
     }
     const SYSTEM: &str = "Du steuerst den Reasoning-Aufwand eines Coding-Agenten (GLM-5.3) während er arbeitet. \
         Stufen: low (Routine: lesen, suchen, einfache Änderungen), high (normale Entwicklungsarbeit), max (Fehler, die sich wiederholen, \
@@ -228,7 +230,7 @@ pub async fn adjust_reasoning(task: String, progress: String, current: String, m
         task.chars().take(2000).collect::<String>(),
         progress.chars().take(2500).collect::<String>()
     );
-    let v = quick_json(model.as_deref().unwrap_or(FAST_MODEL), SYSTEM, &user, 6, "Denkstufe", None).await?;
+    let v = quick_json(&model, SYSTEM, &user, 8, "Denkstufe", None).await?;
     let level = match v["level"].as_str() {
         Some(l @ ("low" | "high" | "max")) => l,
         _ => current.as_str(),

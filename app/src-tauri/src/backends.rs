@@ -484,7 +484,7 @@ pub fn backend_login_command(backend: String) -> Option<String> {
 
 #[tauri::command]
 pub async fn install_backend(app: AppHandle, backend: String) -> CmdResult<String> {
-    crate::policy::check_section("backends")?;
+    crate::policy::check_section("agents")?;
     crate::policy::check_backend(&backend)?;
     if backend == "vibe" {
         return crate::installer::install_vibe(app).await;

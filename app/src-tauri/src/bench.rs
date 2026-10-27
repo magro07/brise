@@ -374,7 +374,7 @@ pub fn bench_get(id: String) -> CmdResult<Benchmark> {
 /// Speichert eine Definition; ohne `id` wird eine neue Datei aus dem Namen angelegt.
 #[tauri::command]
 pub fn bench_save(mut bench: Benchmark) -> CmdResult<String> {
-    crate::policy::check_section("bench")?;
+    crate::policy::check_section("usage")?;
     bench.normalize()?;
     std::fs::create_dir_all(dir()).map_err(|e| e.to_string())?;
     if bench.id.is_empty() {
@@ -401,7 +401,7 @@ pub fn bench_save(mut bench: Benchmark) -> CmdResult<String> {
 /// Löscht die Definition; Läufe bleiben für den Verlauf erhalten, außer mit `runs`.
 #[tauri::command]
 pub fn bench_delete(id: String, runs: Option<bool>) -> CmdResult<()> {
-    crate::policy::check_section("bench")?;
+    crate::policy::check_section("usage")?;
     if !valid_id(&id) {
         return Err(format!("Ungültige Benchmark-ID: {id}"));
     }
@@ -1087,7 +1087,8 @@ async fn evaluate(check: &Check, answer: &str, work: &Path, task: &Task, judge_d
             }
         }
         Check::Judge { criteria, model, threshold } => {
-            let model = model.as_deref().or(judge_default).unwrap_or(JUDGE_MODEL);
+            let fallback = crate::providers::function_model("judge");
+            let model = model.as_deref().or(judge_default).or(fallback.as_deref()).unwrap_or(JUDGE_MODEL);
             match judge(model, &task.prompt, answer, criteria, work).await {
                 Ok((points, reason)) => {
                     let score = (points / 10.0).clamp(0.0, 1.0);
@@ -1105,16 +1106,14 @@ Bewerte die Antwort ausschließlich nach den genannten Kriterien mit 0 bis 10 Pu
 (10 = erfüllt alle Kriterien vollständig, 0 = verfehlt sie). Antworte nur mit JSON: \
 {\"points\": <0-10>, \"reason\": \"<ein bis zwei Sätze auf Deutsch>\"}.";
 
-/// Bittet ein Richtermodell um 0–10 Punkte. `cortecs/<modell>` läuft über Cortecs (ZDR).
+/// Bittet ein Richtermodell um 0–10 Punkte. Modell als `anbieter/modell`
+/// (z. B. `cortecs/glm-5.3` mit ZDR); ohne Präfix ein Mistral-Modell.
 async fn judge(model: &str, prompt: &str, answer: &str, criteria: &str, work: &Path) -> CmdResult<(f64, String)> {
     let user = format!(
         "## Aufgabe an den Agenten\n{prompt}\n\n## Kriterien\n{criteria}\n\n## Antwort des Agenten\n{}",
         if answer.trim().is_empty() { "(keine Textantwort)" } else { answer }
     );
-    let v = match model.strip_prefix("cortecs/") {
-        Some(m) => crate::cortecs::chat_json("Benchmark: Richter", JUDGE_SYSTEM, &user, Some(m), 120).await?,
-        None => crate::assist::quick_json(model, JUDGE_SYSTEM, &user, 120, "Benchmark: Richter", Some(&work.display().to_string())).await?,
-    };
+    let v = crate::providers::chat_json(model, "bench", "Benchmark: Richter", JUDGE_SYSTEM, &user, 120, Some(&work.display().to_string())).await?;
     let points = v["points"].as_f64().or_else(|| v["points"].as_str().and_then(|s| s.trim().parse().ok())).ok_or_else(|| format!("Antwort ohne Punkte: {v}"))?;
     Ok((points, v["reason"].as_str().unwrap_or_default().to_string()))
 }

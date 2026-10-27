@@ -98,15 +98,15 @@ pub fn available() -> bool {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct KeyCheck {
-    valid: bool,
-    message: String,
-    models: usize,
+    pub valid: bool,
+    pub message: String,
+    pub models: usize,
 }
 
 /// `GET /v1/models` ist bei Cortecs öffentlich und prüft den Schlüssel nicht.
 /// Deshalb zusätzlich eine winzige Entscheidung (≈ 0,000005 €, mit ZDR):
 /// 200 heißt angemeldet, 401 unbekannter Schlüssel.
-async fn check(key: &str) -> CmdResult<KeyCheck> {
+pub(crate) async fn check(key: &str) -> CmdResult<KeyCheck> {
     let models = client()
         .get(format!("{API_BASE}/models"))
         .bearer_auth(key)
@@ -145,7 +145,7 @@ async fn check(key: &str) -> CmdResult<KeyCheck> {
 
 #[tauri::command]
 pub async fn cortecs_save_key(key: String) -> CmdResult<KeyCheck> {
-    crate::policy::check_section("cortecs")?;
+    crate::policy::check_section("providers")?;
     let key = key.trim().to_string();
     if key.len() < 16 || key.contains(char::is_whitespace) {
         return Ok(KeyCheck { valid: false, message: "Das sieht nicht nach einem Cortecs-Schlüssel aus.".into(), models: 0 });
@@ -160,7 +160,7 @@ pub async fn cortecs_save_key(key: String) -> CmdResult<KeyCheck> {
 
 #[tauri::command]
 pub fn cortecs_delete_key() -> CmdResult<()> {
-    crate::policy::check_section("cortecs")?;
+    crate::policy::check_section("providers")?;
     match entry().and_then(|e| e.delete_credential()) {
         Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
         Err(e) => Err(e.to_string()),
@@ -204,7 +204,7 @@ pub fn settings() -> Settings {
 
 #[tauri::command]
 pub fn cortecs_save_settings(mut settings: Settings) -> CmdResult<()> {
-    crate::policy::check_section("cortecs")?;
+    crate::policy::check_section("privacy")?;
     let p = crate::policy::effective().policy;
     settings.eu_native |= p.eu_native;
     settings.secrecy203 |= p.secrecy203;
@@ -217,7 +217,7 @@ pub fn write_settings(settings: &Settings) -> CmdResult<()> {
 }
 
 /// Felder, die Brise in jede Cortecs-Anfrage setzt. ZDR immer.
-fn routing_fields(body: &mut serde_json::Map<String, Value>) {
+pub(crate) fn routing_fields(body: &mut serde_json::Map<String, Value>) {
     let s = settings();
     body.insert("allow_zero_data_retention".into(), json!(true));
     if s.eu_native {
@@ -404,7 +404,7 @@ pub async fn ensure_vibe_config() -> CmdResult<bool> {
 /// Fügt ein Cortecs-Modell zu Vibe hinzu – nur Modelle mit ZDR.
 #[tauri::command]
 pub async fn cortecs_add_model(id: String) -> CmdResult<String> {
-    crate::policy::check_section("cortecs")?;
+    crate::policy::check_section("agents")?;
     let catalog = catalog().await?;
     let info = catalog.iter().find(|m| m.id == id).ok_or("Cortecs kennt dieses Modell nicht.")?;
     if !info.zdr {
@@ -432,7 +432,7 @@ pub async fn cortecs_add_model(id: String) -> CmdResult<String> {
 /// nimmt Vibe stattdessen das Modell der Session (bei ZDR: Cortecs).
 #[tauri::command]
 pub fn cortecs_utility_active(on: bool) -> CmdResult<bool> {
-    crate::policy::check_section("cortecs")?;
+    crate::policy::check_section("agents")?;
     edit_config(|doc| {
         if on {
             if !doc.contains_key("utility_models") {
@@ -519,6 +519,11 @@ pub async fn cortecs_project_config() -> CmdResult<Value> {
 
 static PROXY: AtomicU16 = AtomicU16::new(0);
 
+/// Port des lokalen Proxys (0 = läuft nicht). Auch für Anbieter in Vibe (providers.rs).
+pub fn proxy_port() -> u16 {
+    PROXY.load(Ordering::SeqCst)
+}
+
 /// Startet den Proxy (einmal pro Prozess) und gibt den Port zurück.
 pub fn start_proxy() -> std::io::Result<u16> {
     let current = PROXY.load(Ordering::SeqCst);
@@ -547,11 +552,11 @@ pub fn start_proxy() -> std::io::Result<u16> {
     Ok(port)
 }
 
-struct Request {
-    method: String,
-    path: String,
-    headers: Vec<(String, String)>,
-    body: Vec<u8>,
+pub(crate) struct Request {
+    pub method: String,
+    pub path: String,
+    pub headers: Vec<(String, String)>,
+    pub body: Vec<u8>,
 }
 
 fn find(hay: &[u8], needle: &[u8]) -> Option<usize> {
@@ -627,7 +632,7 @@ async fn read_request(sock: &mut tokio::net::TcpStream) -> Result<Request, Strin
     Ok(Request { method, path, headers, body })
 }
 
-async fn respond(sock: &mut tokio::net::TcpStream, status: u16, body: &str) -> std::io::Result<()> {
+pub(crate) async fn respond(sock: &mut tokio::net::TcpStream, status: u16, body: &str) -> std::io::Result<()> {
     let msg = format!("HTTP/1.1 {status} Brise\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
     sock.write_all(msg.as_bytes()).await
 }
@@ -636,6 +641,9 @@ async fn respond(sock: &mut tokio::net::TcpStream, status: u16, body: &str) -> s
 /// (auch Streams) und dabei den Verbrauch mitlesen.
 async fn serve(mut sock: tokio::net::TcpStream) -> Result<(), String> {
     let req = read_request(&mut sock).await?;
+    if req.path.starts_with("/p/") {
+        return crate::providers::forward(&mut sock, req).await;
+    }
     if req.path == "/__brise" {
         return respond(&mut sock, 200, r#"{"zdr":true}"#).await.map_err(|e| e.to_string());
     }
@@ -695,11 +703,11 @@ async fn serve(mut sock: tokio::net::TcpStream) -> Result<(), String> {
 /// Sucht im (gestreamten) Antworttext das letzte `usage`-Objekt und merkt sich,
 /// wann das erste Token (Text, Gedankengang oder Werkzeugaufruf) kam.
 #[derive(Default)]
-struct UsageScanner {
+pub(crate) struct UsageScanner {
     line: Vec<u8>,
     whole: Vec<u8>,
     last: Option<Value>,
-    first: Option<Instant>,
+    pub first: Option<Instant>,
 }
 
 /// Enthält ein Stream-Chunk erzeugte Tokens? Der erste Chunk trägt oft nur die Rolle.
@@ -711,7 +719,7 @@ fn has_token(v: &Value) -> bool {
 }
 
 impl UsageScanner {
-    fn feed(&mut self, bytes: &[u8]) {
+    pub fn feed(&mut self, bytes: &[u8]) {
         if self.whole.len() < 4 * 1024 * 1024 {
             self.whole.extend_from_slice(bytes);
         }
@@ -734,7 +742,7 @@ impl UsageScanner {
         }
     }
 
-    fn finish(self) -> Option<Value> {
+    pub fn finish(self) -> Option<Value> {
         self.last.or_else(|| serde_json::from_slice::<Value>(&self.whole).ok().map(|v| v["usage"].clone()).filter(Value::is_object))
     }
 }
@@ -961,31 +969,6 @@ pub async fn adjust_reasoning(task: &str, progress: &str, current: &str, model: 
         "ms": d.ms,
         "costEur": d.cost_eur,
     }))
-}
-
-/// Text-Antwort im JSON-Modus über Cortecs (ZDR), für Vorschläge und
-/// Commit-Nachrichten, wenn Entscheidungen über Cortecs laufen.
-pub async fn chat_json(feature: &str, system: &str, user: &str, model: Option<&str>, timeout: u64) -> CmdResult<Value> {
-    let key = read_key().ok_or("Kein Cortecs-Schlüssel")?;
-    let model = model.filter(|m| !m.is_empty() && !m.starts_with("mistral-small-latest")).map(str::to_string).unwrap_or_else(|| settings().chat_model);
-    let mut body = json!({
-        "model": model,
-        "temperature": 0.2,
-        "response_format": { "type": "json_object" },
-        "messages": [{ "role": "system", "content": system }, { "role": "user", "content": user }]
-    });
-    routing_fields(body.as_object_mut().unwrap());
-    let started = Instant::now();
-    let resp = client().post(format!("{API_BASE}/chat/completions")).bearer_auth(key).timeout(Duration::from_secs(timeout)).json(&body).send().await.map_err(|e| e.to_string())?;
-    let status = resp.status();
-    let v: Value = resp.json().await.map_err(|e| e.to_string())?;
-    if !status.is_success() {
-        return Err(format!("Cortecs ({status}): {}", v["error"]["message"].as_str().unwrap_or("")));
-    }
-    journal(&UsageEntry::new("assist", feature, &model).usage(&v["usage"]).timed(started, None));
-    let text = v["choices"][0]["message"]["content"].as_str().ok_or_else(|| format!("Unerwartete Antwort: {v}"))?;
-    let text = text.trim().trim_start_matches("```json").trim_start_matches("```").trim_end_matches("```").trim();
-    serde_json::from_str(text).map_err(|e| format!("Kein gültiges JSON: {e}"))
 }
 
 // ---------- Tauri-Commands für die Oberfläche ----------

@@ -84,32 +84,58 @@ const PREF_SECTION: Record<string, string> = {
   fontSize: "general",
   notify: "general",
   accent: "general",
-  sttLanguage: "voice",
-  autoNarrate: "voice",
-  embedModel: "embeddings",
-  agentSearch: "embeddings",
-  rea: "agents",
+  sttLanguage: "tools",
+  autoNarrate: "tools",
+  embedModel: "tools",
+  agentSearch: "tools",
+  rea: "tools",
   autoModel: "models",
   routing: "models",
   assistModel: "models",
+  taskModels: "models",
   autoStrategy: "models",
   autoBaseModel: "models",
   fim: "models",
-  council: "council",
-  decisionProvider: "cortecs",
-  sensitivityCheck: "cortecs",
-  zdrProjects: "cortecs",
-  zdrModel: "cortecs",
-  defaultBackend: "backends",
-  orchestra: "orchestra",
+  council: "models",
+  orchestra: "models",
+  decisionProvider: "models",
+  sensitivityCheck: "privacy",
+  zdrProjects: "privacy",
+  zdrModel: "privacy",
+  defaultBackend: "agents",
+  enabledBackends: "agents",
 };
 
 export const usePolicy = create<{ effective: Effective }>(() => ({
   effective: { managed: false, policy: EMPTY_POLICY, teams: [] },
 }));
 
+/** Alte Bereichs-ID (Brise ≤ 0.2) → neuer Bereich (wie canonical_section in policy.rs). */
+export function canonicalSection(section: string): string {
+  const legacy: Record<string, string> = {
+    account: "providers",
+    backends: "agents",
+    council: "models",
+    orchestra: "models",
+    permissions: "privacy",
+    cortecs: "privacy",
+    bench: "usage",
+    skills: "tools",
+    web: "tools",
+    voice: "tools",
+    embeddings: "tools",
+  };
+  return legacy[section] ?? section;
+}
+
+/** Zugriff auf einen Bereich; das Backend liefert die Richtlinie schon mit neuen IDs. */
 export function sectionAccess(section: string, e: Effective = usePolicy.getState().effective): Access {
-  return e.managed ? (e.policy.sections[section] ?? "edit") : "edit";
+  if (!e.managed) return "edit";
+  const id = canonicalSection(section);
+  const rank: Record<Access, number> = { hidden: 0, read: 1, edit: 2 };
+  return Object.entries(e.policy.sections)
+    .filter(([k]) => canonicalSection(k) === id)
+    .reduce<Access>((acc, [, v]) => (rank[v] < rank[acc] ? v : acc), "edit");
 }
 
 export function useAccess(section: string): Access {
@@ -173,22 +199,13 @@ export const teamUsage = () => invoke<{ today: number; days: Record<string, Reco
 /** Einstellungsbereiche (wie SECTIONS in Settings.tsx und SECTION_LABELS in policy.rs). */
 export const SECTION_LABELS: [string, string][] = [
   ["general", "Allgemein"],
-  ["backends", "Agenten"],
-  ["account", "Konto"],
-  ["usage", "Nutzung"],
-  ["bench", "Benchmarks"],
-  ["models", "Modelle & Kontext"],
-  ["permissions", "Freigaben & Sicherheit"],
-  ["cortecs", "Cortecs & Datenschutz"],
-  ["agents", "Vibe-Agents & Subagents"],
-  ["skills", "Skills"],
-  ["web", "Websuche & Recherche"],
-  ["voice", "Sprache"],
-  ["embeddings", "Embeddings & Suche"],
-  ["council", "Council"],
-  ["tools", "Werkzeuge & MCP"],
-  ["collab", "Zusammenarbeit"],
-  ["orchestra", "Master-Session"],
+  ["providers", "Anbieter & Schlüssel"],
+  ["agents", "Agenten"],
+  ["models", "Modelle & Automatik"],
+  ["privacy", "Datenschutz & Sicherheit"],
+  ["usage", "Nutzung & Budget"],
+  ["tools", "Werkzeuge"],
+  ["collab", "Zusammenarbeit & Team"],
   ["advanced", "Erweitert"],
 ];
 

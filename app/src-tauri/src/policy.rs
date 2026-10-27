@@ -122,8 +122,23 @@ impl Policy {
         }
     }
 
+    /// Zugriff auf einen Bereich. Alte Bereichs-IDs (vor der Neugliederung der
+    /// Einstellungen) zählen zu ihrem neuen Bereich; es gilt das Strengste.
     pub fn access(&self, section: &str) -> Access {
-        self.sections.get(section).copied().unwrap_or_default()
+        let target = canonical_section(section);
+        self.sections.iter().filter(|(k, _)| canonical_section(k) == target).map(|(_, v)| *v).min().unwrap_or_default()
+    }
+
+    /// Bereiche unter den neuen IDs (für die Oberfläche).
+    pub fn normalized(mut self) -> Policy {
+        let mut sections = BTreeMap::new();
+        for k in self.sections.keys() {
+            let id = canonical_section(k).to_string();
+            let access = self.access(&id);
+            sections.insert(id, access);
+        }
+        self.sections = sections;
+        self
     }
 
     pub fn mode_allowed(&self, mode: &str) -> bool {
@@ -292,6 +307,7 @@ pub fn effective() -> Effective {
             out.teams.push(stored.name);
         }
     }
+    out.policy = out.policy.normalized();
     out
 }
 
@@ -302,29 +318,36 @@ fn managed_by(e: &Effective) -> String {
     }
 }
 
+/// Einstellungsbereiche (wie SECTIONS in Settings.tsx und SECTION_LABELS in lib/policy.ts).
 pub const SECTION_LABELS: &[(&str, &str)] = &[
     ("general", "Allgemein"),
-    ("backends", "Agenten"),
-    ("account", "Konto"),
-    ("usage", "Nutzung"),
-    ("bench", "Benchmarks"),
-    ("models", "Modelle & Kontext"),
-    ("permissions", "Freigaben & Sicherheit"),
-    ("cortecs", "Cortecs & Datenschutz"),
-    ("agents", "Vibe-Agents & Subagents"),
-    ("skills", "Skills"),
-    ("web", "Websuche & Recherche"),
-    ("voice", "Sprache"),
-    ("embeddings", "Embeddings & Suche"),
-    ("council", "Council"),
-    ("tools", "Werkzeuge & MCP"),
-    ("collab", "Zusammenarbeit"),
-    ("orchestra", "Master-Session"),
+    ("providers", "Anbieter & Schlüssel"),
+    ("agents", "Agenten"),
+    ("models", "Modelle & Automatik"),
+    ("privacy", "Datenschutz & Sicherheit"),
+    ("usage", "Nutzung & Budget"),
+    ("tools", "Werkzeuge"),
+    ("collab", "Zusammenarbeit & Team"),
     ("advanced", "Erweitert"),
 ];
 
+/// Alte Bereichs-ID (Brise ≤ 0.2) → neuer Bereich. Team-Richtlinien, die noch
+/// alte IDs enthalten, gelten so weiter.
+pub fn canonical_section(section: &str) -> &str {
+    match section {
+        "account" => "providers",
+        "backends" => "agents",
+        "council" | "orchestra" => "models",
+        "permissions" | "cortecs" => "privacy",
+        "bench" => "usage",
+        "skills" | "web" | "voice" | "embeddings" => "tools",
+        other => other,
+    }
+}
+
 fn label(section: &str) -> &str {
-    SECTION_LABELS.iter().find(|(id, _)| *id == section).map_or(section, |(_, l)| l)
+    let id = canonical_section(section);
+    SECTION_LABELS.iter().find(|(s, _)| *s == id).map_or(section, |(_, l)| l)
 }
 
 /// Darf der Bereich geändert werden?
@@ -345,14 +368,15 @@ pub fn section_of(key: &[String]) -> &'static str {
     let k0 = key.first().map(String::as_str).unwrap_or("");
     let k1 = key.get(1).map(String::as_str).unwrap_or("");
     match k0 {
-        "active_model" | "auto_compact_threshold" | "show_thinking_nodes" | "models" | "providers" => "models",
-        "default_agent" | "bypass_tool_permissions" | "enable_auto_approve" | "smart_approve_available" => "permissions",
-        "tools" if k1 == "bash" => "permissions",
-        "tools" if k1.starts_with("web_") => "web",
+        // Vibes Modelle und Anbieter stehen unter Agenten → Vibe.
+        "active_model" | "auto_compact_threshold" | "show_thinking_nodes" | "models" | "providers" => "agents",
+        "default_agent" | "bypass_tool_permissions" | "enable_auto_approve" | "smart_approve_available" => "privacy",
+        "tools" if k1 == "bash" => "privacy",
+        "tools" if k1.starts_with("web_") => "tools",
         "enable_subagents" | "max_subagents" | "max_concurrent_subagents" | "enable_background_processes" => "agents",
         "enable_mcp" | "enable_connectors" | "mcp_servers" => "tools",
-        "active_transcribe_model" | "active_tts_model" => "voice",
-        "disabled_skills" | "enabled_skills" | "skill_paths" => "skills",
+        "active_transcribe_model" | "active_tts_model" => "tools",
+        "disabled_skills" | "enabled_skills" | "skill_paths" => "tools",
         _ => "advanced",
     }
 }
@@ -703,11 +727,28 @@ mod tests {
     #[test]
     fn config_keys_map_to_sections() {
         let k = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
-        assert_eq!(section_of(&k(&["tools", "web_search", "permission"])), "web");
-        assert_eq!(section_of(&k(&["tools", "bash", "allowlist"])), "permissions");
-        assert_eq!(section_of(&k(&["active_model"])), "models");
+        assert_eq!(section_of(&k(&["tools", "web_search", "permission"])), "tools");
+        assert_eq!(section_of(&k(&["tools", "bash", "allowlist"])), "privacy");
+        assert_eq!(section_of(&k(&["active_model"])), "agents");
         assert_eq!(section_of(&k(&["mcp_servers"])), "tools");
         assert_eq!(section_of(&k(&["something_new"])), "advanced");
+    }
+
+    #[test]
+    fn alte_bereiche_gelten_weiter() {
+        // Richtlinie aus Brise 0.2: „Cortecs & Datenschutz“ nur lesen, „Websuche“ ausgeblendet.
+        let p = Policy { sections: [("cortecs".to_string(), Access::Read), ("web".to_string(), Access::Hidden), ("skills".to_string(), Access::Read)].into(), ..Default::default() };
+        assert_eq!(p.access("privacy"), Access::Read);
+        assert_eq!(p.access("cortecs"), Access::Read);
+        assert_eq!(p.access("permissions"), Access::Read);
+        assert_eq!(p.access("tools"), Access::Hidden);
+        assert_eq!(p.access("providers"), Access::Edit);
+        let n = p.normalized();
+        assert_eq!(n.sections.get("privacy"), Some(&Access::Read));
+        assert_eq!(n.sections.get("tools"), Some(&Access::Hidden));
+        assert!(!n.sections.contains_key("cortecs"));
+        assert_eq!(canonical_section("account"), "providers");
+        assert_eq!(canonical_section("orchestra"), "models");
     }
 
     #[test]

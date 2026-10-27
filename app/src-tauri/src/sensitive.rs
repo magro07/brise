@@ -84,8 +84,9 @@ pub struct Verdict {
     pub categories: Vec<Category>,
     /// Zusammenfassung für den Hinweis über dem Composer.
     pub reason: String,
-    /// "local" (nur Vorfilter) oder "cortecs" (Decision-Modell mit ZDR).
-    pub checked_by: &'static str,
+    /// "local" (nur Vorfilter), "cortecs" (Decision-Modell mit ZDR) oder die ID
+    /// des Anbieters, dessen Modell geprüft hat.
+    pub checked_by: String,
     pub model: Option<String>,
     pub ms: u64,
     pub cost_eur: f64,
@@ -387,9 +388,58 @@ pub async fn check(text: &str, attachments: &[String], cwd: Option<&str>, remote
         })
         .collect();
 
-    let mut verdict = Verdict { flagged: false, categories: Vec::new(), reason: String::new(), checked_by: "local", model: None, ms: 0, cost_eur: 0.0, unreadable, error: None };
+    let mut verdict = Verdict { flagged: false, categories: Vec::new(), reason: String::new(), checked_by: "local".into(), model: None, ms: 0, cost_eur: 0.0, unreadable, error: None };
 
-    if !found.is_empty() && remote && crate::cortecs::available() {
+    // Modell für die Prüfung: übergeben (alte Oberfläche: Cortecs-Decision-Modell ohne Präfix)
+    // oder aus den Einstellungen. Ohne Anbieter mit Schlüssel bleibt es beim lokalen Vorfilter.
+    let target = model
+        .map(str::trim)
+        .filter(|m| !m.is_empty())
+        .map(|m| if !m.contains('/') && (m.starts_with("clef") || m.starts_with("laya")) { format!("cortecs/{m}") } else { m.to_string() })
+        .or_else(|| crate::providers::function_model("sensitivity"))
+        .filter(|m| crate::providers::available(m));
+    let decision = target.as_deref().and_then(|t| {
+        let (p, m) = crate::providers::split_ref(t);
+        (p.id == crate::providers::CORTECS && crate::cortecs::DECISION_MODELS.iter().any(|(id, _)| *id == m)).then_some(m)
+    });
+    if let (false, true, Some(target), None) = (found.is_empty(), remote, target.as_deref(), decision.as_deref()) {
+        let mut input = format!("User prompt to a coding assistant:\n{}\n", text.chars().take(4000).collect::<String>());
+        let snippets: Vec<String> = found.iter().filter(|(_, h)| h.source != "Prompt").take(12).map(|(_, h)| format!("[{}] …{}…", h.source, h.context)).collect();
+        if !snippets.is_empty() {
+            input.push_str("\nExcerpts from attached files:\n");
+            input.push_str(&snippets.join("\n").chars().take(5000).collect::<String>());
+        }
+        let system = format!(
+            "You check whether a prompt contains sensitive data. For each category give the probability (0 to 1) that the text contains it. \
+             Categories: {}. Answer only as JSON object mapping each category id to a number.",
+            CATEGORIES.iter().map(|(id, _, q)| format!("{id}: {q}")).collect::<Vec<_>>().join("; ")
+        );
+        match crate::providers::ask(target, &crate::providers::Ask::json(&system, &input, 20)).await {
+            Ok(r) => {
+                crate::providers::record("assist", "Sensibilität", cwd, &r);
+                verdict.checked_by = r.provider.id.clone();
+                verdict.model = Some(r.model.clone());
+                verdict.ms = r.took.as_millis() as u64;
+                verdict.cost_eur = r.cost_eur();
+                let answers = r.json().unwrap_or_default();
+                for (id, label, _) in CATEGORIES {
+                    let Some(p) = answers[*id].as_f64().or_else(|| answers[*id]["probability"].as_f64()) else { continue };
+                    let p = p.clamp(0.0, 1.0);
+                    match categories.iter_mut().find(|c| c.id == *id) {
+                        Some(c) => {
+                            c.probability = if c.hits.iter().any(|h| h.strong) { c.probability.max(p) } else { p };
+                            c.reason = format!("{} · Modell: {}", c.reason, pct(p));
+                        }
+                        None if p >= THRESHOLD => categories.push(Category { id, label, probability: p, hits: vec![], reason: format!("Modell: {}", pct(p)) }),
+                        None => {}
+                    }
+                }
+            }
+            Err(e) => verdict.error = Some(e.into()),
+        }
+    }
+    let model = decision.as_deref();
+    if !found.is_empty() && remote && model.is_some() {
         // Datensparsam: Prompt (gekürzt) und Ausschnitte rund um Treffer in Anhängen.
         let mut input = format!("User prompt to a coding assistant:\n{}\n", text.chars().take(4000).collect::<String>());
         let snippets: Vec<String> = found.iter().filter(|(_, h)| h.source != "Prompt").take(12).map(|(_, h)| format!("[{}] …{}…", h.source, h.context)).collect();
@@ -400,7 +450,7 @@ pub async fn check(text: &str, attachments: &[String], cwd: Option<&str>, remote
         let questions: Vec<Value> = CATEGORIES.iter().map(|(id, _, q)| json!({ "type": "predicate", "name": id, "instructions": q })).collect();
         match crate::cortecs::decide("Sensibilität", &input, json!(questions), model, Duration::from_secs(8)).await {
             Ok(d) => {
-                verdict.checked_by = "cortecs";
+                verdict.checked_by = "cortecs".into();
                 verdict.model = Some(d.model);
                 verdict.ms = d.ms;
                 verdict.cost_eur = d.cost_eur;

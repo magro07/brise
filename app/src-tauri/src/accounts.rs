@@ -247,7 +247,7 @@ fn clean_name(name: &str) -> CmdResult<String> {
 /// Prüft den Schlüssel gegen Mistral und legt ihn im Schlüsselbund ab.
 #[tauri::command]
 pub async fn add_account(name: String, kind: Kind, key: String, reserve: bool) -> CmdResult<AccountView> {
-    crate::policy::check_section("account")?;
+    crate::policy::check_section("providers")?;
     let name = clean_name(&name)?;
     let key = key.trim().to_string();
     if key.len() < 16 || key.contains(char::is_whitespace) {
@@ -279,7 +279,7 @@ pub async fn add_account(name: String, kind: Kind, key: String, reserve: bool) -
 
 #[tauri::command]
 pub fn update_account(id: String, name: Option<String>, kind: Option<Kind>, reserve: Option<bool>) -> CmdResult<()> {
-    crate::policy::check_section("account")?;
+    crate::policy::check_section("providers")?;
     let name = name.as_deref().map(clean_name).transpose()?;
     update(|s| {
         if id == STANDARD {
@@ -309,7 +309,7 @@ pub fn update_account(id: String, name: Option<String>, kind: Option<Kind>, rese
 /// Entfernt Account und Schlüsselbund-Eintrag. Seine Sessions laufen danach über den Standard.
 #[tauri::command]
 pub async fn remove_account(state: State<'_, crate::agent::AgentState>, id: String) -> CmdResult<()> {
-    crate::policy::check_section("account")?;
+    crate::policy::check_section("providers")?;
     if id == STANDARD {
         return Err("Der Standard-Account lässt sich hier nicht entfernen.".into());
     }
@@ -330,7 +330,7 @@ pub async fn remove_account(state: State<'_, crate::agent::AgentState>, id: Stri
 
 #[tauri::command]
 pub fn set_default_account(id: String) -> CmdResult<()> {
-    crate::policy::check_section("account")?;
+    crate::policy::check_section("providers")?;
     update(|s| {
         if !exists(s, &id) {
             return Err("Unbekannter Account".into());
@@ -343,7 +343,7 @@ pub fn set_default_account(id: String) -> CmdResult<()> {
 /// `id = None` nimmt das Projekt wieder zum Standard-Account.
 #[tauri::command]
 pub fn set_project_account(cwd: String, id: Option<String>) -> CmdResult<()> {
-    crate::policy::check_section("account")?;
+    crate::policy::check_section("providers")?;
     update(|s| {
         match id {
             Some(id) if exists(s, &id) => {
@@ -360,7 +360,7 @@ pub fn set_project_account(cwd: String, id: Option<String>) -> CmdResult<()> {
 
 #[tauri::command]
 pub fn set_auto_switch(enabled: bool) -> CmdResult<()> {
-    crate::policy::check_section("account")?;
+    crate::policy::check_section("providers")?;
     update(|s| {
         s.auto_switch = enabled;
         Ok(())

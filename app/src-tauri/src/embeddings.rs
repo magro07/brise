@@ -15,7 +15,6 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Emitter};
 
-use crate::credentials::{read_key, API_BASE};
 use crate::installer::data_dir;
 
 type CmdResult<T> = Result<T, String>;
@@ -144,17 +143,18 @@ fn chunk_file(rel: &str, text: &str) -> Vec<(Entry, String)> {
 }
 
 /// `tag` = (Funktion, Projekt) fürs Nutzungsjournal.
-async fn embed(client: &reqwest::Client, key: &str, model: &str, inputs: &[String], tag: (&str, &str)) -> CmdResult<Vec<Vec<f32>>> {
+/// `model` als `anbieter/modell` (ohne Präfix Mistral), z. B. `openai/text-embedding-3-small`
+/// oder `ollama/nomic-embed-text` – jeder Anbieter mit OpenAI-kompatiblem `/embeddings`.
+async fn embed(model: &str, inputs: &[String], tag: (&str, &str)) -> CmdResult<Vec<Vec<f32>>> {
     let mut attempt = 0;
     loop {
-        let resp = client
-            .post(format!("{API_BASE}/embeddings"))
-            .bearer_auth(key)
-            .json(&json!({ "model": model, "input": inputs }))
+        let (request, provider, name) = crate::providers::post(model, "embeddings")?;
+        let resp = request
+            .json(&json!({ "model": name, "input": inputs }))
             .timeout(std::time::Duration::from_secs(120))
             .send()
             .await
-            .map_err(|e| format!("Mistral nicht erreichbar: {e}"))?;
+            .map_err(|e| format!("{} nicht erreichbar: {e}", provider.name))?;
         let status = resp.status();
         if status.as_u16() == 429 && attempt < 6 {
             attempt += 1;
@@ -166,13 +166,15 @@ async fn embed(client: &reqwest::Client, key: &str, model: &str, inputs: &[Strin
             // Zu groß? Dann halbieren und einzeln versuchen.
             if status.as_u16() == 400 && inputs.len() > 1 {
                 let mid = inputs.len() / 2;
-                let mut a = Box::pin(embed(client, key, model, &inputs[..mid], tag)).await?;
-                a.extend(Box::pin(embed(client, key, model, &inputs[mid..], tag)).await?);
+                let mut a = Box::pin(embed(model, &inputs[..mid], tag)).await?;
+                a.extend(Box::pin(embed(model, &inputs[mid..], tag)).await?);
                 return Ok(a);
             }
             return Err(format!("Embedding-Fehler ({status}): {}", body["message"].as_str().or(body["detail"].as_str()).unwrap_or("unbekannt")));
         }
-        crate::usage::record(crate::usage::Record::new("embed", tag.0, model).project(Some(tag.1)).tokens(&body));
+        let mut rec = crate::usage::Record::new("embed", tag.0, &name).project(Some(tag.1)).tokens(&body);
+        crate::providers::tag_record(&mut rec, &provider);
+        crate::usage::record(rec);
         let mut data: Vec<(usize, Vec<f32>)> = body["data"]
             .as_array()
             .ok_or("Antwort ohne Daten")?
@@ -227,7 +229,9 @@ pub fn delete_index(cwd: String) -> CmdResult<()> {
 /// Baut oder aktualisiert den Index eines Projekts.
 #[tauri::command]
 pub async fn index_project(app: AppHandle, cwd: String, model: String) -> CmdResult<IndexStatus> {
-    let key = read_key().ok_or("Kein Mistral-Schlüssel gefunden – bitte zuerst anmelden.")?;
+    if !crate::providers::available(&model) {
+        return Err(format!("Für das Embedding-Modell {model} ist kein Anbieter mit Schlüssel eingerichtet (Einstellungen → Anbieter & Schlüssel)."));
+    }
     let root = PathBuf::from(&cwd);
     let files = tokio::task::spawn_blocking({
         let root = root.clone();
@@ -269,7 +273,6 @@ pub async fn index_project(app: AppHandle, cwd: String, model: String) -> CmdRes
 
     let total = pending.len();
     let _ = app.emit("index:progress", json!({ "cwd": cwd, "done": 0, "total": total }));
-    let client = reqwest::Client::new();
     let mut fresh: Vec<(Entry, Vec<f32>)> = Vec::with_capacity(total);
     let mut batch: Vec<(Entry, String)> = Vec::new();
     let mut chars = 0;
@@ -280,7 +283,7 @@ pub async fn index_project(app: AppHandle, cwd: String, model: String) -> CmdRes
         let full = batch.len() >= BATCH_ITEMS || chars >= BATCH_CHARS || iter.peek().is_none();
         if full {
             let inputs: Vec<String> = batch.iter().map(|(_, t)| t.clone()).collect();
-            let vectors = embed(&client, &key, &model, &inputs, ("Index", &cwd)).await?;
+            let vectors = embed(&model, &inputs, ("Index", &cwd)).await?;
             fresh.extend(batch.drain(..).map(|(e, _)| e).zip(vectors));
             chars = 0;
             let _ = app.emit("index:progress", json!({ "cwd": cwd, "done": fresh.len(), "total": total }));
@@ -314,8 +317,7 @@ pub struct Hit {
 
 async fn search(cwd: &str, query: &str, limit: usize, feature: &str) -> CmdResult<Vec<Hit>> {
     let index = load_index(cwd).ok_or("Dieses Projekt ist noch nicht indexiert.")?;
-    let key = read_key().ok_or("Kein Mistral-Schlüssel gefunden.")?;
-    let q = embed(&reqwest::Client::new(), &key, &index.meta.model, &[query.to_string()], (feature, cwd)).await?.pop().ok_or("Leere Antwort")?;
+    let q = embed(&index.meta.model, &[query.to_string()], (feature, cwd)).await?.pop().ok_or("Leere Antwort")?;
     if q.len() != index.meta.dim {
         return Err("Index passt nicht zum Modell – bitte neu indexieren.".into());
     }

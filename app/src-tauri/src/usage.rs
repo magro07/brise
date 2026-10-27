@@ -1,6 +1,7 @@
-//! Verbrauchs-Journal für die Nutzungsanzeige. Mistral liefert weder über
-//! Vibe (`/whoami` kennt nur den Plan) noch über die API Verbrauch oder Limit,
-//! deshalb protokolliert Brise jeden Vorgang selbst in
+//! Verbrauchs-Journal für die Nutzungsanzeige. Die Anbieter liefern weder über
+//! die Agenten noch über ihre APIs verlässlich Verbrauch oder Limit (Mistral
+//! z. B. gar nicht), deshalb protokolliert Brise jeden Vorgang selbst – mit
+//! Anbieter (`provider`, leer = Mistral) – in
 //! `<Datenordner>/usage/YYYY-MM.jsonl` (UTC-Monat) und rechnet mit einer
 //! mitgelieferten, änderbaren Preistabelle. Alle Beträge sind Schätzungen.
 
@@ -257,6 +258,9 @@ pub struct Price {
     pub per_minute: f64,
     pub per_million_chars: f64,
     pub per_call: f64,
+    /// Nur für Aufrufe bei diesem Anbieter (z. B. `openai`); leer = jeder Anbieter.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
     /// Abweichende Währung nur für diesen Eintrag.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub currency: Option<String>,
@@ -290,21 +294,34 @@ fn load_prices() -> (PriceTable, bool) {
     }
 }
 
-/// Vibe-Aliasse (`glm-5-3`) auf Modellnamen (`zai-glm-5-3`) abbilden.
-fn alias_names() -> HashMap<String, String> {
+/// Modell-Einträge aus Vibes config.toml: Alias → Modellname, Anbieter und – falls
+/// eingetragen – Preise (€ je Mio. Tokens, z. B. für Anbieter, die Brise einträgt).
+#[derive(Clone, Default)]
+struct VibeModel {
+    name: String,
+    provider: Option<String>,
+    prices: Option<(f64, f64)>,
+}
+
+fn alias_names() -> HashMap<String, VibeModel> {
     let Some(path) = crate::config::vibe_home().map(|h| h.join("config.toml")) else { return HashMap::new() };
     let Ok(doc) = std::fs::read_to_string(path).unwrap_or_default().parse::<toml::Table>() else { return HashMap::new() };
+    let num = |m: &toml::Value, k: &str| m.get(k).and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)));
     doc.get("models")
         .and_then(|m| m.as_array())
         .into_iter()
         .flatten()
-        .filter_map(|m| Some((m.get("alias")?.as_str()?.to_lowercase(), m.get("name")?.as_str()?.to_lowercase())))
+        .filter_map(|m| {
+            let provider = m.get("provider").and_then(|v| v.as_str()).map(|p| p.strip_prefix("brise-").unwrap_or(p).to_string());
+            let prices = num(m, "input_price").zip(num(m, "output_price"));
+            Some((m.get("alias")?.as_str()?.to_lowercase(), VibeModel { name: m.get("name")?.as_str()?.to_lowercase(), provider, prices }))
+        })
         .collect()
 }
 
 struct Pricer {
     table: PriceTable,
-    aliases: HashMap<String, String>,
+    aliases: HashMap<String, VibeModel>,
 }
 
 impl Pricer {
@@ -312,20 +329,45 @@ impl Pricer {
         Pricer { table: load_prices().0, aliases: alias_names() }
     }
 
-    /// Längstes passendes Muster gewinnt (GLM-5.3 Flash vor GLM-5.3).
     fn find(&self, model: &str) -> Option<&Price> {
+        let provider = self.aliases.get(&model.to_lowercase()).and_then(|a| a.provider.clone());
+        self.find_for(model, provider.as_deref())
+    }
+
+    /// Längstes passendes Muster gewinnt (GLM-5.3 Flash vor GLM-5.3). Einträge mit
+    /// Anbieter gelten nur für dessen Aufrufe und gehen dort allgemeinen vor.
+    fn find_for(&self, model: &str, provider: Option<&str>) -> Option<&Price> {
         let m = model.to_lowercase();
-        let name = self.aliases.get(&m).cloned().unwrap_or(m.clone());
+        let name = self.aliases.get(&m).map(|a| a.name.clone()).unwrap_or(m.clone());
         let mut best: Option<(&Price, usize)> = None;
         for p in &self.table.models {
+            if p.provider.as_deref().is_some_and(|pp| Some(pp) != provider) {
+                continue;
+            }
+            let bonus = if p.provider.is_some() { 1000 } else { 0 };
             for pat in &p.patterns {
                 let pat = pat.to_lowercase();
-                if (name.contains(&pat) || m.contains(&pat)) && best.is_none_or(|(_, len)| pat.len() > len) {
-                    best = Some((p, pat.len()));
+                if (name.contains(&pat) || m.contains(&pat)) && best.is_none_or(|(_, len)| pat.len() + bonus > len) {
+                    best = Some((p, pat.len() + bonus));
                 }
             }
         }
         best.map(|(p, _)| p)
+    }
+
+    /// Preis (Eingabe, Ausgabe) in € je Mio. Tokens: aus Vibes Modell-Eintrag, sonst Tabelle.
+    fn per_mtok(&self, model: &str) -> Option<(f64, f64, String)> {
+        if let Some((i, o)) = self.aliases.get(&model.to_lowercase()).and_then(|a| a.prices) {
+            return Some((i, o, model.to_string()));
+        }
+        let p = if self.aliases.contains_key(&model.to_lowercase()) {
+            self.find(model)?
+        } else {
+            let (provider, name) = split_provider(model);
+            self.find_for(&name, provider.as_deref())?
+        };
+        let f = self.factor(p);
+        Some((p.input * f, p.output * f, p.label.clone()))
     }
 
     fn factor(&self, p: &Price) -> f64 {
@@ -342,7 +384,7 @@ impl Pricer {
         if let Some(eur) = r.cost_eur {
             return (eur, 0.0, true);
         }
-        let Some(p) = self.find(&r.model) else { return (0.0, 0.0, false) };
+        let Some(p) = self.find_for(&r.model, r.provider.as_deref()) else { return (0.0, 0.0, false) };
         let f = self.factor(p);
         let cached = r.cached.min(r.input) as f64;
         let fresh = r.input as f64 - cached;
@@ -561,17 +603,18 @@ fn load_settings() -> Settings {
 
 /// Preis eines Modells je Million Tokens (Eingabe + Ausgabe, €) laut Preistabelle.
 pub fn price_per_mtok(model: &str) -> Option<f64> {
-    let pricer = Pricer::new();
-    let p = pricer.find(model)?;
-    Some((p.input + p.output) * pricer.factor(p))
+    Pricer::new().per_mtok(model).map(|(i, o, _)| i + o)
+}
+
+/// `anbieter/modell` → (Anbieter, Modell); Mistral und Unbekanntes ohne Anbieter.
+fn split_provider(model: &str) -> (Option<String>, String) {
+    let (p, m) = crate::providers::split_ref(model);
+    if p.id == crate::providers::MISTRAL { (None, model.to_string()) } else { (Some(p.id), m) }
 }
 
 /// Preis je Million Tokens (Eingabe, Ausgabe) in € und die Bezeichnung laut Preistabelle.
 pub fn price_detail(model: &str) -> Option<(f64, f64, String)> {
-    let pricer = Pricer::new();
-    let p = pricer.find(model)?;
-    let f = pricer.factor(p);
-    Some((p.input * f, p.output * f, p.label.clone()))
+    Pricer::new().per_mtok(model)
 }
 
 /// Messwerte eines Modells laut Journal (30 Tage): mittlere t/s, mittlere Zeit bis zum ersten Token (ms), Zahl der Turns.
@@ -707,7 +750,7 @@ pub fn usage_overview(from: u64, to: u64) -> Value {
         .into_iter()
         .map(|rec| {
             let (cost, saving, priced) = pricer.cost(&rec);
-            let label = pricer.find(&rec.model).map(|p| p.label.clone()).unwrap_or_else(|| rec.model.clone());
+            let label = pricer.find_for(&rec.model, rec.provider.as_deref()).map(|p| p.label.clone()).unwrap_or_else(|| rec.model.clone());
             Priced { rec, cost, saving, priced, label }
         })
         .collect();
@@ -726,9 +769,8 @@ pub fn usage_model_prices(models: Vec<String>) -> Value {
     let out: serde_json::Map<String, Value> = models
         .into_iter()
         .filter_map(|m| {
-            let p = pricer.find(&m)?;
-            let f = pricer.factor(p);
-            Some((m, json!({ "input": p.input * f, "output": p.output * f, "label": p.label })))
+            let (input, output, label) = pricer.per_mtok(&m)?;
+            Some((m, json!({ "input": input, "output": output, "label": label })))
         })
         .collect();
     Value::Object(out)
@@ -932,6 +974,12 @@ mod tests {
         assert_eq!(id("mistral-ocr-latest"), "mistral-ocr");
         assert_eq!(id("voxtral-mini-transcribe-realtime-2602"), "voxtral-realtime");
         assert_eq!(id("voxtral-mini-tts-latest"), "voxtral-tts");
+        // Einträge mit Anbieter gelten nur für dessen Aufrufe.
+        let for_provider = |m: &str, p: Option<&str>| pricer.find_for(m, p).map(|x| x.id.clone()).unwrap_or_default();
+        assert_eq!(for_provider("gpt-4.1-mini", Some("openai")), "openai-gpt-4.1-mini");
+        assert_eq!(for_provider("gpt-4.1-mini", None), "");
+        assert_eq!(for_provider("claude-haiku-4-5", Some("anthropic")), "anthropic-haiku-4.5");
+        assert_eq!(for_provider("mistral-small-latest", Some("openrouter")), "mistral-small-4");
         let mut r = Record::new("chat", "Chat", "mistral-medium-3.5");
         r.input = 1_000_000;
         r.cached = 400_000;

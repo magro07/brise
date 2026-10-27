@@ -23,6 +23,7 @@ mod skills;
 mod terminal;
 mod usage;
 mod policy;
+mod providers;
 mod installer;
 mod rpc;
 mod selftest;
@@ -107,8 +108,16 @@ pub fn run() {
             customize::watch(app.handle().clone());
             secrets::startup_cleanup();
             secrets::watch(app.handle().clone());
-            if let Err(e) = cortecs::start_proxy() {
-                eprintln!("Cortecs-Proxy: {e}");
+            providers::migrate();
+            match cortecs::start_proxy() {
+                Ok(_) => {
+                    tauri::async_runtime::spawn(async {
+                        if let Err(e) = providers::sync_vibe().await {
+                            eprintln!("Anbieter in Vibe eintragen: {e}");
+                        }
+                    });
+                }
+                Err(e) => eprintln!("Cortecs-Proxy: {e}"),
             }
             collab::start(app.handle());
             orchestra::start(app.handle());
@@ -139,6 +148,15 @@ pub fn run() {
             backends::backend_login_command,
             backends::install_backend,
             decision::decision_providers,
+            providers::providers_list,
+            providers::provider_save,
+            providers::provider_delete,
+            providers::provider_set_key,
+            providers::provider_delete_key,
+            providers::provider_check,
+            providers::provider_models,
+            providers::provider_test_model,
+            providers::provider_function_model,
             config::read_config,
             config::write_config_value,
             config::list_project_files,

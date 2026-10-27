@@ -16,7 +16,6 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-use crate::credentials::{read_key, API_BASE};
 use crate::installer::data_dir;
 
 type CmdResult<T> = Result<T, String>;
@@ -91,29 +90,15 @@ pub fn config() -> CouncilConfig {
 
 // ---------- Preise und Kosten ----------
 
-/// EUR je Million Tokens (Eingabe, Ausgabe), Stand Mistral-Preisseite 2026-10.
-/// Spezifische Muster zuerst; Unbekanntes kostet wie Mistral Large 4.
-const PRICES: &[(&str, f64, f64)] = &[
-    ("glm-5-3-flash", 0.1275, 0.425),
-    ("glm", 1.19, 3.74),
-    ("mistral-large-4", 1.156, 3.553),
-    ("mistral-large-latest", 1.156, 3.553),
-    ("mistral-large", 0.425, 1.275),
-    ("magistral-medium", 1.7, 4.25),
-    ("magistral-small", 0.1275, 0.51),
-    ("mistral-medium", 1.275, 6.375),
-    ("devstral", 1.275, 6.375),
-    ("mistral-small", 0.1275, 0.51),
-    ("ministral", 0.17, 0.17),
-    ("codestral", 0.255, 0.765),
-];
-
-fn price(model: &str) -> (f64, f64) {
-    PRICES.iter().find(|(p, _, _)| model.contains(p)).map(|(_, i, o)| (*i, *o)).unwrap_or((1.156, 3.553))
-}
-
+/// Geschätzte Kosten in € für ein Modell (`anbieter/modell`, ohne Präfix Mistral):
+/// eigener Preis des Anbieters, lokal kostenlos, sonst die Preistabelle
+/// (Einstellungen → Nutzung & Budget). Unbekanntes kostet wie Mistral Large 4.
 fn cost(model: &str, input: u64, output: u64) -> f64 {
-    let (i, o) = price(model);
+    let (p, m) = crate::providers::split_ref(model);
+    if (p.input_price.is_some() && p.output_price.is_some()) || p.is_local() {
+        return crate::providers::cost_eur(&p, &m, input, 0, output, None);
+    }
+    let (i, o, _) = crate::usage::price_detail(&m).unwrap_or((1.156, 3.553, String::new()));
     (input as f64 * i + output as f64 * o) / 1_000_000.0
 }
 
@@ -152,11 +137,8 @@ fn append_line(path: &Path, line: &Value) {
 
 /// Meldet einen Modellaufruf ins Usage-Journal, mit Dauer und t/s (ohne Stream
 /// über die ganze Dauer gerechnet).
-fn report_usage(feature: &str, model: &str, a: &Answer, project: &str) {
-    let mut rec = crate::usage::Record::new("council", feature, model).project(Some(project));
-    rec.input = a.input;
-    rec.output = a.output;
-    crate::usage::record(rec.perf(a.took, None, a.took));
+fn report_usage(feature: &str, a: &Answer, project: &str) {
+    crate::providers::record("council", feature, Some(project), &a.reply);
 }
 
 // ---------- Kontext aus dem Projekt ----------
@@ -430,36 +412,17 @@ fn task_text(tool: Tool, args: &Value) -> String {
 
 // ---------- Modellaufruf ----------
 
-/// Text aus einer Chat-Antwort; Denk-Modelle liefern Blöcke (thinking + text).
-fn message_text(body: &Value) -> String {
-    let content = &body["choices"][0]["message"]["content"];
-    match content {
-        Value::String(s) => s.clone(),
-        Value::Array(parts) => parts.iter().filter(|p| p["type"] == "text").filter_map(|p| p["text"].as_str()).collect::<Vec<_>>().join(""),
-        _ => String::new(),
-    }
-}
-
-/// JSON aus der Antwort, auch wenn ein Modell Codezäune oder Vorrede schreibt.
-fn parse_json(text: &str) -> Option<Value> {
-    if let Ok(v) = serde_json::from_str::<Value>(text.trim()) {
-        return Some(v);
-    }
-    let start = text.find('{')?;
-    let end = text.rfind('}')?;
-    serde_json::from_str(&text[start..=end]).ok()
-}
-
 struct Answer {
     json: Value,
     input: u64,
     output: u64,
-    /// Dauer des erfolgreichen Versuchs (ohne Wiederholung).
-    took: Duration,
+    reply: crate::providers::Reply,
 }
 
 /// `reasoning_effort` je Modell: Mistral-Modelle kennen nur high/none, GLM
 /// auch low, Codestral gar nichts. Ohne GLM-low denkt GLM-5.3 minutenlang.
+/// Andere Anbieter, die den Parameter nicht kennen, bekommen ihn nach der
+/// ersten Ablehnung nicht mehr (providers.rs).
 fn effort_for(model: &str, effort: &str) -> Option<&'static str> {
     match effort {
         "high" if !model.contains("codestral") && !model.contains("ministral") => Some("high"),
@@ -468,51 +431,22 @@ fn effort_for(model: &str, effort: &str) -> Option<&'static str> {
     }
 }
 
-async fn ask(client: &reqwest::Client, key: &str, model: &str, system: &str, user: &str, timeout: u64, effort: &str) -> CmdResult<Answer> {
-    let mut body = json!({
-        "model": model,
-        "temperature": 0.2,
-        "max_tokens": 8000,
-        "response_format": { "type": "json_object" },
-        "messages": [{ "role": "system", "content": system }, { "role": "user", "content": user }]
-    });
-    if let Some(e) = effort_for(model, effort) {
-        body["reasoning_effort"] = json!(e);
-    }
-    let started = Instant::now();
-    let mut retried = false;
-    let (body, took) = loop {
-        let left = timeout.saturating_sub(started.elapsed().as_secs()).max(5);
-        let attempt = Instant::now();
-        let resp = client
-            .post(format!("{API_BASE}/chat/completions"))
-            .bearer_auth(key)
-            .timeout(Duration::from_secs(left))
-            .json(&body)
-            .send()
-            .await
-            .map_err(|e| if e.is_timeout() { format!("keine Antwort nach {timeout} s") } else { e.to_string() })?;
-        let status = resp.status();
-        let reply: Value = resp.json().await.map_err(|e| if e.is_timeout() { format!("keine Antwort nach {timeout} s") } else { e.to_string() })?;
-        if status.is_success() {
-            break (reply, attempt.elapsed());
-        }
-        let msg = reply["message"].as_str().or(reply["detail"].as_str()).map(str::to_string).unwrap_or_else(|| reply.to_string());
-        // Unbekannter Denkaufwand: einmal ohne versuchen.
-        if !retried && msg.contains("reasoning_effort") && body.get("reasoning_effort").is_some() {
-            body.as_object_mut().unwrap().remove("reasoning_effort");
-            retried = true;
-            continue;
-        }
-        return Err(format!("HTTP {}: {}", status.as_u16(), msg.chars().take(200).collect::<String>()));
+/// Ein Mitglied fragen – bei jedem konfigurierten Anbieter (`anbieter/modell`).
+async fn ask(model: &str, system: &str, user: &str, timeout: u64, effort: &str) -> CmdResult<Answer> {
+    let req = crate::providers::Ask {
+        system,
+        user,
+        json: true,
+        max_tokens: Some(8000),
+        temperature: Some(0.2),
+        effort: effort_for(model, effort),
+        timeout,
     };
-    let input = body["usage"]["prompt_tokens"].as_u64().unwrap_or(0);
-    let output = body["usage"]["completion_tokens"].as_u64().unwrap_or(0);
-    let text = message_text(&body);
-    match parse_json(&text) {
-        Some(json) => Ok(Answer { json, input, output, took }),
-        None if body["choices"][0]["finish_reason"] == "length" => Err(format!("Antwort abgeschnitten ({output} Tokens, meist Gedankengang)")),
-        None => Err(format!("kein gültiges JSON ({} Zeichen Antwort)", text.len())),
+    let reply = crate::providers::ask(model, &req).await?;
+    match crate::providers::parse_json(&reply.text) {
+        Some(json) => Ok(Answer { json, input: reply.input, output: reply.output, reply }),
+        None if reply.truncated => Err(format!("Antwort abgeschnitten ({} Tokens, meist Gedankengang)", reply.output)),
+        None => Err(format!("kein gültiges JSON ({} Zeichen Antwort)", reply.text.len())),
     }
 }
 
@@ -839,8 +773,12 @@ fn prepare(cwd: &str, tool: Tool, args: &Value) -> CmdResult<(Run, String, Vec<(
             spent, est, cfg.daily_limit_eur
         ));
     }
-    if read_key().is_none() {
-        return Err("Kein Mistral-Schlüssel – das Council braucht die Mistral-API.".into());
+    let missing: Vec<String> = plan.iter().map(|(m, _, _)| m.clone()).filter(|m| !crate::providers::available(m)).collect();
+    if missing.len() == plan.len() {
+        return Err(format!(
+            "Für keines der Council-Modelle ist ein Anbieter mit Schlüssel eingerichtet ({}). Einstellungen → Anbieter & Schlüssel.",
+            missing.join(", ")
+        ));
     }
 
     let subject = match tool {
@@ -872,8 +810,6 @@ fn prepare(cwd: &str, tool: Tool, args: &Value) -> CmdResult<(Run, String, Vec<(
 /// Fragt alle Mitglieder parallel, führt zusammen und speichert den Lauf.
 async fn execute(run: Run, context: String, plan: Vec<(String, &'static str, &'static str)>, cfg: CouncilConfig, args: Value) -> Run {
     let tool = Tool::from_name(&run.tool).unwrap_or(Tool::Review);
-    let key = read_key().unwrap_or_default();
-    let client = reqwest::Client::new();
     let shared = Arc::new(Mutex::new(run));
     let task = task_text(tool, &args);
     let user = format!("{context}\n\n{task}");
@@ -882,13 +818,13 @@ async fn execute(run: Run, context: String, plan: Vec<(String, &'static str, &'s
 
     let mut set = tokio::task::JoinSet::new();
     for (i, (model, role, focus)) in plan.iter().cloned().enumerate() {
-        let (client, key, user, shared) = (client.clone(), key.clone(), user.clone(), shared.clone());
+        let (user, shared) = (user.clone(), shared.clone());
         let system = system_prompt(tool, role, focus);
         let (timeout, effort) = (cfg.timeout_secs, cfg.effort.clone());
         let (feature, project) = (feature.clone(), project.clone());
         set.spawn(async move {
             let started = Instant::now();
-            let res = ask(&client, &key, &model, &system, &user, timeout, &effort).await;
+            let res = ask(&model, &system, &user, timeout, &effort).await;
             let mut run = shared.lock().unwrap_or_else(|e| e.into_inner());
             let op = &mut run.opinions[i];
             op.ms = started.elapsed().as_millis() as u64;
@@ -899,7 +835,7 @@ async fn execute(run: Run, context: String, plan: Vec<(String, &'static str, &'s
                     op.input = a.input;
                     op.output = a.output;
                     op.cost_eur = cost(&model, a.input, a.output);
-                    report_usage(&feature, &model, &a, &project);
+                    report_usage(&feature, &a, &project);
                     op.result = a.json;
                 }
                 Err(e) => {
@@ -936,12 +872,12 @@ async fn execute(run: Run, context: String, plan: Vec<(String, &'static str, &'s
             let user = format!("{ctx_short}\n\n{task}\n\n## Urteile der Mitglieder\n{verdicts}");
             let started = Instant::now();
             let mut chair = Opinion { index: 0, model: cfg.chair.clone(), role: "Vorsitz".into(), ..Default::default() };
-            match ask(&client, &key, &cfg.chair, &chair_prompt(tool, ok.len()), &user, cfg.timeout_secs, &cfg.effort).await {
+            match ask(&cfg.chair, &chair_prompt(tool, ok.len()), &user, cfg.timeout_secs, &cfg.effort).await {
                 Ok(a) => {
                     chair.input = a.input;
                     chair.output = a.output;
                     chair.cost_eur = cost(&cfg.chair, a.input, a.output);
-                    report_usage(&feature, &cfg.chair, &a, &project);
+                    report_usage(&feature, &a, &project);
                     match finish_chair(tool, a.json, &ok) {
                         Some(merged) => {
                             chair.status = "fertig".into();

@@ -99,11 +99,10 @@ const PREFS: &[(&str, &str)] = &[
 /// Einstellungsbereich einer Oberflächen-Einstellung (für Team-Richtlinien).
 fn pref_section(key: &str) -> &'static str {
     match key {
-        "sttLanguage" | "autoNarrate" => "voice",
-        "embedModel" | "agentSearch" => "embeddings",
-        "rea" => "agents",
-        "autoModel" | "routing" => "models",
-        "orchestra" => "orchestra",
+        "sttLanguage" | "autoNarrate" | "embedModel" | "agentSearch" | "rea" => "tools",
+        "autoModel" | "routing" | "autoStrategy" | "autoBaseModel" | "taskModels" | "council" | "orchestra" | "fim" => "models",
+        "sensitivityCheck" | "zdrProjects" | "zdrModel" => "privacy",
+        "defaultBackend" | "enabledBackends" => "agents",
         _ => "general",
     }
 }

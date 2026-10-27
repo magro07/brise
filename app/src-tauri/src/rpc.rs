@@ -126,6 +126,9 @@ pub fn spawn_with_env(
     if let Some(key) = crate::cortecs::read_key() {
         command.env("CORTECS_API_KEY", key);
     }
+    // Weitere Anbieter in Vibe laufen über Brises Proxy, der den Schlüssel einsetzt;
+    // Vibe weist sich dort nur mit diesem Sitzungs-Token aus.
+    command.env(crate::providers::TOKEN_ENV, crate::providers::proxy_token());
     command
         .envs(env.iter().map(|(k, v)| (k, v)))
         .args(args)
