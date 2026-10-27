@@ -46,7 +46,10 @@ src-tauri/src/
   assist.rs              Auto-Modellwahl, personalisierte Vorschläge, Commit-Nachrichten
   cortecs.rs             Cortecs: Schlüssel, Modelle für Vibe, ZDR-Proxy, Decisions-API, Kosten
   sensitive.rs           Prüfung auf sensible Daten (lokaler Vorfilter + Decision-Modell)
-  decision.rs            DecisionProvider-Schnittstelle (Mistral Small; Cortecs über cortecs.rs)
+  decision.rs            Anbieterliste für Brises Entscheidungen (Modelle aus providers.rs)
+  providers.rs           Anbieter (Mistral, Anthropic, OpenAI, Gemini, Cortecs, OpenAI-kompatibel),
+                         Schlüssel, Prüfung, einheitlicher Modellaufruf, Vibe-Export über den Proxy
+  profile.rs             Brise-Konto (Name, E-Mail, Farbe, Avatar), lokal ohne Server
   git.rs                 Git über die Kommandozeile, MinGit unter Windows
   terminal.rs            eingebautes Terminal (PTY)
   files.rs               Dateien für den Editor, externe Editoren (VS Code & Co.)
@@ -63,9 +66,19 @@ src-tauri/src/
 src-tauri/resources/skills/   mitgelieferte Skills (Lizenzen und Quellen in NOTICE.md)
 ```
 
-## Erster Start: Agent wählen
+## Erster Start: Konto anlegen, Agenten verbinden
 
-Findet Brise beim ersten Start kein Vibe, zeigt es eine Auswahl, in der alle Agenten
+Beim ersten Start legt man ein **Brise-Konto** an: Name, optional E-Mail, Farbe und
+Avatar (Bild oder Initialen) – nur auf diesem Rechner, ohne Server
+(`<Datenordner>/profile.json`, keine Schlüssel). Vorbelegt wird aus
+`git config --global`; „Später“ geht immer, bestehende Nutzer werden einmal gefragt.
+Der Name gilt unten links in der Seitenleiste, in Teams, geteilten Sessions, beim
+Gastzugang und im Audit-Log, auf Wunsch auch als Git-Autor für Commits aus Brise.
+Unten links stehen Avatar, Name und die verbundenen Agenten bzw. Schlüssel
+(z. B. „Claude Max · Vibe · Codex“); ein Klick öffnet Konto bearbeiten, Anbieter &
+Schlüssel, Agenten, Nutzung und Abmelden.
+
+Danach verbindet man Agenten und Anbieter. Findet Brise kein Vibe, zeigt es eine Auswahl, in der alle Agenten
 gleichwertig stehen: „Mistral Vibe installieren und nutzen“, „Mit Claude Code arbeiten“ bzw.
 „Claude Code installieren und nutzen“, ebenso für Codex und Gemini CLI. Fehlt
 Node.js (≥ 22) für die npm-basierten Adapter, steht der Grund am Eintrag. Die Wahl
@@ -89,8 +102,8 @@ eingefügtem Vibe-Key bzw. API-Key. Der Key wird gegen `GET /v1/models` geprüft
 dort gespeichert, wo Vibe ihn selbst ablegt: im Schlüsselbund unter Dienst
 `ai.mistral.vibe`, Konto `MISTRAL_API_KEY`, ersatzweise in `$VIBE_HOME/.env`.
 
-Weitere Schlüssel (Firma, Kunde, Pay-as-you-go) trägt man unter *Einstellungen →
-Konto → Accounts* mit Namen ein. Sie liegen nur im Schlüsselbund (Konto
+Weitere Mistral-Schlüssel für Vibe (Firma, Kunde, Pay-as-you-go) trägt man unter
+*Einstellungen → Agenten → Vibe → Mehrere Accounts* mit Namen ein. Sie liegen nur im Schlüsselbund (Konto
 `BRISE_KEY_<id>`), `accounts.json` im Datenordner enthält nur Namen und
 Zuordnungen. Für jeden benutzten Account startet Brise einen eigenen `vibe-acp`.
 Eine Session bleibt bei ihrem Account, damit der Prompt-Cache erhalten bleibt.
@@ -126,8 +139,37 @@ gehört einem Agenten; welcher, steht als Badge an Session und Tab, sobald mehr 
 - **Ohne Vibe:** siehe [Erster Start](#erster-start-agent-wählen). Ist ein anderer
   Agent Standard, braucht Brise beim Start kein Vibe.
 - **Entscheidungen:** Einstufen, Denkstufe, Vorschläge und Commit-Nachrichten laufen
-  über Mistral Small oder – mit Einstellungen → Cortecs & Datenschutz – über
-  Cortecs-Decision-Modelle ohne Datenspeicherung.
+  über das Modell, das unter Einstellungen → Modelle & Automatik gewählt ist – bei
+  jedem Anbieter mit Schlüssel (siehe [Anbieter und Schlüssel](#anbieter-und-schlüssel)).
+
+## Anbieter und Schlüssel
+
+*Einstellungen → Anbieter & Schlüssel* führt alle Anbieter gleichberechtigt: Mistral,
+Anthropic, OpenAI, Google Gemini, Cortecs und beliebig viele **OpenAI-kompatible**
+Endpunkte (Name, Base-URL, Schlüssel, Schlüssel-Kopfzeile, weitere Kopfzeilen, eigene
+Preise). Vorlagen: Ollama, LM Studio, vLLM (lokal, ohne Schlüssel), OpenRouter, Groq,
+Together, Azure OpenAI (`api-key`-Kopfzeile, Modell = Deployment).
+
+- **Schlüssel** liegen nur im Schlüsselbund: Mistral weiter unter Vibes Dienst
+  (geteilt mit Vibe-CLI und VS-Code), Cortecs unter `dev.brise.cortecs`, alle anderen
+  unter `dev.brise.providers`. `providers.json` im Datenordner enthält keine Schlüssel.
+  Vorhandene Mistral- und Cortecs-Schlüssel gelten ohne erneute Eingabe weiter.
+  `ANTHROPIC_API_KEY`, `OPENAI_API_KEY` und `GEMINI_API_KEY` aus der Umgebung werden erkannt.
+- **Prüfen:** Modellliste über `/models` und ein echter Mini-Aufruf – manche
+  Anbieter antworten auf `/models` auch mit ungültigem Schlüssel mit 200.
+- **Modelle für Brises Funktionen** (Einstellungen → Modelle & Automatik): Einstufung
+  und Denkstufe, Vorschläge und Commit-Nachrichten, Benchmark-Richter, Council-Rollen
+  und Vorsitz, zweite Prüfung auf sensible Daten, Embeddings – je ein Modellwähler aus
+  allen Anbietern mit Schlüssel. Modelle heißen `anbieter/modell`, z. B.
+  `openai/gpt-4.1-mini` oder `ollama/qwen3:8b`. In Projekten ohne Datenspeicherung nimmt
+  Brise nur Cortecs, lokale oder als ZDR markierte Anbieter.
+- **Nur bei Mistral** (gekennzeichnet): Codestral-Vervollständigung (FIM), OCR, Voxtral
+  (Sprache über Vibe). Eine Whisper-Alternative gibt es noch nicht.
+- **In Vibe nutzen:** Freigegebene Anbieter trägt Brise als `[[providers]]
+  brise-<id>` samt ausgewählten Modellen in Vibes `config.toml` ein. Die Anfragen
+  laufen über Brises lokalen Proxy, der Schlüssel und Kopfzeilen einsetzt; Vibe kennt
+  nur ein Sitzungs-Token. Ohne laufendes Brise sind diese Modelle in Vibe nicht nutzbar.
+  Danach „Vibe neu verbinden“. Hintergrund: [docs/adr/0009-anbieter.md](../docs/adr/0009-anbieter.md).
 
 ## Zusammenarbeit (geteilte Sessions)
 
@@ -180,11 +222,12 @@ Jede Session bekommt dazu den MCP-Server `brise-council` (`brise --mcp-council <
 
 - Standard: drei Meinungen (Mistral Large 4, GLM-5.3, Codestral bzw. Magistral) parallel in
   den Rollen Gutachter, Bug-Jäger, Skeptiker. Mistral Large 4 führt als Vorsitz zusammen,
-  sonst gruppiert Brise selbst. Dateien liest der Server nur innerhalb des Projektordners.
+  sonst gruppiert Brise selbst. Rollen und Vorsitz lassen sich mit Modellen jedes Anbieters
+  mit Schlüssel besetzen (auch gemischt, z. B. Claude, GPT und ein lokales Modell). Dateien liest der Server nur innerhalb des Projektordners.
 - Im Chat erscheint jeder Aufruf als Karte mit Modellen, Ergebnis, aufklappbaren
   Einzelurteilen, Dauer, Tokens und Kosten. „Mit Council prüfen“ steht unter jeder Antwort
   (bittet den Agenten) und im Git-Panel (prüft den aktuellen Diff direkt).
-- Einstellungen → Council: automatisch / nur auf Wunsch / aus, Modelle je Rolle, Anzahl,
+- Einstellungen → Modelle & Automatik → Model Council: automatisch / nur auf Wunsch / aus, Modelle je Rolle, Anzahl,
   Vorsitz, Denkaufwand, Zeitlimit und Tageslimit (Standard 2 €).
 - Läufe: `<Datenordner>/council/runs/`, Tageskosten: `council/journal.jsonl`. Jeder
   Modellaufruf landet zusätzlich im Usage-Journal (`usage/JJJJ-MM.jsonl`, `kind: "council"`).
@@ -228,12 +271,12 @@ Dazu bekommt jede Session im MCP-Server `brise-app` diese Werkzeuge:
   öffnet sie als Tab, im Menü „Rechts daneben öffnen“. Über dem Composer zeigt eine Leiste
   die Untersessions der Session (Alt+Klick öffnet daneben).
 - **Nutzung:** Jeder Turn einer Untersession landet im Usage-Journal mit `master` und der
-  Funktion „Untersession“; *Einstellungen → Nutzung* zeigt die Kosten je Master-Session.
-- **Grenzen:** *Einstellungen → Master-Session*: an/aus, Bestätigung, gleichzeitige
+  Funktion „Untersession“; *Einstellungen → Nutzung & Budget* zeigt die Kosten je Master-Session.
+- **Grenzen:** *Einstellungen → Modelle & Automatik → Master-Session*: an/aus, Bestätigung, gleichzeitige
   Untersessions (Standard 3), Worktree als Standard. Ist das Monatsbudget erreicht, startet
   keine Untersession. Team-Admins können die Funktion sperren oder die Zahl begrenzen
   (Richtlinie `orchestra`, `maxSubSessions`); Backend- und Modell-Listen gelten auch hier.
-- **Kurator und Arbeiter:** *Einstellungen → Master-Session → Kurator und Arbeiter* legt das
+- **Kurator und Arbeiter:** *Einstellungen → Modelle & Automatik → Kurator und Arbeiter* legt das
   Kurator-Modell fest (z. B. Claude Code mit Opus oder Vibe mit Mistral Large 4; „Neue
   Kurator-Session“ im Projektmenü startet es mit festem Modell) und einen Arbeiter-Pool mit
   Stufen 1–3 (Standard: GLM-5.3, Mistral Medium 3.5, Mistral Large 4). Gibt der Kurator bei
@@ -312,8 +355,9 @@ versionieren:
   der Mittelwert, beim Richter zählen dessen Punkte (0–10). `regex` und `contains` prüfen
   die Textantwort des Agenten. `command` läuft im Arbeitsordner über `sh -c` bzw.
   `cmd /C` und muss mit Code 0 enden. `file` prüft eine Datei im Arbeitsordner. `judge`
-  lässt ein Richtermodell Aufgabe, Kriterien und Antwort bewerten (Mistral-Modell-ID
-  oder `cortecs/<modell>`, Standard Mistral Small). Den Diff sieht es nicht: Für Code
+  lässt ein Richtermodell Aufgabe, Kriterien und Antwort bewerten (`anbieter/modell`
+  bei jedem Anbieter mit Schlüssel, z. B. `cortecs/<modell>` mit ZDR; Standard: Richter
+  unter Modelle & Automatik). Den Diff sieht es nicht: Für Code
   nimmt man `command`.
 
 **Lauf:** „Starten“ führt jede Aufgabe gegen jedes Ziel aus, eine Kombination nach der
@@ -414,8 +458,9 @@ im Nutzungsjournal und nicht in Logs.
 ## Cortecs und Zero Data Retention
 
 [Cortecs](https://cortecs.ai) ist ein europäischer LLM-Router. Mit einem
-Cortecs-Key (Einstellungen → Cortecs & Datenschutz, gespeichert im Schlüsselbund
-unter Dienst `dev.brise.cortecs`, Konto `CORTECS_API_KEY`) bekommt Brise:
+Cortecs-Key (Einstellungen → Anbieter & Schlüssel, gespeichert im Schlüsselbund
+unter Dienst `dev.brise.cortecs`, Konto `CORTECS_API_KEY`; ZDR-Optionen unter
+Datenschutz & Sicherheit) bekommt Brise:
 
 - **Modelle ohne Datenspeicherung für Vibe:** Anbieter `cortecs` in Vibes
   `config.toml` mit GLM-5.3, Kimi K2.7 Code, Qwen 3.8 27B und Mistral Medium 3.5
@@ -425,11 +470,12 @@ unter Dienst `dev.brise.cortecs`, Konto `CORTECS_API_KEY`) bekommt Brise:
   scheitern diese Modelle, statt ohne ZDR zu senden.
 - **„Achtung, sensible Daten“:** Vor dem Senden prüft Brise Prompt und
   angehängte Textdateien lokal (IBAN, Steuer-ID, Schlüssel, Gesundheitsdaten,
-  Berufsgeheimnis, EU AI Act …) und bei Treffern mit einem Cortecs-Decision-Modell
-  (ebenfalls ohne Datenspeicherung). Der Hinweis bietet den Wechsel auf ein
+  Berufsgeheimnis, EU AI Act …) und bei Treffern mit einem Modell – standardmäßig
+  einem Cortecs-Decision-Modell ohne Datenspeicherung, wählbar unter Datenschutz &
+  Sicherheit. Der Hinweis bietet den Wechsel auf ein
   ZDR-Modell, „Trotzdem senden“ oder „Immer für dieses Projekt ZDR“.
-- **Entscheidungen über Cortecs:** Einstufung und Denkstufe über die
-  Decisions-API mit Wahrscheinlichkeiten (Standard `clef-flash`: 20/20 richtig,
+- **Cortecs-Decision-Modelle für Entscheidungen** (wählbar unter Modelle &
+  Automatik): Einstufung und Denkstufe über die Decisions-API mit Wahrscheinlichkeiten (Standard `clef-flash`: 20/20 richtig,
   ~250 ms, ~1 Cent je 1000 Entscheidungen).
 - **Kosten in EUR** im Nutzungsjournal, so wie Cortecs sie meldet.
 
@@ -441,10 +487,10 @@ Live-Tests mit Schlüssel: `cargo test --lib cortecs::tests -- --ignored --test-
 - **Modelle:** Vibe selbst bietet nur Mistral Medium 3.5 an. Bei jedem Start trägt Brise
   Mistral Large 4 und GLM-5.3 in Vibes `config.toml` ein (`[[models]]`), falls sie fehlen.
   Außerdem gleicht Brise mit Mistrals Modellkatalog ab und meldet neue Modelle per Banner.
-  Unter Einstellungen → Modelle lassen sich Katalogmodelle und eigene Modell-IDs hinzufügen
-  oder entfernen.
-- **Auto-Modellwahl:** „Auto“ in der Modellwahl. Mistral Small stuft jede Aufgabe als
-  einfach, normal oder komplex ein. Ohne Netz greift eine Heuristik. Brise setzt dann das
+  Unter Einstellungen → Agenten → Vibe lassen sich Katalogmodelle und eigene Modell-IDs
+  hinzufügen oder entfernen; Modelle anderer Anbieter kommen über „In Vibe nutzen“ dazu.
+- **Auto-Modellwahl:** „Auto“ in der Modellwahl. Das Modell für Einstufung (Modelle &
+  Automatik, bei jedem Anbieter) stuft jede Aufgabe als einfach, normal oder komplex ein. Ohne Netz greift eine Heuristik. Brise setzt dann das
   zugeordnete Modell (Standard: GLM-5.3 Flash, Medium 3.5, Large 4). Bei Bildern nimmt
   Brise ein Modell, das Bilder versteht. Unter jeder Nachricht steht die Wahl.
 - **Skills:** Brise liefert reverse-engineer-anything (rea), sechs ponytail-Skills,
@@ -463,12 +509,19 @@ Live-Tests mit Schlüssel: `cargo test --lib cortecs::tests -- --ignored --test-
 - **Editor:** Monaco (der Editor von VS Code) mit Datei-Explorer, Tabs, Strg+S und
   Vergleich mit dem letzten Commit. „Öffnen in“ für VS Code, VSCodium, Cursor, Zed
   oder IntelliJ, falls installiert.
-- **Personalisierte Vorschläge:** Auf der Startseite eines Projekts formuliert Mistral
-  Small vier Aufgaben aus Manifest, README, Git-Status, Commits, TODOs und den letzten
+- **Personalisierte Vorschläge:** Auf der Startseite eines Projekts formuliert das
+  Helfer-Modell (Modelle & Automatik) vier Aufgaben aus Manifest, README, Git-Status, Commits, TODOs und den letzten
   Sessions. Zwischengespeichert, bis sich der Git-Stand ändert oder 12 Stunden um sind.
 
 ## Oberfläche
 
+- **Einstellungen** (Strg+,): neun Bereiche mit Suchfeld oben – Allgemein, Anbieter &
+  Schlüssel, Agenten (Übersicht | Vibe), Modelle & Automatik, Datenschutz & Sicherheit,
+  Nutzung & Budget (Nutzung | Seit Beginn | Benchmarks), Werkzeuge, Zusammenarbeit &
+  Team, Erweitert. Die Suche springt direkt zur passenden Karte. Vibe-Spezifisches
+  (Konto, mehrere Accounts, Modelle, Subagents, alle config.toml-Optionen) steht nur unter
+  Agenten → Vibe. Team-Richtlinien sperren diese Bereiche; ältere Richtlinien mit den
+  früheren Bereichen gelten weiter.
 - **Projekte und Sessions:** In der Sidebar stehen die Sessions aller Projekte, die
   die verbundenen Agenten kennen (`session/list` ohne Ordner), gruppiert und filterbar. Neue Session pro
   Projekt, laufende Sessions mit Spinner, wartende mit gelbem Punkt. Löschen über
@@ -511,17 +564,31 @@ Live-Tests mit Schlüssel: `cargo test --lib cortecs::tests -- --ignored --test-
   - Für indexierte Projekte startet Brise sich selbst als MCP-Server
     (`brise --mcp-search <ordner>`) und gibt ihn neuen Sessions mit. Vibe kann dann
     `semantic_code_search` als Werkzeug nutzen.
-- **Nutzung (Einstellungen → Nutzung, Balken in der Kopfzeile):** Mistral liefert weder
-  über Vibe (`/whoami` kennt nur den Plan) noch über die API Verbrauch oder Limit. Brise
-  schreibt deshalb jeden Vorgang mit Modell, Tokens (Eingabe/Cache/Ausgabe), Projekt,
-  Session, Funktion, Zugang (Fingerabdruck des Schlüssels) und Backend nach
+- **Nutzung (Einstellungen → Nutzung & Budget, Balken in der Kopfzeile):** Kein Anbieter
+  liefert Brise verlässlich Verbrauch und Limit (Mistral weder über Vibe noch über die
+  API). Brise schreibt deshalb jeden Vorgang – Turns aller Agenten, eigene Aufrufe,
+  Modelle weiterer Anbieter in Vibe über den Proxy – mit Anbieter, Agent, Modell, Tokens
+  (Eingabe/Cache/Ausgabe), Projekt, Session, Funktion und Zugang (Fingerabdruck des
+  Schlüssels) nach
   `<Datenordner>/usage/YYYY-MM.jsonl` und rechnet mit `resources/prices.json` (änderbar).
-  Monatsbudget (Standard 255 €) mit Prognose, Warnungen bei 50/80/95 %, optional weicht
+  „Anbieter und Agenten“ zeigt Kosten, Tokens und Aufrufe je Anbieter und je Agent.
+  Abos (Claude Max/Pro, ChatGPT, Google-Konto) sind als „Abo · Kosten unbekannt“
+  gekennzeichnet, zählen mit 0 € und nicht ins Budget; der Listenpreis steht nur zum
+  Vergleich da. Monatsbudget über alle Anbieter (Standard 255 €) mit Prognose, Warnungen bei 50/80/95 %, optional weicht
   Auto ab 95 % auf günstigere Modelle aus. Statistik für heute, 7 Tage, Monat, Jahr und
-  gesamt: Verlauf nach Modell, Verteilung, Aufschlüsselung, Top-Sessions und -Projekte,
-  Cache-Trefferquote, Aktivitäts-Heatmap. Der Verlauf vor Brise (und Nutzung über die
+  gesamt: Verlauf nach Modell, Verteilung, Aufschlüsselung (Anbieter, Agent, Modell,
+  Projekt, Session, Funktion, Zugang), Top-Sessions und -Projekte, Cache-Trefferquote,
+  Aktivitäts-Heatmap. Der Verlauf vor Brise (und Nutzung über die
   Vibe-CLI) kommt aus Vibes Session-Logs (`$VIBE_HOME/logs/session`), dort nur als Summe
-  je Session. Abgleich über „Stand laut Console eintragen“.
+  je Session. Abgleich über „Stand laut Console eintragen“ (Mistral).
+- **Seit Beginn (Nutzung & Budget → Seit Beginn):** Gesamtübersicht seit dem ersten
+  Journal-Eintrag (Tokens, Kosten, Prompts, Sessions, aktive Tage), Aktivitätskalender
+  der letzten 53 Wochen mit aktueller und längster Serie, Lieblingsmodelle und
+  -agenten, Anteil je Anbieter, Verlauf je Monat, schnellste und langsamste Modelle
+  (t/s, Zeit bis zum ersten Token), teuerste Sessions und Projekte, Ersparnis durch
+  Prompt-Cache und Arbeiter-Modelle der Master-Session, Meilensteine. Vibes
+  Session-Logs werden beim Öffnen übernommen, damit die Zahlen sofort gefüllt sind;
+  geschätzte Werte sind gekennzeichnet.
 - **Leistung (Nutzung → Statistik):** Jeder Turn und jeder Hilfsaufruf (Einstufung,
   Council, Codestral, OCR, Cortecs) bekommt Dauer, Zeit bis zum ersten Token und t/s.
   Die Statistik zeigt Median und p90 je Modell und Verlauf für den gewählten Zeitraum;
