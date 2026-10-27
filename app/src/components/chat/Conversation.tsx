@@ -88,7 +88,7 @@ function TurnFooter({ item }: { item: Extract<Item, { type: "turn" }> }) {
             ? "Abgelehnt"
             : "Fertig";
   return (
-    <div className="flex items-center gap-2 pt-1 text-[0.8em] text-muted">
+    <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 pt-1 text-[0.8em] text-muted [&>span]:whitespace-nowrap">
       {ok ? <CheckCircle2 className="h-3.5 w-3.5 text-ok" /> : <CircleSlash className="h-3.5 w-3.5 text-warn" />}
       <span>{label}</span>
       <span>·</span>
