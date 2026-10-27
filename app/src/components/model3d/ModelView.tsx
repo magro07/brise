@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import {
-  ArrowUp,
   Axis3d,
   Box,
   Boxes,
@@ -12,7 +11,6 @@ import {
   FileCode2,
   Grid3x3,
   History,
-  ImagePlus,
   MousePointerClick,
   Pencil,
   Printer,
@@ -24,15 +22,18 @@ import {
   Square,
   X,
 } from "lucide-react";
-import { api } from "../../lib/acp";
-import { basename, useStore, type Attachment } from "../../lib/store";
+import { basename, useStore } from "../../lib/store";
 import { relativeTime } from "../../lib/format";
 import { askText } from "../../lib/dialogs";
 import { fileSlug } from "../../lib/handoff";
-import { modelApi, modelEntries, outputOf } from "../../lib/model3d";
+import { modelAbs, modelApi, modelEntries, outputOf } from "../../lib/model3d";
 import { criteriaFromNotes } from "../design/designStore";
 import { Conversation } from "../chat/Conversation";
 import { PermissionPrompt } from "../composer/Pinned";
+import { Composer } from "../composer/Composer";
+import { SidePanel } from "../panels/SidePanel";
+import { TerminalPanel } from "../tools/Terminal";
+import { ProjectMenu, SplitMenu, SplitSession, WorkTabs, useSplitFocus } from "../workbench/parts";
 import { Button, IconButton, Logo, Menu, MenuContent, MenuItem, MenuLabel, MenuSeparator, MenuTrigger, Spinner, clsx } from "../ui";
 import { DEFAULT_CRITERIA_3D, ext, useModel } from "./modelStore";
 import { Viewport, type ViewportHandle } from "./Viewport";
@@ -59,13 +60,37 @@ export function ModelView() {
     if (phase === "ready" && id && ready) useModel.getState().open(id);
   }, [phase === "ready", ready]);
 
+  const activeSession = useActiveModelSession();
   if (!ready) return <div className="flex flex-1 items-center justify-center text-muted">Lade Modelle …</div>;
   return (
-    <div data-brise="model3d" className="flex min-h-0 min-w-0 flex-1">
-      {activeId ? <Workbench key={activeId} /> : <ModelHome />}
+    <div data-brise="model3d" className="flex min-h-0 min-w-0 flex-1 flex-col">
+      <ModelTabs />
+      <div className="flex min-h-0 min-w-0 flex-1">
+        {activeId ? <Workbench key={activeId} /> : <ModelHome />}
+        <SidePanel session={activeSession} />
+      </div>
+      <WorkTerminal />
       <HandoffDialog3D />
     </div>
   );
+}
+
+function useActiveModelSession() {
+  const sid = useModel((s) => s.models.find((m) => m.id === s.activeId)?.sessionId);
+  return useStore((s) => (sid ? s.sessions[sid] : undefined));
+}
+
+function ModelTabs() {
+  const tabs = useModel((s) => s.tabs);
+  const models = useModel((s) => s.models);
+  const activeId = useModel((s) => s.activeId);
+  const sessions = useStore((s) => s.sessions);
+  const list = tabs.flatMap((id) => {
+    const m = models.find((x) => x.id === id);
+    return m ? [{ id, name: m.name, session: m.sessionId ? sessions[m.sessionId] : undefined }] : [];
+  });
+  const { open, closeTab } = useModel.getState();
+  return <WorkTabs tabs={list} active={activeId} icon={<Box />} onOpen={open} onClose={closeTab} onNew={() => newModel()} newLabel="Neues Modell" />;
 }
 
 function ModelHome() {
@@ -137,6 +162,7 @@ function Workbench() {
   const session = useStore((s) => (meta.sessionId ? s.sessions[meta.sessionId] : undefined));
   const [width, setWidth] = useState(() => Number(localStorage.getItem("brise.model.chatWidth")) || 360);
   const pending = session?.pending[0];
+  const split = useModel((s) => s.splitSession);
 
   const drag = (e: React.MouseEvent) => {
     const start = e.clientX;
@@ -153,10 +179,11 @@ function Workbench() {
 
   return (
     <>
-      <div className="flex min-h-0 shrink-0 flex-col border-r border-line" style={{ width }}>
-        <div className="flex h-12 shrink-0 items-center gap-2 border-b border-line px-3" data-tauri-drag-region>
-          <Box className="h-4 w-4 text-accent" />
+      <div className="flex min-h-0 shrink-0 flex-col border-r border-line" style={{ width }} onMouseDownCapture={() => useSplitFocus.setState({ on: false })}>
+        <div className="flex h-12 shrink-0 items-center gap-1.5 border-b border-line px-3" data-tauri-drag-region>
+          <Box className="h-4 w-4 shrink-0 text-accent" />
           <span className="min-w-0 flex-1 truncate font-medium">{meta.name}</span>
+          <ProjectMenu value={meta.project} onChange={(p) => useModel.getState().setProject(meta.id, p)} />
           <IconButton
             label="Umbenennen"
             size="sm"
@@ -189,11 +216,12 @@ function Workbench() {
           </div>
         )}
         <div className="shrink-0 px-3 pb-3">
-          {session && pending ? <PermissionPrompt session={session} pending={pending} /> : <ModelComposer running={!!session?.running} />}
+          {session && pending ? <PermissionPrompt session={session} pending={pending} /> : <ModelComposer />}
         </div>
       </div>
       <div className="w-1 shrink-0 cursor-col-resize hover:bg-accent/40" onMouseDown={drag} role="separator" aria-label="Breite des Chats ändern" />
       <Stage />
+      {split && <SplitSession id={split} onClose={() => useModel.setState({ splitSession: null })} />}
     </>
   );
 }
@@ -246,6 +274,12 @@ function Stage() {
           </span>
         )}
         <div className="flex-1" />
+        <SplitMenu
+          project={meta.project}
+          current={useModel((s) => s.splitSession)}
+          lastHandoff={meta.handoffs[meta.handoffs.length - 1]?.sessionId}
+          onPick={(id) => set({ splitSession: id })}
+        />
         <Button variant="primary" size="sm" disabled={!list.length} onClick={() => set({ handoffOpen: true })} title="Modell ins Projekt kopieren und eine Coding-Session mit Einbindungsauftrag starten">
           <Send className="h-3.5 w-3.5" /> <span className="hidden @[560px]:inline">An Session übergeben</span>
           <span className="@[560px]:hidden">Übergeben</span>
@@ -598,130 +632,70 @@ function FilesView() {
   );
 }
 
-const IMAGE_EXT = /\.(png|jpe?g|gif|webp)$/i;
-
-/** Eingabe im 3D-Modus: Text, Vorlagen-Bilder, ausgewähltes Teil, Anzahl Varianten. */
-function ModelComposer({ running }: { running: boolean }) {
-  const id = useModel((s) => s.activeId)!;
+/** Eingabe im 3D-Modus: der Code-Composer mit ausgewähltem Teil und Anzahl Varianten. */
+function ModelComposer() {
+  const meta = useModel((s) => s.models.find((m) => m.id === s.activeId))!;
+  const session = useStore((s) => (meta.sessionId ? s.sessions[meta.sessionId] : undefined));
   const picked = useModel((s) => s.picked);
   const picking = useModel((s) => s.picking);
-  const [text, setText] = useState("");
-  const [images, setImages] = useState<Attachment[]>([]);
+  const splitFocus = useSplitFocus((s) => s.on);
   const [variants, setVariants] = useState(1);
-  const ref = useRef<HTMLTextAreaElement>(null);
-
-  useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    el.style.height = "auto";
-    el.style.height = `${Math.min(el.scrollHeight, 220)}px`;
-  }, [text]);
-  useEffect(() => {
-    if (picked) ref.current?.focus();
-  }, [picked]);
-
-  const addImage = async (name: string, data: string) => {
-    const safe = name.replace(/[^\w.-]+/g, "_");
-    const abs = await modelApi.writeBase64(`${id}/refs/${Date.now().toString(36)}-${safe}`, data);
-    setImages((l) => [...l, { kind: "image", path: abs, name }]);
-  };
-  const pick = async () => {
-    const chosen = await openDialog({ multiple: true, title: "Vorlage, Skizze oder Foto anhängen", filters: [{ name: "Bilder", extensions: ["png", "jpg", "jpeg", "webp", "gif"] }] });
-    for (const p of Array.isArray(chosen) ? chosen : chosen ? [chosen] : []) {
-      if (!IMAGE_EXT.test(p)) continue;
-      const [, data] = await api.readImage(p);
-      await addImage(p.split(/[\\/]/).pop()!, data);
-    }
-  };
-  const onPaste = (e: React.ClipboardEvent) => {
-    const file = [...e.clipboardData.files].find((f) => f.type.startsWith("image/"));
-    if (!file) return;
-    e.preventDefault();
-    const reader = new FileReader();
-    reader.onload = () => addImage(file.name && file.name !== "image.png" ? file.name : `eingefuegt.${file.type.split("/")[1] || "png"}`, String(reader.result).split(",")[1]);
-    reader.readAsDataURL(file);
-  };
-  const submit = () => {
-    const t = text.trim();
-    if (!t || running) return;
-    useModel.getState().send(t, images, variants);
-    setText("");
-    setImages([]);
-    setVariants(1);
-  };
-
   return (
-    <div className="rounded-2xl border border-line bg-elev shadow-soft focus-within:border-line-strong">
-      {(picked || images.length > 0) && (
-        <div className="flex flex-wrap gap-1.5 px-3 pt-2.5">
-          {picked && (
-            <span className="inline-flex max-w-full items-center gap-1 rounded-md border border-accent/50 bg-accent-soft px-2 py-0.5 text-[0.8em]" title={`${picked.size.join(" × ")} mm`}>
-              <MousePointerClick className="h-3 w-3 shrink-0 text-accent" />
-              <span className="truncate">{picked.path}</span>
-              <button onClick={() => useModel.setState({ picked: null })} aria-label="Auswahl entfernen">
-                <X className="h-3 w-3" />
-              </button>
-            </span>
-          )}
-          {images.map((a) => (
-            <span key={a.path} className="inline-flex items-center gap-1 rounded-md border border-line bg-panel px-2 py-0.5 text-[0.8em]">
-              <ImagePlus className="h-3 w-3" /> {a.name}
-              <button onClick={() => setImages((l) => l.filter((x) => x !== a))} aria-label="Entfernen">
-                <X className="h-3 w-3" />
-              </button>
-            </span>
-          ))}
-        </div>
-      )}
-      <textarea
-        ref={ref}
-        value={text}
-        onChange={(e) => setText(e.target.value)}
-        onPaste={onPaste}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
-            e.preventDefault();
-            submit();
-          }
-        }}
-        rows={2}
-        placeholder={picked ? "Was soll sich an diesem Teil ändern? (z. B. „Bohrung auf 5 mm“)" : "Beschreibe das Modell oder eine Änderung …"}
-        className="block max-h-[220px] w-full resize-none bg-transparent px-3.5 pt-3 outline-none placeholder:text-muted"
-      />
-      <div className="flex items-center gap-1 px-2 pb-2">
-        <IconButton label="Vorlage, Skizze oder Foto anhängen (auch per Einfügen)" onClick={pick}>
-          <ImagePlus className="h-4 w-4" />
-        </IconButton>
-        <IconButton label="Teil im Viewer auswählen" active={picking} onClick={() => useModel.setState((s) => ({ picking: !s.picking, tab: "view" }))}>
-          <MousePointerClick className="h-4 w-4" />
-        </IconButton>
-        <Menu>
-          <MenuTrigger asChild>
-            <button className={clsx("flex h-8 items-center gap-1 rounded-md px-2 text-[0.86em] hover:bg-hover", variants > 1 ? "text-accent" : "text-muted")}>
-              <Columns3 className="h-3.5 w-3.5" /> {variants > 1 ? `${variants} Varianten` : "1 Entwurf"}
+    <Composer
+      session={session}
+      project={meta.project ?? modelAbs(meta.id)}
+      focused={!splitFocus}
+      exclude={meta.id}
+      disabled={!session}
+      focusKey={picked}
+      placeholder={
+        !session
+          ? "Verbinde mit dem Agenten …"
+          : picked
+            ? "Was soll sich an diesem Teil ändern? (z. B. „Bohrung auf 5 mm“)"
+            : "Beschreibe das Modell oder eine Änderung …  @ für Dateien, Projekte, Modelle, / für Befehle"
+      }
+      onSend={(text, attachments, opts) => {
+        useModel.getState().send(text, attachments, variants, opts);
+        setVariants(1);
+      }}
+      onCancel={() => useModel.getState().cancel()}
+      onPasteImage={(name, data) => modelApi.writeBase64(`${meta.id}/refs/${Date.now().toString(36)}-${name.replace(/[^\w.-]+/g, "_")}`, data)}
+      chips={
+        picked && (
+          <span className="inline-flex h-7 max-w-full items-center gap-1 rounded-lg border border-accent/50 bg-accent-soft px-2 text-[0.84em]" title={`${picked.size.join(" × ")} mm`}>
+            <MousePointerClick className="h-3 w-3 shrink-0 text-accent" />
+            <span className="truncate">{picked.path}</span>
+            <button onClick={() => useModel.setState({ picked: null })} aria-label="Auswahl entfernen">
+              <X className="h-3 w-3" />
             </button>
-          </MenuTrigger>
-          <MenuContent side="top">
-            <MenuLabel>Wie viele Varianten?</MenuLabel>
-            {[1, 2, 3, 4].map((n) => (
-              <MenuItem key={n} onSelect={() => setVariants(n)} checked={variants === n}>
-                {n === 1 ? "Ein Entwurf" : `${n} Varianten zum Vergleichen`}
-              </MenuItem>
-            ))}
-          </MenuContent>
-        </Menu>
-        <div className="flex-1" />
-        {running ? (
-          <Button size="sm" variant="secondary" onClick={() => useModel.getState().cancel()}>
-            <Square className="h-3 w-3" /> Stopp
-          </Button>
-        ) : (
-          <button onClick={submit} disabled={!text.trim()} className="flex h-8 w-8 items-center justify-center rounded-full bg-accent text-accent-fg disabled:opacity-30" aria-label="Senden">
-            <ArrowUp className="h-4 w-4" />
-          </button>
-        )}
-      </div>
-    </div>
+          </span>
+        )
+      }
+      tools={
+        <>
+          <IconButton label="Teil im Viewer auswählen" active={picking} onClick={() => useModel.setState((s) => ({ picking: !s.picking, tab: "view" }))}>
+            <MousePointerClick className="h-4 w-4" />
+          </IconButton>
+          <Menu>
+            <MenuTrigger asChild>
+              <button className={clsx("inline-flex h-7 items-center gap-1 rounded-lg px-2 text-[0.86em] hover:bg-hover", variants > 1 ? "text-accent" : "text-fg-2")} aria-label="Varianten">
+                <Columns3 className="h-3.5 w-3.5" /> <span className="hidden @[620px]:inline">{variants > 1 ? `${variants} Varianten` : "1 Entwurf"}</span>
+                {variants > 1 && <span className="@[620px]:hidden">{variants}</span>}
+              </button>
+            </MenuTrigger>
+            <MenuContent side="top">
+              <MenuLabel>Wie viele Varianten?</MenuLabel>
+              {[1, 2, 3, 4].map((n) => (
+                <MenuItem key={n} onSelect={() => setVariants(n)} checked={variants === n}>
+                  {n === 1 ? "Ein Entwurf" : `${n} Varianten zum Vergleichen`}
+                </MenuItem>
+              ))}
+            </MenuContent>
+          </Menu>
+        </>
+      }
+    />
   );
 }
 
@@ -743,7 +717,8 @@ function HandoffDialog3D() {
     setError(null);
     setBusy(false);
     const last = meta.handoffs[meta.handoffs.length - 1]?.project;
-    setProject((p) => p || last || useStore.getState().activeProject || projects[0] || "");
+    // Standard: das zugeordnete Projekt.
+    setProject(meta.project || last || useStore.getState().activeProject || projects[0] || "");
     modelApi
       .read(`${meta.id}/notes.md`)
       .catch(() => "")
@@ -856,4 +831,11 @@ function HandoffDialog3D() {
       </Dialog.Portal>
     </Dialog.Root>
   );
+}
+
+/** Terminal (Strg+`) wie im Code-Modus: im zugeordneten Projekt, sonst im Arbeitsordner. */
+function WorkTerminal() {
+  const meta = useModel((s) => s.models.find((x) => x.id === s.activeId));
+  const cwd = meta ? (meta.project ?? modelAbs(meta.id)) : null;
+  return cwd ? <TerminalPanel cwd={cwd} /> : null;
 }

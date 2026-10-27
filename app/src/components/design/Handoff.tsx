@@ -26,7 +26,8 @@ export function HandoffDialog() {
     setError(null);
     setBusy(false);
     const last = meta.handoffs[meta.handoffs.length - 1]?.project;
-    setProject((p) => p || last || useStore.getState().activeProject || projects[0] || "");
+    // Standard: das zugeordnete Projekt.
+    setProject(meta.project || last || useStore.getState().activeProject || projects[0] || "");
     designApi
       .read(`${meta.id}/notes.md`)
       .catch(() => "")

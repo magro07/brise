@@ -18,6 +18,10 @@ export interface ModelMeta {
   updated: number;
   sessionId?: string;
   versions: ModelVersion[];
+  /** Zugeordnetes Projekt (Ordner aus dem Code-Modus, auch aus einem Team-Workspace). */
+  project?: string;
+  /** Agent der Session; ohne Angabe Vibe. */
+  backend?: string;
   handoffs: HandoffRecord[];
   /** Vom Nutzer eingestellte Reglerwerte (je Einstiegsdatei). */
   params?: Record<string, Record<string, number | boolean | string>>;

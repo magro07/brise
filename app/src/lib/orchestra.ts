@@ -293,11 +293,11 @@ async function handleCall(kind: string, p: any): Promise<unknown> {
         };
         if (p.mode === "3d") {
           const { useModel } = await import("../components/model3d/modelStore");
-          const r = await useModel.getState().delegate(p.title, p.prompt, { author: "Master-Session", onSession: register });
+          const r = await useModel.getState().delegate(p.title, p.prompt, { author: "Master-Session", onSession: register, project: p.cwd || undefined });
           return { sessionId: r.sessionId, item: r.modelId };
         }
         const { useDesign } = await import("../components/design/designStore");
-        const r = await useDesign.getState().delegate(p.title, p.prompt, { author: "Master-Session", onSession: register });
+        const r = await useDesign.getState().delegate(p.title, p.prompt, { author: "Master-Session", onSession: register, project: p.cwd || undefined });
         return { sessionId: r.sessionId, item: r.designId };
       }
       const sid = await st.createSession(p.cwd, p.backend, { parent: p.master, model: p.model ?? undefined, title: p.title, thinking: p.thinking ?? undefined });

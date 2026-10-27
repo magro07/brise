@@ -55,6 +55,10 @@ export interface DesignMeta {
   systemId: string;
   sessionId?: string;
   versions: DesignVersion[];
+  /** Zugeordnetes Projekt (Ordner aus dem Code-Modus, auch aus einem Team-Workspace). */
+  project?: string;
+  /** Agent der Session; ohne Angabe Vibe. */
+  backend?: string;
   handoffs: HandoffRecord[];
 }
 

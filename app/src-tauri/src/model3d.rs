@@ -241,11 +241,12 @@ pub const MCP_INSTRUCTIONS: &str = "Design und 3D: Mit list_designs/read_design 
 
 pub fn tools() -> Vec<Value> {
     let id = json!({ "type": "string", "description": "ID (d-… bzw. m-…) oder Name" });
+    let only = json!({ "type": "string", "description": "Nur Einträge, die diesem Projekt zugeordnet sind: Projektpfad oder \"aktuell\" für das Projekt dieser Session" });
     vec![
         json!({
             "name": "list_designs",
-            "description": "Listet die Designs aus dem Design-Modus von Brise (HTML-Entwürfe mit Live-Vorschau): ID, Name, Stand, Versionen.",
-            "inputSchema": { "type": "object", "properties": {} },
+            "description": "Listet die Designs aus dem Design-Modus von Brise (HTML-Entwürfe mit Live-Vorschau): ID, Name, Stand, Versionen, zugeordnetes Projekt.",
+            "inputSchema": { "type": "object", "properties": { "project": only.clone() } },
             "annotations": { "readOnlyHint": true }
         }),
         json!({
@@ -261,8 +262,8 @@ pub fn tools() -> Vec<Value> {
         }),
         json!({
             "name": "list_models",
-            "description": "Listet die 3D-Modelle aus dem 3D-Modus von Brise: ID, Name, Stand, Versionen, erzeugte Dateien (GLB, STL …).",
-            "inputSchema": { "type": "object", "properties": {} },
+            "description": "Listet die 3D-Modelle aus dem 3D-Modus von Brise: ID, Name, Stand, Versionen, erzeugte Dateien (GLB, STL …), zugeordnetes Projekt.",
+            "inputSchema": { "type": "object", "properties": { "project": only.clone() } },
             "annotations": { "readOnlyHint": true }
         }),
         json!({
@@ -296,9 +297,11 @@ pub fn call_tool(name: &str, args: &Value) -> Option<CmdResult<Vec<Value>>> {
         return None;
     }
     let project = std::env::var("BRISE_CWD").ok().filter(|s| !s.is_empty());
+    // „aktuell“ steht für das Projekt der aufrufenden Session.
+    let only = args["project"].as_str().map(str::trim).filter(|p| !p.is_empty()).map(|p| if p == "aktuell" { project.clone().unwrap_or_default() } else { p.to_string() });
     Some(match name {
-        "list_designs" => Ok(vec![text(list_text(&design_dir(), "d-", "design.json", "Designs"))]),
-        "list_models" => Ok(vec![text(list_text(&model_dir(), "m-", "model.json", "3D-Modelle"))]),
+        "list_designs" => Ok(vec![text(list_text(&design_dir(), "d-", "design.json", "Designs", only.as_deref()))]),
+        "list_models" => Ok(vec![text(list_text(&model_dir(), "m-", "model.json", "3D-Modelle", only.as_deref()))]),
         "read_design" => find(&design_dir(), "d-", "design.json", &args["design"]).map(|e| read_design(&e)),
         "read_model" => find(&model_dir(), "m-", "model.json", &args["model"]).map(|e| read_model(&e)),
         "export_design" => (|| {
@@ -397,10 +400,22 @@ fn outputs(dir: &Path) -> Vec<String> {
     out
 }
 
-fn list_text(root: &Path, prefix: &str, meta_file: &str, what: &str) -> String {
-    let all = entries(root, prefix, meta_file);
+/// Gleicher Projektpfad, unabhängig von abschließendem Trenner und Schreibweise unter Windows.
+fn same_project(a: &str, b: &str) -> bool {
+    let norm = |p: &str| p.trim_end_matches(['/', '\\']).replace('\\', "/");
+    if cfg!(windows) { norm(a).eq_ignore_ascii_case(&norm(b)) } else { norm(a) == norm(b) }
+}
+
+fn list_text(root: &Path, prefix: &str, meta_file: &str, what: &str, only: Option<&str>) -> String {
+    let all: Vec<Entry> = entries(root, prefix, meta_file)
+        .into_iter()
+        .filter(|e| only.is_none_or(|p| e.meta["project"].as_str().is_some_and(|q| same_project(p, q))))
+        .collect();
     if all.is_empty() {
-        return format!("Noch keine {what}.");
+        return match only {
+            Some(p) => format!("Keine {what} im Projekt {p}."),
+            None => format!("Noch keine {what}."),
+        };
     }
     let lines: Vec<String> = all
         .iter()
@@ -408,11 +423,12 @@ fn list_text(root: &Path, prefix: &str, meta_file: &str, what: &str) -> String {
             let versions = e.meta["versions"].as_array().map_or(0, Vec::len);
             let out = outputs(&e.dir);
             format!(
-                "- {} ({}) · Stand {} · {versions} Versionen{}",
+                "- {} ({}) · Stand {} · {versions} Versionen{}{}",
                 e.name,
                 e.id,
                 date(e.meta["updated"].as_u64().unwrap_or(0)),
-                if out.is_empty() { String::new() } else { format!(" · {}", out.join(", ")) }
+                if out.is_empty() { String::new() } else { format!(" · {}", out.join(", ")) },
+                e.meta["project"].as_str().map(|p| format!(" · Projekt {p}")).unwrap_or_default()
             )
         })
         .collect();
@@ -531,7 +547,13 @@ mod tests {
         std::fs::write(m.join("model.js"), "export default () => null").unwrap();
         assert_eq!(find(&root, "m-", "model.json", &json!("zahn")).unwrap().id, "m-abc");
         assert!(find(&root, "m-", "model.json", &json!("nix")).is_err());
-        assert!(list_text(&root, "m-", "model.json", "3D-Modelle").contains("Zahnrad (m-abc)"));
+        assert!(list_text(&root, "m-", "model.json", "3D-Modelle", None).contains("Zahnrad (m-abc)"));
+        let other = root.join("m-def");
+        std::fs::create_dir_all(&other).unwrap();
+        std::fs::write(other.join("model.json"), r#"{"name":"Halter","updated":6,"project":"/home/a/shop"}"#).unwrap();
+        let listed = list_text(&root, "m-", "model.json", "3D-Modelle", Some("/home/a/shop/"));
+        assert!(listed.contains("Halter (m-def)") && listed.contains("Projekt /home/a/shop") && !listed.contains("Zahnrad"));
+        assert!(list_text(&root, "m-", "model.json", "3D-Modelle", Some("/x")).starts_with("Keine"));
         let project = tmp.join("proj");
         std::fs::create_dir_all(project.join("public")).unwrap();
         let dst = export_into(&m.join("out/model.glb"), &project, "public/models/zahnrad.glb").unwrap();

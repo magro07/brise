@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
-import { ArrowUp, AtSign, FileText, Image, KeyRound, Mic, Paperclip, ShieldCheck, Slash, Square, X } from "lucide-react";
+import { ArrowUp, AtSign, Box, FileText, Folder, Image, KeyRound, MessageSquare, Mic, Palette, Paperclip, ShieldCheck, Slash, Square, X, type LucideIcon } from "lucide-react";
 import { basename, isZdr, useStore, type Attachment, type Session, type SlashCommand } from "../../lib/store";
 import { cortecs, type SensitiveVerdict } from "../../lib/cortecs";
 import { SensitiveNotice } from "./SensitiveNotice";
@@ -12,13 +12,55 @@ import { VoiceRecorder } from "./VoiceRecorder";
 import { ContextMeter, ModePicker, OptionPicker, ThinkingPicker } from "./Pickers";
 import { BackendPicker } from "../agents/BackendPicker";
 import { BACKEND_SHORT, useSessionBackend, useVoiceAvailable } from "../../lib/backends";
+import { REF_LABEL, resolveReferences, useReferences, type ComposerRef, type RefKind } from "./references";
 
 const IMAGE_EXT = /\.(png|jpe?g|gif|webp)$/i;
 const DOC_EXT = /\.(pdf|docx|pptx)$/i;
 
 type Suggestion =
   | { kind: "file"; value: string; label: string; detail: string }
-  | { kind: "command"; value: string; label: string; detail: string };
+  | { kind: "command"; value: string; label: string; detail: string }
+  | { kind: "ref"; value: string; label: string; detail: string; ref: ComposerRef };
+
+const REF_ICON: Record<RefKind, LucideIcon> = { project: Folder, design: Palette, model: Box, session: MessageSquare, image: Image };
+
+/** Treffer unter den Referenzen: Name, sonst Art („@design“ listet alle Designs). */
+function matchRefs(list: ComposerRef[], query: string, limit = 6): ComposerRef[] {
+  const q = query.toLowerCase();
+  if (!q) return list.slice(0, limit);
+  const score = (r: ComposerRef) => {
+    const name = r.label.toLowerCase();
+    return name.startsWith(q) ? 3 : name.includes(q) ? 2 : REF_LABEL[r.kind].toLowerCase().startsWith(q) ? 1 : 0;
+  };
+  return list
+    .map((r) => [score(r), r] as const)
+    .filter(([n]) => n > 0)
+    .sort((a, b) => b[0] - a[0])
+    .slice(0, limit)
+    .map(([, r]) => r);
+}
+
+export interface ComposerProps {
+  session?: Session;
+  /** Ordner für @Dateien, Anhänge und Prüfungen; im Design-/3D-Modus das zugeordnete Projekt. */
+  project: string;
+  focused?: boolean;
+  /** Eigenes Senden (Design, 3D); sonst `store.send` an die aktive Session. */
+  onSend?: (text: string, attachments: Attachment[], opts: { zdr?: boolean; prefix?: string }) => void;
+  onCancel?: () => void;
+  /** Eingefügte Bilder als Datei ablegen (Rückgabe: absoluter Pfad). */
+  onPasteImage?: (name: string, base64: string) => Promise<string>;
+  placeholder?: string;
+  disabled?: boolean;
+  /** Weitere Knöpfe in der Leiste (Element wählen, Varianten …). */
+  tools?: ReactNode;
+  /** Weitere Chips über dem Eingabefeld (z. B. ausgewähltes Element). */
+  chips?: ReactNode;
+  /** Ändert sich der Wert, bekommt das Eingabefeld den Fokus. */
+  focusKey?: unknown;
+  /** Dieses Design bzw. Modell nicht als Referenz anbieten. */
+  exclude?: string;
+}
 
 /** Einfache Fuzzy-Suche: Teilfolge, Treffer im Dateinamen zählen mehr. */
 function fuzzy(list: string[], query: string, limit = 8): string[] {
@@ -43,10 +85,12 @@ function fuzzy(list: string[], query: string, limit = 8): string[] {
   return scored.sort((a, b) => b[0] - a[0]).slice(0, limit).map(([, v]) => v);
 }
 
-export function Composer({ session, project, focused = true }: { session?: Session; project: string; focused?: boolean }) {
+export function Composer({ session, project, focused = true, onSend, onCancel, onPasteImage, placeholder, disabled: blocked, tools, chips, focusKey, exclude }: ComposerProps) {
   const [text, setText] = useState("");
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [files, setFiles] = useState<string[]>([]);
+  const [refs, setRefs] = useState<ComposerRef[]>([]);
+  const references = useReferences(project, files, exclude);
   const [cursor, setCursor] = useState(0);
   const [selected, setSelected] = useState(0);
   const [dragging, setDragging] = useState(false);
@@ -56,7 +100,8 @@ export function Composer({ session, project, focused = true }: { session?: Sessi
   const loadFiles = useStore((s) => s.loadFiles);
   const templateCommands = useStore((s) => s.template?.commands);
   const running = !!session?.running;
-  const disabled = !!session?.replaying || !!session?.readOnly;
+  const disabled = !!blocked || !!session?.replaying || !!session?.readOnly;
+  const stop = onCancel ?? cancel;
   const commands: SlashCommand[] = session?.commands.length ? session.commands : (templateCommands ?? []);
   const recording = useStore((s) => s.recording);
   const composerInsert = useStore((s) => s.composerInsert);
@@ -116,6 +161,26 @@ export function Composer({ session, project, focused = true }: { session?: Sessi
     if (!running) ref.current?.focus();
   }, [running, session?.id]);
 
+  useEffect(() => {
+    if (focusKey) ref.current?.focus();
+  }, [focusKey]);
+
+  // @Dateien eines anderen Ordners als dem der Session (Design/3D mit Projekt) absolut anhängen.
+  const filePath = (f: string) => (session && session.cwd !== project ? `${project.replace(/[\\/]+$/, "")}/${f}` : f);
+
+  const onPaste = (e: React.ClipboardEvent) => {
+    const file = onPasteImage && [...e.clipboardData.files].find((f) => f.type.startsWith("image/"));
+    if (!file || !onPasteImage) return;
+    e.preventDefault();
+    const reader = new FileReader();
+    reader.onload = async () => {
+      const name = file.name && file.name !== "image.png" ? file.name : `eingefuegt.${file.type.split("/")[1] || "png"}`;
+      const path = await onPasteImage(name, String(reader.result).split(",")[1]).catch((err) => (setStore({ error: String(err) }), null));
+      if (path) setAttachments((l) => [...l, { kind: "image", path, name }]);
+    };
+    reader.readAsDataURL(file);
+  };
+
   // Dateien per Drag & Drop anhängen.
   useEffect(() => {
     let unlisten: (() => void) | undefined;
@@ -150,7 +215,9 @@ export function Composer({ session, project, focused = true }: { session?: Sessi
   const slash = /^\/([\w-]*)$/.exec(before);
   const suggestions: Suggestion[] = useMemo(() => {
     if (mention) {
-      return fuzzy(files, mention[2]).map((f) => ({ kind: "file", value: f, label: basename(f), detail: f }));
+      const found: Suggestion[] = fuzzy(files, mention[2], 5).map((f) => ({ kind: "file", value: f, label: basename(f), detail: f }));
+      for (const r of matchRefs(references, mention[2])) found.push({ kind: "ref", value: `${r.kind}:${r.id}`, label: r.label, detail: r.detail, ref: r });
+      return found;
     }
     if (slash) {
       const q = slash[1].toLowerCase();
@@ -160,16 +227,29 @@ export function Composer({ session, project, focused = true }: { session?: Sessi
         .map((c) => ({ kind: "command", value: c.name, label: `/${c.name}`, detail: c.description ?? "" }));
     }
     return [];
-  }, [mention?.[2], slash?.[1], files, commands]);
+  }, [mention?.[2], slash?.[1], files, commands, references]);
 
   useEffect(() => setSelected(0), [suggestions.length, mention?.[2], slash?.[1]]);
 
   const accept = (s: Suggestion) => {
-    if (s.kind === "file" && mention) {
+    if (s.kind === "ref" && mention) {
+      const start = before.length - mention[2].length - 1;
+      const word = s.label.replace(/\s+/g, "-");
+      setText(`${text.slice(0, start)}@${word} ${text.slice(cursor)}`);
+      const r = s.ref;
+      if (r.kind === "image") setAttachments((list) => (list.some((a) => a.path === r.id) ? list : [...list, { kind: "image", path: r.id, name: r.label }]));
+      else setRefs((list) => (list.some((x) => x.kind === r.kind && x.id === r.id) ? list : [...list, r]));
+      requestAnimationFrame(() => {
+        const pos = start + word.length + 2;
+        ref.current?.setSelectionRange(pos, pos);
+        setCursor(pos);
+      });
+    } else if (s.kind === "file" && mention) {
       const start = before.length - mention[2].length - 1;
       const next = `${text.slice(0, start)}@${s.value} ${text.slice(cursor)}`;
       setText(next);
-      setAttachments((list) => (list.some((a) => a.path === s.value) ? list : [...list, { kind: "file", path: s.value, name: basename(s.value) }]));
+      const path = filePath(s.value);
+      setAttachments((list) => (list.some((a) => a.path === path) ? list : [...list, { kind: "file", path, name: basename(s.value) }]));
       requestAnimationFrame(() => {
         const pos = start + s.value.length + 2;
         ref.current?.setSelectionRange(pos, pos);
@@ -186,13 +266,20 @@ export function Composer({ session, project, focused = true }: { session?: Sessi
     }
   };
 
-  const dispatch = (t: string, list: Attachment[], opts?: { zdr?: boolean }) => {
-    send(t, list, opts);
+  const dispatch = async (t: string, list: Attachment[], opts?: { zdr?: boolean }) => {
+    const picked = refs;
     setText("");
     setAttachments([]);
+    setRefs([]);
     setCursor(0);
     setFlagged(null);
     setSecretPanel(null);
+    // Referenzen als Kontext vor die Nachricht, ihre Vorschaubilder als Anhänge.
+    const resolved = picked.length ? await resolveReferences(picked).catch(() => null) : null;
+    const all = resolved ? [...list, ...resolved.images.filter((i) => !list.some((a) => a.path === i.path))] : list;
+    const prefix = resolved?.context || undefined;
+    if (onSend) onSend(t, all, { ...opts, prefix });
+    else send(t, all, { ...opts, prefix });
   };
 
   /** Platzhalter an der Cursorposition einfügen. */
@@ -296,7 +383,7 @@ export function Composer({ session, project, focused = true }: { session?: Sessi
         <div className="absolute bottom-full left-0 right-0 mb-2 overflow-hidden rounded-xl border border-line bg-elev p-1 shadow-pop fade-in">
           <div className="flex items-center gap-1.5 px-2.5 pb-1 pt-1.5 text-[0.75em] font-medium uppercase tracking-wide text-muted">
             {mention ? <AtSign className="h-3 w-3" /> : <Slash className="h-3 w-3" />}
-            {mention ? "Dateien" : "Befehle"}
+            {mention ? "Dateien und Referenzen" : "Befehle"}
           </div>
           {suggestions.map((s, n) => (
             <button
@@ -308,7 +395,16 @@ export function Composer({ session, project, focused = true }: { session?: Sessi
               onMouseEnter={() => setSelected(n)}
               className={clsx("flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left", n === selected && "bg-hover")}
             >
-              {s.kind === "file" ? <FileText className="h-3.5 w-3.5 text-muted" /> : <Slash className="h-3.5 w-3.5 text-muted" />}
+              {s.kind === "ref" ? (
+                (() => {
+                  const Icon = REF_ICON[s.ref.kind];
+                  return <Icon className="h-3.5 w-3.5 text-muted" />;
+                })()
+              ) : s.kind === "file" ? (
+                <FileText className="h-3.5 w-3.5 text-muted" />
+              ) : (
+                <Slash className="h-3.5 w-3.5 text-muted" />
+              )}
               <span className="font-medium">{s.label}</span>
               <span className="min-w-0 flex-1 truncate text-[0.86em] text-muted">{s.detail}</span>
             </button>
@@ -322,8 +418,25 @@ export function Composer({ session, project, focused = true }: { session?: Sessi
           dragging ? "border-accent bg-accent-soft" : "border-line-strong focus-within:border-accent/60",
         )}
       >
-        {attachments.length > 0 && (
+        {(attachments.length > 0 || refs.length > 0 || chips) && (
           <div className="flex flex-wrap gap-1.5 px-3 pt-3">
+            {chips}
+            {refs.map((r) => {
+              const Icon = REF_ICON[r.kind];
+              return (
+                <span key={`${r.kind}:${r.id}`} data-brise="ref-chip" className="inline-flex h-7 items-center gap-1.5 rounded-lg border border-accent/40 bg-accent-soft pl-2 pr-1 text-[0.84em]" title={`${REF_LABEL[r.kind]}: ${r.detail}`}>
+                  <Icon className="h-3.5 w-3.5 text-accent" />
+                  <span className="max-w-[200px] truncate">{r.label}</span>
+                  <button
+                    className="flex h-5 w-5 items-center justify-center rounded text-muted hover:bg-hover hover:text-fg"
+                    onClick={() => setRefs((l) => l.filter((x) => x !== r))}
+                    aria-label="Referenz entfernen"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </span>
+              );
+            })}
             {attachments.map((a) => (
               <span key={a.path} className="inline-flex h-7 items-center gap-1.5 rounded-lg border border-line bg-panel pl-2 pr-1 text-[0.84em]" title={a.path}>
                 {a.kind === "image" ? <Image className="h-3.5 w-3.5 text-muted" /> : <FileText className="h-3.5 w-3.5 text-muted" />}
@@ -347,12 +460,14 @@ export function Composer({ session, project, focused = true }: { session?: Sessi
           value={text}
           rows={1}
           disabled={disabled}
+          onPaste={onPaste}
           placeholder={
-            session?.readOnly
+            placeholder ??
+            (session?.readOnly
               ? "Subagenten-Verläufe sind nur lesbar"
               : session
                 ? "Antworten, nachfragen oder nächste Aufgabe …"
-                : `Was soll ${BACKEND_SHORT[backend] ?? backend} in ${basename(project)} tun?  @ für Dateien, / für Befehle`
+                : `Was soll ${BACKEND_SHORT[backend] ?? backend} in ${basename(project)} tun?  @ für Dateien, / für Befehle`)
           }
           onChange={(e) => {
             setText(e.target.value);
@@ -379,7 +494,7 @@ export function Composer({ session, project, focused = true }: { session?: Sessi
               e.preventDefault();
               submit();
             }
-            if (e.key === "Escape" && running) cancel();
+            if (e.key === "Escape" && running) stop();
             if (e.key === "Escape" && recording) cancelRecording();
           }}
           className="block max-h-[280px] w-full resize-none bg-transparent px-4 pb-2 pt-3.5 outline-none placeholder:text-muted focus-visible:outline-none"
@@ -391,6 +506,7 @@ export function Composer({ session, project, focused = true }: { session?: Sessi
           <IconButton label="Secret anlegen (Passwort, API-Key, Token) – der Agent sieht nur den Platzhalter" onClick={() => setSecretPanel(secretPanel ? null : {})} disabled={disabled}>
             <KeyRound className="h-4 w-4" />
           </IconButton>
+          {tools}
           <BackendPicker session={session} />
           <ModePicker session={session} />
           <OptionPicker session={session} id="model" />
@@ -419,7 +535,7 @@ export function Composer({ session, project, focused = true }: { session?: Sessi
           </Tip>}
           {running ? (
             <button
-              onClick={() => cancel()}
+              onClick={() => stop()}
               className="ml-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-fg text-bg hover:opacity-85"
               aria-label="Stopp (Esc)"
               title="Stopp (Esc)"

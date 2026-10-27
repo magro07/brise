@@ -23,7 +23,11 @@ import { ShareDialog } from "./components/collab/ShareDialog";
 import { JoinDialog } from "./components/collab/JoinDialog";
 import { TeamDialog } from "./components/collab/TeamDialog";
 import { GuestPane } from "./components/collab/GuestComposer";
-import { DesignView } from "./components/design/DesignView";
+import { DesignView, newDesign } from "./components/design/DesignView";
+import { NewWorkDialog } from "./components/workbench/parts";
+import { useDesign } from "./components/design/designStore";
+import { useModel } from "./components/model3d/modelStore";
+import { newModel } from "./components/model3d/Sidebar";
 const ModelView = lazy(() => import("./components/model3d/ModelView").then((m) => ({ default: m.ModelView })));
 import { SecretPrompt } from "./components/secrets/SecretPrompt";
 import { initSecrets, useSecretRequest } from "./lib/secrets";
@@ -82,6 +86,19 @@ function useShortcuts() {
       const st = useStore.getState();
       if (!mod) return;
       const key = e.key.toLowerCase();
+      // Design und 3D: Tabs sind dort geöffnete Designs bzw. Modelle.
+      const work = st.view === "design" ? useDesign : st.view === "3d" ? useModel : null;
+      if (work && (key === "n" || key === "w" || key === "tab")) {
+        const w = work.getState();
+        if (key === "n") void (st.view === "design" ? newDesign() : newModel());
+        else if (key === "w" && w.activeId) w.closeTab(w.activeId);
+        else if (key === "tab" && w.tabs.length > 1) {
+          const i = w.activeId ? w.tabs.indexOf(w.activeId) : -1;
+          void w.open(w.tabs[(i + (e.shiftKey ? -1 : 1) + w.tabs.length) % w.tabs.length]);
+        }
+        e.preventDefault();
+        return;
+      }
       if (key === "k") st.set({ paletteOpen: !st.paletteOpen });
       else if (key === "n") st.newDraft();
       else if (key === ",") st.setView(st.view === "settings" ? "chat" : "settings");
@@ -245,6 +262,7 @@ export default function App() {
       <CommandPalette />
       <NewProjectDialog />
       <TextPrompt />
+      <NewWorkDialog />
       <ShareDialog />
       <JoinDialog />
       <TeamDialog />

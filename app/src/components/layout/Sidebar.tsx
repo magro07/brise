@@ -18,6 +18,8 @@ import {
   SquarePen,
   Trash2,
   Crown,
+  Palette,
+  Box,
 } from "lucide-react";
 import { basename, useStore, type Session } from "../../lib/store";
 import { BackendBadge } from "../agents/BackendPicker";
@@ -27,7 +29,9 @@ import { confirmAction } from "../../lib/dialogs";
 import { useCollab } from "../../lib/collab";
 import { TeamPanel } from "../collab/TeamPanel";
 import { DesignList, ModeSwitch } from "../design/Sidebar";
-import { ModelList } from "../model3d/Sidebar";
+import { newDesign } from "../design/DesignView";
+import { ModelList, newModel } from "../model3d/Sidebar";
+import { ProjectWork } from "../workbench/parts";
 import { startCurator, useOrchestra } from "../../lib/orchestra";
 import { SubRows } from "../orchestra/Orchestra";
 
@@ -197,6 +201,12 @@ export function Sidebar() {
                       <MenuItem icon={<Crown />} onSelect={() => startCurator(project)}>
                         Neue Kurator-Session
                       </MenuItem>
+                      <MenuItem icon={<Palette />} onSelect={() => newDesign(undefined, project)}>
+                        Neues Design im Projekt
+                      </MenuItem>
+                      <MenuItem icon={<Box />} onSelect={() => newModel(undefined, project)}>
+                        Neues 3D-Modell im Projekt
+                      </MenuItem>
                       <MenuSeparator />
                       <MenuItem icon={<EyeOff />} onSelect={() => removeProject(project)}>
                         Aus der Liste entfernen
@@ -235,6 +245,7 @@ export function Sidebar() {
                     </button>
                   )}
                   {list.length === 0 && !q && <div className="px-2 py-1 text-[0.84em] text-muted">Noch keine Sessions</div>}
+                  {!q && <ProjectWork project={project} />}
                 </div>
               )}
             </div>

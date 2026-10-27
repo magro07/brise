@@ -405,7 +405,8 @@ interface Actions {
   /** `zdr`: diese Session ab jetzt nur mit Modellen ohne Datenspeicherung.
    *  `sessionId`/`author`: Prompt in einer bestimmten Session (Gast, Master-Session).
    *  `keepModel`: fest gewähltes Modell behalten (keine Auto-Modellwahl). */
-  send(text: string, attachments: Attachment[], opts?: { zdr?: boolean; sessionId?: string; author?: string; keepModel?: boolean }): Promise<void>;
+  /** `prefix`: Kontext nur für den Agenten (Referenzen, Design-/3D-Hinweise), erscheint nicht im Verlauf. */
+  send(text: string, attachments: Attachment[], opts?: { zdr?: boolean; sessionId?: string; author?: string; keepModel?: boolean; prefix?: string }): Promise<void>;
   refreshCortecs(): Promise<void>;
   cancel(): Promise<void>;
   answerPermission(key: string, optionId: string | null): Promise<void>;
@@ -1312,7 +1313,7 @@ export const useStore = create<State & Actions>((set, get) => {
           await get().setOption("model", safe, sid);
         }
       }
-      const blocks: ContentBlock[] = [{ type: "text", text }];
+      const blocks: ContentBlock[] = [{ type: "text", text: opts?.prefix ? `${opts.prefix}\n\n${text}` : text }];
       for (const a of attachments) {
         if (a.kind === "document" && zdr) {
           // Mistral OCR speichert nicht garantiert nichts – Vibe liest die Datei selbst.
