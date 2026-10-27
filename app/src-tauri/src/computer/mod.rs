@@ -40,8 +40,12 @@ const MAX_W: u32 = 1280;
 const MAX_H: u32 = 800;
 /// Vorschau in der Oberfläche (Freigabekarte, Werkzeugaufruf).
 const THUMB_W: u32 = 560;
-/// So lange wartet eine Freigabekarte auf den Nutzer.
-const ASK_TIMEOUT: Duration = Duration::from_secs(600);
+/// So lange wartet ein Aufruf auf die Freigabe. Vibe bricht MCP-Aufrufe nach
+/// 60 s ab; die Karte bleibt offen und der Agent ruft erneut auf.
+const ASK_WAIT: Duration = Duration::from_secs(50);
+/// Eine Antwort, die erst nach dem Abbruch kam, gilt so lange für den
+/// nächsten gleichen Aufruf.
+const LATE_ANSWER_MS: u64 = 5 * 60 * 1000;
 /// Nach so viel Ruhe gilt „Agent steuert“ als beendet.
 const IDLE: Duration = Duration::from_secs(6);
 /// Not-Aus-Tastenkürzel (global, wo das System es erlaubt).
@@ -231,7 +235,7 @@ fn forward(name: &str, args: &Value) -> CmdResult<Vec<Value>> {
     let cwd = std::env::var("BRISE_CWD").unwrap_or_default();
     let mut stream = std::net::TcpStream::connect(&addr).map_err(|e| format!("Brise ist nicht erreichbar: {e}"))?;
     // Die Freigabekarte darf dauern.
-    stream.set_read_timeout(Some(ASK_TIMEOUT + Duration::from_secs(30))).ok();
+    stream.set_read_timeout(Some(ASK_WAIT + Duration::from_secs(60))).ok();
     let msg = json!({ "token": token, "tag": tag, "cwd": cwd, "tool": format!("computer:{name}"), "args": args });
     writeln!(stream, "{msg}").map_err(|e| e.to_string())?;
     let mut line = String::new();
@@ -291,14 +295,32 @@ struct State {
 }
 
 static STATE: Mutex<Option<State>> = Mutex::new(None);
+/// Offene Freigabekarte. `sig` = Session, Werkzeug und Argumente: ein erneuter
+/// gleicher Aufruf hängt sich an dieselbe Karte, statt eine neue zu öffnen.
+struct Open {
+    sig: String,
+    tx: Option<oneshot::Sender<Option<String>>>,
+}
+
+#[derive(Default)]
+struct Asks {
+    open: HashMap<String, Open>,
+    /// Antworten, deren Aufruf schon aufgegeben hatte: sig → (Wahl, Zeitpunkt).
+    late: HashMap<String, (Option<String>, u64)>,
+}
+
 /// Offene Freigaben (Schlüssel `cu:<n>`).
-static ASKS: Mutex<Option<HashMap<String, oneshot::Sender<Option<String>>>>> = Mutex::new(None);
+static ASKS: Mutex<Option<Asks>> = Mutex::new(None);
 static NEXT: AtomicU64 = AtomicU64::new(1);
 /// Zählt Not-Aus-Auslösungen; laufende Aktionen brechen ab, wenn er sich ändert.
 static STOPS: AtomicU64 = AtomicU64::new(0);
 /// Immer nur eine Aktion gleichzeitig – auch über Sessions hinweg. Solange eine
 /// Freigabekarte offen ist, kann so keine andere Aktion auf sie klicken.
 static RUN: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+fn with_asks<T>(f: impl FnOnce(&mut Asks) -> T) -> T {
+    f(ASKS.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(Asks::default))
+}
 
 fn with_state<T>(f: impl FnOnce(&mut State) -> T) -> T {
     f(STATE.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(State::default))
@@ -338,9 +360,14 @@ pub fn emergency_stop(app: &AppHandle, by: &str) {
         s.grants.control.clear();
         list
     });
-    let open: Vec<_> = ASKS.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(HashMap::new).drain().collect();
-    for (key, tx) in open {
-        let _ = tx.send(None);
+    let open: Vec<_> = with_asks(|a| {
+        a.late.clear();
+        a.open.drain().collect()
+    });
+    for (key, entry) in open {
+        if let Some(tx) = entry.tx {
+            let _ = tx.send(None);
+        }
         let _ = app.emit("acp:permission-closed", json!({ "key": key, "optionId": "reject_once" }));
     }
     platform::release_all();
@@ -360,24 +387,75 @@ fn stopped_since(stop_gen: u64) -> CmdResult<()> {
 
 /// Antwort auf eine Freigabekarte (`respond_permission` mit Schlüssel `cu:…`).
 pub fn decide(app: &AppHandle, key: &str, option: Option<String>) -> CmdResult<()> {
-    let tx = ASKS.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(HashMap::new).remove(key).ok_or("Diese Freigabe ist nicht mehr offen")?;
+    let entry = with_asks(|a| a.open.remove(key)).ok_or("Diese Freigabe ist nicht mehr offen")?;
     let _ = app.emit("acp:permission-closed", json!({ "key": key, "optionId": option }));
-    let _ = tx.send(option);
+    match entry.tx {
+        Some(tx) => {
+            let _ = tx.send(option);
+        }
+        // Der Aufruf hatte schon aufgegeben – die Antwort gilt für seine Wiederholung.
+        None => with_asks(|a| {
+            a.late.insert(entry.sig, (option, now_ms()));
+        }),
+    }
     Ok(())
+}
+
+/// Ergebnis des Wartens auf eine Freigabe.
+enum Answer {
+    Chosen(Option<String>),
+    /// Noch keine Antwort; die Karte bleibt offen.
+    Pending,
 }
 
 struct Ask<'a> {
     session: &'a str,
     tool: &'a str,
+    args: &'a Value,
     summary: String,
     point: Option<(f64, f64)>,
     activate: bool,
 }
 
-async fn ask(app: &AppHandle, a: Ask<'_>) -> Option<String> {
-    let key = format!("cu:{}", NEXT.fetch_add(1, Ordering::SeqCst));
+async fn ask(app: &AppHandle, a: Ask<'_>) -> Answer {
+    let sig = format!("{}\n{}\n{}\n{}", a.session, a.tool, a.args, a.activate);
     let (tx, rx) = oneshot::channel();
-    ASKS.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(HashMap::new).insert(key.clone(), tx);
+    let mut tx = Some(tx);
+    // Späte Antwort auf einen früheren gleichen Aufruf? Sonst an eine offene gleiche Karte anhängen.
+    let late = with_asks(|asks| {
+        let now = now_ms();
+        asks.late.retain(|_, (_, at)| now.saturating_sub(*at) < LATE_ANSWER_MS);
+        if let Some((choice, _)) = asks.late.remove(&sig) {
+            return Some(choice);
+        }
+        if let Some(open) = asks.open.values_mut().find(|o| o.sig == sig) {
+            open.tx = tx.take();
+        }
+        None
+    });
+    if let Some(choice) = late {
+        return Answer::Chosen(choice);
+    }
+    if let Some(tx) = tx {
+        let key = format!("cu:{}", NEXT.fetch_add(1, Ordering::SeqCst));
+        with_asks(|asks| asks.open.insert(key.clone(), Open { sig: sig.clone(), tx: Some(tx) }));
+        show_card(app, &key, &a);
+    }
+    match tokio::time::timeout(ASK_WAIT, rx).await {
+        Ok(Ok(choice)) => Answer::Chosen(choice),
+        Ok(Err(_)) => Answer::Chosen(None),
+        Err(_) => {
+            with_asks(|asks| {
+                if let Some(open) = asks.open.values_mut().find(|o| o.sig == sig) {
+                    open.tx = None;
+                }
+            });
+            Answer::Pending
+        }
+    }
+}
+
+fn show_card(app: &AppHandle, key: &str, a: &Ask<'_>) {
     let view = with_state(|s| s.views.get(a.session).cloned());
     let options = if a.activate {
         json!([
@@ -415,14 +493,6 @@ async fn ask(app: &AppHandle, a: Ask<'_>) -> Option<String> {
         let _ = w.request_user_attention(Some(tauri::UserAttentionType::Informational));
     }
     let _ = app.emit("acp:permission", json!({ "key": key, "request": request, "backend": "brise" }));
-    match tokio::time::timeout(ASK_TIMEOUT, rx).await {
-        Ok(Ok(choice)) => choice,
-        _ => {
-            ASKS.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(HashMap::new).remove(&key);
-            let _ = app.emit("acp:permission-closed", json!({ "key": key, "optionId": null }));
-            None
-        }
-    }
 }
 
 // ---------- Ausführung in der App ----------
@@ -497,7 +567,14 @@ pub async fn handle(session: &str, cwd: &str, tool: &str, args: &Value) -> CmdRe
     });
     let line = summary(tool, args);
     if !(activated && always) {
-        let choice = ask(app, Ask { session, tool, summary: line.clone(), point, activate: !activated }).await;
+        let choice = match ask(app, Ask { session, tool, args, summary: line.clone(), point, activate: !activated }).await {
+            Answer::Chosen(c) => c,
+            Answer::Pending => {
+                return Err("WARTET: Die Freigabekarte ist noch offen, der Nutzer hat noch nicht entschieden. Rufe dasselbe Werkzeug mit genau denselben \
+                    Argumenten erneut auf, um weiter zu warten."
+                    .into());
+            }
+        };
         stopped_since(stop_gen)?;
         match choice.as_deref() {
             Some("allow_once") => {}
@@ -580,22 +657,25 @@ fn mark_active(app: &AppHandle, session: &str, line: &str) {
     });
 }
 
-/// Rechteck von Brises Hauptfenster in Eingabe-Koordinaten, falls bekannt.
-fn brise_rect(app: &AppHandle) -> Option<platform::Rect> {
-    let w = app.get_webview_window("main")?;
-    if !w.is_visible().unwrap_or(false) || w.is_minimized().unwrap_or(false) || platform::wayland() {
-        return None;
+/// Brises Fenster in Eingabe-Koordinaten: aus der Fensterliste des Systems
+/// (Prozess-ID, erfasst auch Nebenfenster), sonst aus Tauri. Unter Wayland
+/// unbekannt – dort tritt Brise beiseite (`hide_brise`).
+fn brise_rects(app: &AppHandle) -> Vec<platform::Rect> {
+    if platform::wayland() {
+        return vec![];
     }
-    let pos = w.outer_position().ok()?;
-    let size = w.outer_size().ok()?;
+    let own: Vec<platform::Rect> = platform::windows().unwrap_or_default().into_iter().filter(|w| w.brise && !w.minimized).map(|w| w.rect).collect();
+    if !own.is_empty() {
+        return own;
+    }
+    let Some(w) = app.get_webview_window("main") else { return vec![] };
+    if w.is_minimized().unwrap_or(false) {
+        return vec![];
+    }
+    let (Ok(pos), Ok(size)) = (w.outer_position(), w.outer_size()) else { return vec![] };
     // macOS arbeitet in Punkten, die anderen in physischen Pixeln.
     let scale = if cfg!(target_os = "macos") { w.scale_factor().unwrap_or(1.0) } else { 1.0 };
-    Some(platform::Rect {
-        x: pos.x as f64 / scale,
-        y: pos.y as f64 / scale,
-        w: size.width as f64 / scale,
-        h: size.height as f64 / scale,
-    })
+    vec![platform::Rect { x: pos.x as f64 / scale, y: pos.y as f64 / scale, w: size.width as f64 / scale, h: size.height as f64 / scale }]
 }
 
 /// Wayland: Fensterpositionen sind unbekannt. Damit kein Klick auf Brise selbst
@@ -624,10 +704,17 @@ fn restore_brise(app: &AppHandle) {
 }
 
 fn check_target(app: &AppHandle, x: f64, y: f64) -> CmdResult<()> {
-    if let Some(r) = brise_rect(app) {
-        if r.contains(x, y) {
-            return Err("Diese Stelle gehört zu Brise selbst. Brise lässt sich nicht per Computer Use bedienen – wähle ein anderes Fenster.".into());
-        }
+    if brise_rects(app).iter().any(|r| r.contains(x, y)) {
+        return Err("Diese Stelle gehört zu Brise selbst. Brise lässt sich nicht per Computer Use bedienen – wähle ein anderes Fenster.".into());
+    }
+    Ok(())
+}
+
+/// Tastatureingaben nie an Brise selbst (Composer, fokussierte Freigabeknöpfe).
+fn check_keyboard(app: &AppHandle) -> CmdResult<()> {
+    let focused = app.get_webview_window("main").is_some_and(|w| w.is_focused().unwrap_or(false) && !w.is_minimized().unwrap_or(false));
+    if focused {
+        return Err("Der Tastaturfokus liegt auf Brise selbst. Erst in das Zielfenster klicken oder computer_focus_window nutzen.".into());
     }
     Ok(())
 }
@@ -727,6 +814,7 @@ async fn run(app: &AppHandle, session: &str, tool: &str, args: &Value, stop_gen:
             if t.contains("{{secret:") {
                 return Err("Secrets tippt Brise nicht in fremde Fenster. Bitte den Nutzer, den Wert selbst einzugeben.".into());
             }
+            check_keyboard(app)?;
             if let Some(why) = blocking(platform::password_context).await? {
                 return Err(format!("PASSWORTFELD: {why} Brise füllt Passwort- und Anmeldefelder nicht aus – bitte den Nutzer, das selbst zu tun."));
             }
@@ -740,6 +828,7 @@ async fn run(app: &AppHandle, session: &str, tool: &str, args: &Value, stop_gen:
         }
         "computer_key" => {
             let combo = keys::parse(args["combo"].as_str().ok_or("combo fehlt")?)?;
+            check_keyboard(app)?;
             input(Input::Keys(combo)).await?;
             Ok(vec![text(format!("{} gedrückt.", args["combo"].as_str().unwrap_or("")))])
         }
@@ -788,11 +877,11 @@ async fn screenshot(app: &AppHandle, session: &str, args: &Value) -> CmdResult<V
         None => None,
     };
     let shot = platform::capture(monitor).await?;
-    let brise = brise_rect(app);
+    let brise = brise_rects(app);
     let (img, view) = blocking(move || {
         let mut s = shot;
-        if let Some(r) = brise {
-            s.mask(&r);
+        for r in &brise {
+            s.mask(r);
         }
         let s = match &window {
             Some(w) => s.crop(&w.rect)?,
@@ -818,11 +907,11 @@ async fn zoom(app: &AppHandle, session: &str, args: &Value) -> CmdResult<Vec<Val
     let (ix, iy) = v.to_input(x, y);
     let rect = platform::Rect { x: ix, y: iy, w: w * v.factor, h: h * v.factor };
     let shot = platform::capture(None).await?;
-    let brise = brise_rect(app);
+    let brise = brise_rects(app);
     let img = blocking(move || {
         let mut s = shot;
-        if let Some(r) = brise {
-            s.mask(&r);
+        for r in &brise {
+            s.mask(r);
         }
         let part = s.crop(&rect)?;
         // Ausschnitt in voller Auflösung, höchstens doppelt vergrößert.

@@ -186,6 +186,21 @@ export function PolicyEditor({ initial, onSave, onCancel, saveLabel }: { initial
             </div>
           }
         />
+        <Row
+          title="Computer Use"
+          description="Dürfen Agenten den Bildschirm sehen und Maus und Tastatur bedienen? Gesperrt verschwinden die Werkzeuge in allen Sessions."
+          control={
+            <select
+              value={p.computerUse === false ? "off" : ""}
+              onChange={(e) => set({ computerUse: e.target.value === "off" ? false : null })}
+              className={clsx(input, "w-[130px]")}
+              data-testid="policy-computer-use"
+            >
+              <option value="">erlaubt</option>
+              <option value="off">gesperrt</option>
+            </select>
+          }
+        />
       </Card>
       <Card title="Geteilte Abos (wird beim Host durchgesetzt)">
         <Row
@@ -229,6 +244,7 @@ function PolicySummary({ p }: { p: TeamPolicy }) {
   if (p.webSearch != null) items.push(`Websuche ${p.webSearch ? "an" : "aus"}`);
   if (p.mcpServers) items.push(`MCP-Server: ${p.mcpServers.join(", ") || "keine"}`);
   if (p.skills) items.push(`Skills: ${p.skills.join(", ") || "keine"}`);
+  if (p.computerUse === false) items.push("Computer Use gesperrt");
   if (p.orchestra === false) items.push("Master-Session gesperrt");
   else if (p.maxSubSessions != null) items.push(`Höchstens ${p.maxSubSessions} Untersessions gleichzeitig`);
   if (p.sharedDailyPrompts != null) items.push(`${p.sharedDailyPrompts} Prompts pro Tag auf geteilten Abos`);

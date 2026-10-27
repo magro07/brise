@@ -41,6 +41,7 @@ import { AgentsSettings } from "../agents/AgentsSettings";
 const VIBE_SECTIONS = new Set(["account", "models", "permissions", "agents", "skills", "web", "voice", "advanced"]);
 import { looksSecret, maskSecrets } from "../../lib/format";
 import { AccountsCard } from "./Accounts";
+import { ComputerSettings } from "../computer/Computer";
 import { Button, Spinner, Switch, clsx } from "../ui";
 import { MODE_INFO } from "../composer/Pickers";
 import { confirmAction } from "../../lib/dialogs";
@@ -584,6 +585,7 @@ export function SettingsView() {
           {section === "tools" && (
             <>
               <Card>{SECTION_KEYS.tools.map(field)}</Card>
+              <ComputerSettings />
               <McpServers values={values} write={write} />
             </>
           )}

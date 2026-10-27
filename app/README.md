@@ -18,6 +18,7 @@ src/
   lib/acp.ts             Typen + Aufrufe der Rust-Commands
   lib/backends.ts        Backend-Kurznamen, Capabilities, Terminal-Befehle
   lib/collab.ts          Kollaboration: Spiegeln (Host), Ansicht aufbauen (Gast)
+  lib/computer.ts        Computer Use: Vorschauen, Steuerungs-Hinweis, Not-Aus, Einstellungen
   components/
     layout/              Sidebar (Projekte → Sessions), Header, Befehlspalette
     chat/                Konversation, Tool-Gruppen, Subagent-Karten, Diff, Markdown
@@ -31,6 +32,7 @@ src/
     ui/                  Buttons, Menüs, Tooltips, Schalter, Ring
     collab/              Session teilen, beitreten, Gast-Composer, Einstellungen
     bench/               Benchmarks: Liste, Editor, Lauf, Vergleichstabelle, Verlauf
+    computer/            Computer Use: Hinweisleiste mit Stopp, Screenshot mit Klickpunkt, Einstellungskarte
 src-tauri/src/
   rpc.rs                 JSON-RPC über stdio
   agent.rs               ACP-Commands, ein Prozess je Backend, Session-Routing, Events, fs-Handler
@@ -60,6 +62,9 @@ src-tauri/src/
   design.rs              Design-Modus: Arbeitsordner, Kopien/Versionen, Export ins Projekt, Token-Import
   model3d.rs             3D-Modus: Arbeitsordner, OpenSCAD/Blender finden, OpenSCAD rendern, Export,
                          MCP-Werkzeuge list_/read_/export_design und list_/read_/export_model
+  computer/              Computer Use: MCP-Werkzeuge computer_*, Freigabe, Not-Aus, Koordinaten;
+                         platform/ mit X11 (x11rb), Wayland-Portal (ashpd, Rückfall ydotool),
+                         macOS/Windows (xcap) und Eingaben über enigo
 src-tauri/resources/skills/   mitgelieferte Skills (Lizenzen und Quellen in NOTICE.md)
 ```
 
@@ -411,6 +416,107 @@ im Nutzungsjournal und nicht in Logs.
   jedes Passwort. Freier Text ohne Muster (etwa „mein Passwort ist sommer2026“)
   geht unerkannt durch.
 
+## Computer Use (Bildschirm und Eingaben)
+
+Agenten können den Bildschirm sehen und Maus und Tastatur bedienen, etwa für
+Programme ohne Schnittstelle. Das ist standardmäßig aus.
+
+**Einschalten:** Einstellungen → Werkzeuge & MCP → Computer Use → „Computer Use
+anbieten“. Danach bekommt jede neue Session die Werkzeuge über `brise-app`. Aktiv
+werden sie erst, wenn man sie in der ersten Karte für die Session oder für das
+Projekt einschaltet. Projekte stehen in derselben Einstellung und lassen sich dort
+wieder entfernen. Die Einstellungen liegen in `<Datenordner>/computer_use.json`.
+
+| Werkzeug | Was es tut |
+|---|---|
+| `computer_screenshot(window?, monitor?)` | Bildschirm oder ein Fenster, verkleinert auf höchstens 1280×800, als PNG |
+| `computer_zoom(x, y, width, height)` | Ausschnitt in voller Auflösung, zum Lesen von Kleingedrucktem |
+| `computer_list_windows` | Fenster mit ID, Titel, Programm, Position, Größe |
+| `computer_click(x, y, button)`, `computer_double_click`, `computer_move`, `computer_drag`, `computer_scroll` | Maus |
+| `computer_type(text)`, `computer_key(combo)` | Tastatur, z. B. `ctrl+s`, `alt+F4`, `Return` |
+| `computer_focus_window(window)`, `computer_open_app(name)` | Fenster nach vorn holen, Programm starten |
+
+Alle Koordinaten beziehen sich auf den zuletzt gelieferten Screenshot der Session.
+Brise rechnet sie auf Bildschirmpixel um (unter macOS auf Punkte, HiDPI eingerechnet).
+`computer_zoom` ändert diese Abbildung nicht.
+
+**Ablauf:** Der MCP-Prozess führt nichts selbst aus. Er reicht jeden Aufruf über den
+lokalen Kanal der App weiter (Port und Token wie bei der Master-Session). In der App
+laufen Team-Richtlinie, Freigabe und Ausführung. Brises Freigabe gilt deshalb auch,
+wenn das Backend selbst nicht fragt (`bypass_tool_permissions`). Fragt das Backend
+doch, kommt dessen Karte zuerst (Vibe: einmal je Werkzeug „Für diese Session
+erlauben“), danach die von Brise.
+
+**Freigabe:** Jede Aktion erscheint als Karte mit der Aktion in Worten („klickt auf
+(912, 193)“) und dem letzten Screenshot mit Zielpunkt. Die Optionen sind *Erlauben*,
+*Ansehen bzw. Bedienen in dieser Session immer erlauben* und *Ablehnen*. Ansehen
+(Screenshot, Zoom, Fensterliste) und Bedienen (alle Eingaben) gibt man getrennt frei.
+Es läuft immer nur eine Aktion, über alle Sessions hinweg. Solange eine Karte offen
+ist, kann also keine andere Aktion auf sie klicken. Vibe bricht MCP-Aufrufe nach 60 s
+ab. Deshalb wartet ein Aufruf höchstens 50 s. Die Karte bleibt offen, und ein
+erneuter Aufruf mit denselben Argumenten hängt sich an sie. Eine Antwort, die erst
+danach kommt, gilt fünf Minuten lang für genau diese Wiederholung. Gäste einer
+geteilten Session sehen Computer-Use-Karten nicht und können sie nicht beantworten.
+
+**Während ein Agent steuert:** Oben steht eine Leiste mit Session, letzter Aktion
+und Stopp-Knopf. Not-Aus ist außerdem das globale Kürzel `Ctrl+Alt+Escape`
+(macOS: `Cmd+Shift+Escape`). Er nimmt alle Session-Freigaben zurück, lehnt offene
+Karten ab, bricht laufendes Tippen ab, lässt gedrückte Tasten los und bricht die
+Turns der steuernden Sessions ab. Ausschalten in den Einstellungen wirkt genauso.
+
+**Schutz:**
+
+- Brises eigene Fenster sind in Screenshots schraffiert ausgegraut. Klicks darauf
+  lehnt Brise ab, Tastatureingaben ebenso, solange Brise den Fokus hat. Sonst könnte
+  ein Agent seine eigenen Freigaben bestätigen oder Einstellungen ändern.
+- `computer_type` füllt keine Passwortfelder aus. Es verweigert bei sicherer
+  Texteingabe (macOS), bei einem Passwort-Eingabefeld mit Fokus (Windows), bei
+  Fenstertiteln wie „Passwort“, „Authentifizierung“, KeePass oder polkit und bei
+  Secret-Platzhaltern. Unter Linux erkennt Brise Passwortfelder nur am
+  Fenstertitel, ein Passwortfeld auf einer Webseite also nicht.
+- Team-Richtlinie „Computer Use gesperrt“: Die Werkzeuge verschwinden, Aufrufe
+  werden abgelehnt, das Einschalten in den Einstellungen ist gesperrt.
+
+Unter den Werkzeugaufrufen zeigt der Chat den letzten Screenshot bzw. den
+Klickpunkt. Mit den Punkten rechts oben blättert man durch die Aktionen.
+
+**Plattformen:**
+
+| System | Bildschirm | Eingabe | Fensterliste |
+|---|---|---|---|
+| Linux, X11 | GetImage (x11rb) | XTest (enigo) | EWMH, ohne Fenstermanager über den Fensterbaum |
+| Linux, Wayland | Screenshot-Portal | RemoteDesktop-Portal, Rückfall `ydotool` | gibt es unter Wayland nicht |
+| macOS | xcap (ScreenCaptureKit/CGWindowList) | CGEvent (enigo) | xcap |
+| Windows | xcap (GDI/DXGI) | SendInput (enigo) | xcap |
+
+Zusätzlich installieren muss man nichts. Unter macOS braucht Brise die Rechte
+*Bildschirm- und Systemaudioaufnahme* und *Bedienungshilfen*. Der Knopf „Rechte
+anfragen“ öffnet die passenden Systemeinstellungen. Unter Windows nehmen Fenster
+mit Administratorrechten keine Eingaben von Brise an (UIPI).
+
+**Wayland (GNOME):**
+
+- Beim ersten Screenshot fragt das System, ob Brise Bildschirmfotos machen darf.
+  Das gilt danach dauerhaft und lässt sich in den GNOME-Einstellungen unter Apps
+  wieder entziehen.
+- Die erste Eingabe öffnet den Dialog zur Fernsteuerung. Dort Maus und Tastatur
+  erlauben und alle Bildschirme freigeben, denn Brise rechnet die Screenshot-Pixel
+  über das Layout der freigegebenen Bildschirme um. Brise speichert das
+  Wiederherstellungs-Token, damit der Dialog nicht bei jedem Start kommt.
+  „Freigabe einholen“ in den Einstellungen holt diesen Schritt vorab nach.
+- Solange die Fernsteuerung besteht, zeigt GNOME oben rechts ein Symbol, über das
+  man sie beendet. Das ist unter Wayland der Not-Aus, denn globale Kürzel gibt es
+  dort nicht. Der Stopp-Knopf in Brise wirkt weiterhin.
+- Fensterpositionen sind unter Wayland unbekannt. Brise minimiert sich deshalb vor
+  Eingaben und kommt für die nächste Karte bzw. nach sechs Sekunden Ruhe zurück.
+- `BRISE_CU_BACKEND=x11` bzw. `portal` erzwingt einen Weg.
+
+**Stand der Tests:** Unter X11 ein echter Durchlauf in Xvfb mit Vibe und Mistral
+Medium 3.5: Der Agent fand einen zenity-Dialog, holte ihn nach vorn, tippte den
+Namen und bestätigte. Unter Wayland findet der Selbsttest auf Fedora 44 mit GNOME 50
+beide Portale. Ein Durchlauf mit Systemfreigabe steht noch aus. macOS und Windows:
+Der Plattformcode kompiliert für beide Ziele, auf echten Geräten ist er nicht getestet.
+
 ## Cortecs und Zero Data Retention
 
 [Cortecs](https://cortecs.ai) ist ein europäischer LLM-Router. Mit einem
@@ -637,6 +743,7 @@ Jede Session bekommt den MCP-Server `brise-app` (`brise --mcp-app`). Seine Werkz
 | `brise_set_quick_actions` | eigene Karten auf der Startseite |
 | `brise_set_vibe_config` | Einträge in Vibes `config.toml`, Freigaben abschalten ausgenommen |
 | `request_secret`, `list_secrets`, `run_with_secrets`, `http_request_with_secrets` | Secrets anfordern und verwenden, siehe [Secrets](#secrets-passwörter-api-keys-tokens) |
+| `computer_*` | Bildschirm sehen und bedienen, nur wenn eingeschaltet, siehe [Computer Use](#computer-use-bildschirm-und-eingaben) |
 
 Die Werkzeuge schreiben nach `<Datenordner>/custom/`. Brise beobachtet den Ordner
 und übernimmt Änderungen sofort. Der mitgelieferte Skill `brise-anpassen` erklärt
@@ -666,7 +773,8 @@ Umgebungsvariablen:
 - `BRISE_ACP_TRACE=/tmp/acp.log` schreibt den gesamten ACP-Verkehr mit (weitere
   Backends in `/tmp/acp.log.<backend>`).
 - `brise --self-test` prüft Vibe, ACP, alle installierten Agenten (Start, Session),
-  MCP-Server, Terminal und Git. `BRISE_SELFTEST_PROMPT=1` schickt jedem Agenten
+  MCP-Server, Terminal und Git. Für Computer Use meldet er nur, ob Bildschirm und
+  Eingabe auf diesem System verfügbar sind; er nimmt nichts auf und klickt nicht. `BRISE_SELFTEST_PROMPT=1` schickt jedem Agenten
   zusätzlich einen echten Mini-Prompt, `BRISE_SELFTEST_INSTALL=claude` installiert
   den Claude-Adapter vorher, falls er fehlt.
 - `VIBE_HOME=/tmp/vibe-clean` startet Vibe mit eigener, leerer Konfiguration.

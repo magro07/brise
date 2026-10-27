@@ -27,6 +27,8 @@ import { Diff } from "./Diff";
 import { Markdown } from "./Markdown";
 import { CouncilToolCard } from "./Council";
 import { councilToolName } from "../../lib/council";
+import { isComputerTool } from "../../lib/computer";
+import { ComputerShots } from "../computer/Computer";
 
 export function isSubagent(t: ToolItem) {
   return !!(t.meta?.agent || t.meta?.task || t.meta?.child_session_id);
@@ -257,6 +259,7 @@ export function ToolGroup({ items, cwd, live }: { items: Item[]; cwd: string; li
           return null;
         })}
       </div>
+      {plain.some(isComputerTool) && <ComputerShots toolCallIds={plain.filter(isComputerTool).map((t) => t.toolCallId)} />}
       {/* Änderungen immer sichtbar, wie in Claude Code. */}
       {plain.flatMap((t) => t.diffs.map((d, n) => <Diff key={`${t.id}-${n}`} {...d} cwd={cwd} />))}
     </div>

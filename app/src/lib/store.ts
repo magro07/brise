@@ -16,6 +16,7 @@ import {
   type SessionSetup,
   type SessionSummary,
 } from "./acp";
+import type { ComputerMeta } from "./computer";
 import { load, save } from "./persist";
 import { cortecs } from "./cortecs";
 import { allowedPrefs } from "./policy";
@@ -92,6 +93,8 @@ export interface PendingPermission {
   toolCallId: string;
   options: PermissionOption[];
   rawInput?: unknown;
+  /** Computer Use: Freigabe stellt Brise selbst aus (lib/computer.ts). */
+  computer?: ComputerMeta;
 }
 
 export interface PlanEntry {
@@ -427,6 +430,12 @@ interface Actions {
 
 let counter = 0;
 const uid = () => `i${++counter}`;
+
+/** Letzter laufender Werkzeugaufruf einer Session. */
+function runningToolId(s: Session): string {
+  const t = [...s.items].reverse().find((i): i is ToolItem => i.type === "tool" && (i.status === "in_progress" || i.status === "pending"));
+  return t?.toolCallId ?? "";
+}
 
 export const basename = (p: string) => p.split(/[\\/]/).filter(Boolean).pop() ?? p;
 
@@ -1516,11 +1525,19 @@ export const useStore = create<State & Actions>((set, get) => {
     },
 
     onPermission(key, request) {
+      const computer = request._meta?.briseComputer;
       patchSession(request.sessionId, (s) => ({
         ...s,
         pending: [
           ...s.pending,
-          { key, toolCallId: request.toolCall.toolCallId, options: request.options, rawInput: request.toolCall.rawInput },
+          {
+            key,
+            // Computer-Use-Freigaben gehören zum laufenden Werkzeugaufruf des Agenten.
+            toolCallId: request.toolCall.toolCallId || (computer ? runningToolId(s) : ""),
+            options: request.options,
+            rawInput: request.toolCall.rawInput,
+            computer,
+          },
         ],
       }));
     },
@@ -1543,7 +1560,7 @@ export const useStore = create<State & Actions>((set, get) => {
                 id: uid(),
                 toolCallId: p.toolCallId,
                 allowed,
-                label: chosen ? (OPTION_LABEL[chosen.optionId] ?? chosen.name) : "Abgebrochen",
+                label: chosen ? ((!p.computer && OPTION_LABEL[chosen.optionId]) || chosen.name) : "Abgebrochen",
               },
             ],
           };

@@ -86,6 +86,7 @@ export interface PermissionRequest {
   sessionId: string;
   toolCall: { toolCallId: string; title?: string; rawInput?: unknown };
   options: PermissionOption[];
+  _meta?: { briseComputer?: import("./computer").ComputerMeta };
 }
 
 export interface PromptResult {

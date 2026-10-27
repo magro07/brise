@@ -27,6 +27,8 @@ export interface TeamPolicy {
   /** Master-Session: false = Untersessions gesperrt. */
   orchestra: boolean | null;
   maxSubSessions: number | null;
+  /** Computer Use: false = Bildschirm und Eingaben für Agenten gesperrt. */
+  computerUse: boolean | null;
 }
 
 export const EMPTY_POLICY: TeamPolicy = {
@@ -47,6 +49,7 @@ export const EMPTY_POLICY: TeamPolicy = {
   sharedDailyTokens: null,
   orchestra: null,
   maxSubSessions: null,
+  computerUse: null,
 };
 
 export interface AuditEntry {

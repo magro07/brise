@@ -244,6 +244,12 @@ pub fn run() -> i32 {
 
     // 6. Git und Schlüsselbund (nur Hinweise, kein Fehlschlag)
     report("Git", crate::git::find_git().is_some(), crate::git::find_git().map(|p| p.display().to_string()).unwrap_or_else(|| "nicht gefunden – Brise bietet die Installation an".into()));
+    // Computer Use: nur melden, was ginge – nichts aufnehmen, nichts klicken. Kein
+    // Fehlschlag ohne Bildschirm (CI) oder ohne erteilte Rechte (macOS).
+    let caps = rt.block_on(crate::computer::capabilities());
+    report("Computer Use", true, format!("{} · {}", caps.backend, if crate::computer::settings().enabled { "eingeschaltet" } else { "aus (Standard)" }));
+    report("  Bildschirm", true, format!("{} {}", if caps.screenshot { "verfügbar:" } else { "nicht verfügbar:" }, caps.screenshot_detail));
+    report("  Eingabe", true, format!("{} {}", if caps.input { "verfügbar:" } else { "nicht verfügbar:" }, caps.input_detail));
     report("Mistral-Key", true, if crate::credentials::read_key().is_some() { "vorhanden" } else { "nicht gesetzt (in der CI erwartet)" });
 
     println!("{} nach {:.1} s", if ok { "Alles in Ordnung" } else { "Selbsttest fehlgeschlagen" }, started.elapsed().as_secs_f32());

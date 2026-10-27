@@ -226,13 +226,19 @@ pub fn password_title(title: &str) -> Option<String> {
     (HINTS.iter().any(|h| t.contains(h)) || words.contains(&"pin")).then(|| format!("Das aktive Fenster „{title}“ sieht nach einer Passwort-Abfrage aus."))
 }
 
+/// Programm im Hintergrund starten, ohne auf es zu warten.
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+fn spawn(cmd: &mut std::process::Command) -> CmdResult<()> {
+    use std::process::Stdio;
+    cmd.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn().map(|_| ()).map_err(|e| e.to_string())
+}
+
 pub fn open_app(name: &str) -> CmdResult<()> {
-    use std::process::{Command, Stdio};
+    use std::process::Command;
     let name = name.trim();
     if name.is_empty() {
         return Err("name fehlt".into());
     }
-    let spawn = |cmd: &mut Command| cmd.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn().map(|_| ()).map_err(|e| e.to_string());
     #[cfg(target_os = "macos")]
     {
         let ok = Command::new("open").args(["-a", name]).status().map_err(|e| e.to_string())?.success();
@@ -259,7 +265,7 @@ pub fn open_app(name: &str) -> CmdResult<()> {
     }
     #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
     {
-        let _ = spawn;
+        let _ = Command::new;
         Err("Computer Use gibt es auf diesem System nicht.".into())
     }
 }
