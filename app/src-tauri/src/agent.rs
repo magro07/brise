@@ -751,6 +751,10 @@ pub async fn respond_permission(
     if let Some(rest) = key.strip_prefix("collab:") {
         return crate::collab::guest_decide(&app.state::<crate::collab::CollabState>(), rest, option_id);
     }
+    // Freigaben für Computer Use stellt Brise selbst aus.
+    if key.starts_with("cu:") {
+        return crate::computer::decide(&app, &key, option_id);
+    }
     let (_, _, conn, id) = state.permissions.lock().unwrap().remove(&key).ok_or("Diese Freigabe ist nicht mehr offen")?;
     let outcome = match &option_id {
         Some(option) => json!({ "outcome": "selected", "optionId": option }),

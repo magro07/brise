@@ -113,6 +113,7 @@ fn tools() -> Value {
         a.extend(crate::secrets::tools());
         a.extend(crate::model3d::tools());
         a.extend(crate::orchestra::tools());
+        a.extend(crate::computer::tools());
     }
     list
 }
@@ -236,7 +237,7 @@ pub fn run_mcp_server() {
                     crate::secrets::MCP_INSTRUCTIONS,
                     crate::model3d::MCP_INSTRUCTIONS,
                     if crate::orchestra::tools().is_empty() { String::new() } else { format!(" {}", crate::orchestra::MCP_INSTRUCTIONS) }
-                )
+                ) + &if crate::computer::tools().is_empty() { String::new() } else { format!(" {}", crate::computer::MCP_INSTRUCTIONS) }
             }}),
             "ping" => json!({ "result": {} }),
             "tools/list" => json!({ "result": { "tools": tools() } }),
@@ -244,7 +245,7 @@ pub fn run_mcp_server() {
                 let p = &msg["params"];
                 let (name, args) = (p["name"].as_str().unwrap_or(""), &p["arguments"]);
                 // Werkzeuge mit Bildern liefern MCP-Inhalte statt Text.
-                let rich = crate::model3d::call_tool(name, args);
+                let rich = crate::model3d::call_tool(name, args).or_else(|| crate::computer::call_tool(name, args));
                 match rich.unwrap_or_else(|| call_tool(name, args).map(|text| vec![json!({ "type": "text", "text": text })])) {
                     Ok(content) => json!({ "result": { "content": content } }),
                     Err(e) => json!({ "result": { "content": [{ "type": "text", "text": e }], "isError": true } }),

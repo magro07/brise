@@ -67,6 +67,8 @@ pub struct Policy {
     pub orchestra: Option<bool>,
     /// Höchstzahl gleichzeitiger Untersessions.
     pub max_sub_sessions: Option<u32>,
+    /// Computer Use: `false` sperrt Bildschirm und Eingaben für Agenten.
+    pub computer_use: Option<bool>,
 }
 
 /// Modi, die Änderungen ohne Rückfrage ausführen (Vibe und Claude Code).
@@ -119,6 +121,10 @@ impl Policy {
                 (a, b) => a.or(b),
             },
             max_sub_sessions: min_opt(self.max_sub_sessions, other.max_sub_sessions),
+            computer_use: match (self.computer_use, other.computer_use) {
+                (Some(false), _) | (_, Some(false)) => Some(false),
+                (a, b) => a.or(b),
+            },
         }
     }
 
@@ -465,6 +471,15 @@ pub fn check_orchestra() -> CmdResult<()> {
     Ok(())
 }
 
+/// Darf diese Installation Agenten den Bildschirm sehen und bedienen lassen?
+pub fn check_computer_use() -> CmdResult<()> {
+    let e = effective();
+    if e.policy.computer_use == Some(false) {
+        return Err(format!("POLICY: Computer Use ist {} gesperrt.", managed_by(&e)));
+    }
+    Ok(())
+}
+
 /// Höchstzahl gleichzeitiger Untersessions laut Team-Richtlinie.
 pub fn max_sub_sessions() -> Option<u32> {
     effective().policy.max_sub_sessions
@@ -713,6 +728,9 @@ mod tests {
         // Ältere Team-Stände ohne die Felder bleiben lesbar.
         let old: Policy = serde_json::from_str(r#"{"dailyEur": 3}"#).unwrap();
         assert_eq!((old.orchestra, old.max_sub_sessions), (None, None));
+        let cu = Policy { computer_use: Some(false), ..Default::default() };
+        assert_eq!(open.merge(&cu).computer_use, Some(false));
+        assert_eq!(open.merge(&Policy::default()).computer_use, None);
     }
 
     #[test]
