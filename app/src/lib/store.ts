@@ -1062,9 +1062,17 @@ export const useStore = create<State & Actions>((set, get) => {
     },
 
     async connectBackend(id, restart = false) {
+      // Beim Neustart endet der alte Prozess absichtlich – sein Ende ist kein Fehler.
+      if (restart) generations[id] = -1;
       try {
         const info = await api.connect(!restart, id);
         registerAgent(info);
+        // Vorbereitete leere Sessions gehörten zum alten Prozess.
+        if (restart) {
+          for (const [project, sid] of Object.entries(get().prepared)) {
+            if (get().sessions[sid]?.backend === id) get().resetPrepared(project);
+          }
+        }
         return info;
       } catch (e) {
         set((st) => {

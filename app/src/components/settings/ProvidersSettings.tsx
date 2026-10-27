@@ -353,8 +353,11 @@ function ProviderDetails({ p, onChanged }: { p: ProviderView; onChanged: () => v
 function VibeExport({ p, chat, save }: { p: ProviderView; chat: string[]; save: (patch: Partial<Provider>) => Promise<void> }) {
   const vibe = useStore((s) => !!s.agents.vibe);
   const [extra, setExtra] = useState("");
+  // Vibe liest seine Konfiguration beim Start – Änderungen gelten nach dem Neuverbinden.
+  const [changed, setChanged] = useState(false);
   const choices = [...new Set([...chat, ...p.vibeModels])];
-  const toggle = (m: string, on: boolean) => save({ vibeExport: true, vibeModels: on ? [...p.vibeModels, m] : p.vibeModels.filter((x) => x !== m) });
+  const change = (patch: Partial<Provider>) => save(patch).then(() => setChanged(true));
+  const toggle = (m: string, on: boolean) => change({ vibeExport: true, vibeModels: on ? [...p.vibeModels, m] : p.vibeModels.filter((x) => x !== m) });
   return (
     <div>
       <div className="flex items-center gap-3">
@@ -365,7 +368,7 @@ function VibeExport({ p, chat, save }: { p: ProviderView; chat: string[]; save: 
             selbst sieht ihn nie. Ohne laufendes Brise sind diese Modelle in Vibe nicht nutzbar.{!vibe && " (Vibe ist gerade nicht verbunden.)"}
           </div>
         </div>
-        <Switch checked={p.vibeExport} disabled={!p.usable} onChange={(v) => save({ vibeExport: v })} data-testid={`provider-vibe-${p.id}`} />
+        <Switch checked={p.vibeExport} disabled={!p.usable} onChange={(v) => change({ vibeExport: v })} data-testid={`provider-vibe-${p.id}`} />
       </div>
       {p.vibeExport && (
         <div className="mt-2 flex flex-wrap gap-1.5">
@@ -387,6 +390,14 @@ function VibeExport({ p, chat, save }: { p: ProviderView; chat: string[]; save: 
             placeholder="weiteres Modell + Enter"
             className="h-6 w-44 rounded border border-line bg-bg px-1.5 font-mono text-[0.82em] outline-none focus:border-accent"
           />
+        </div>
+      )}
+      {changed && vibe && (
+        <div className="mt-2 flex items-center gap-2 rounded-lg border border-accent/40 bg-accent-soft px-3 py-1.5 text-[0.86em]">
+          <span className="flex-1">Vibe übernimmt die Änderung für neue Sessions nach dem Neuverbinden.</span>
+          <Button size="sm" onClick={() => (setChanged(false), useStore.getState().connect())} data-testid="provider-vibe-reconnect">
+            Vibe neu verbinden
+          </Button>
         </div>
       )}
     </div>
