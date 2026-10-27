@@ -99,7 +99,14 @@ Mistral mit HTTP 422 ab.
    Cortecs-Modelle aus config.toml, die nicht in der Tabelle stehen (sechs
    Mini-Aufrufe je Modell), und speichert das Ergebnis in
    `<Datenordner>/thinking-levels.json`. Es gilt ab dem nächsten Start von Vibe.
-7. **Andere Agenten** (Claude Code, Codex, Gemini) liefern ihre Stufen selbst
+7. **Vibes eigener Modellkatalog:** Vibe lädt zusätzlich `GET /v1/model-catalog?surface=vibe-code`
+   (Stand 27.10.: `zai-glm-5-3` und `zai-glm-5-3-flash` mit `low/high/max`,
+   `mistral-medium-latest` mit `none/high`) und bietet diese Modelle über die
+   Mistral-Anbindung an – bei GLM-5.3 Flash wurde „niedrig“ so zu `none`
+   (HTTP 400) und „maximal“ zu `high`. Brise liest den Katalog beim Start
+   (nur Metadaten, `<Datenordner>/vibe-catalog.json`) und korrigiert
+   Katalogmodelle, die nicht schon in config.toml stehen, genauso.
+8. **Andere Agenten** (Claude Code, Codex, Gemini) liefern ihre Stufen selbst
    über ACP `configOptions`. Brise übernimmt die Liste unverändert, nach einem
    Modellwechsel die neue aus der Antwort von `set_config_option` (seit
    dfffdb1) bzw. aus `config_option_update`.
@@ -108,6 +115,25 @@ Oberfläche: Die Labels („Standard, niedrig, mittel, hoch, maximal“) und die
 Auto-Denkstufe (`LEVEL_TO_THINKING`: einfach → niedrig, normal → hoch,
 komplex → maximal, sonst die nächste verfügbare) arbeiten auf der Liste, die
 Vibe liefert – sie zeigen damit je Modell genau die gemessenen Stufen.
+
+## Testprotokoll (27.10.2026)
+
+Echte App (Debug-Build, Xvfb, eigenes `VIBE_HOME`, `BRISE_DATA_DIR`,
+`BRISE_ACP_TRACE`), echter Mistral-Schlüssel:
+
+- GLM-5.3: Picker „Standard, niedrig, hoch, maximal“. Je Stufe von Hand gewählt
+  und „Wie viel ist 17*23?“ geschickt: alle vier `end_turn`, Antwort 391, kein
+  Fehler. Trace: `agent_thought_chunk` bei Standard 20, niedrig 2, hoch 2,
+  maximal 12 („Gedankengang“ sichtbar).
+- `vibe-acp` lief mit `VIBE_PROVIDERS` (`brise-mistral` → `127.0.0.1:<port>/mistral/v1`)
+  und `VIBE_MODELS` (GLM-5.3 und GLM-5.3 Flash umgeleitet, Codestral nur „off“).
+- Stufen nach Modellwechsel laut Trace (`set_config_option` → `configOptions`):
+  Medium 3.5 `off/high`, Codestral `off`, Cortecs-GLM/Qwen/Medium alle fünf.
+- GLM-5.3 Flash (aus Vibes Katalog) mit derselben Umgebung gegen den
+  Brise-Proxy: `off/low/high/max` angeboten, alle vier ohne 400, Gedankengang
+  bei Standard und maximal.
+- Die Test-config.toml behielt `provider = "mistral"`; Vibe schrieb nur die
+  gewählte Stufe (`thinking = "max"`) zurück, die CLI fällt dann auf „hoch“.
 
 ## Grenzen
 

@@ -72,9 +72,86 @@ fn corrected_models(doc: &toml::Table, proxy: bool) -> Vec<Value> {
     out
 }
 
+// ---------- Vibes eigener Modellkatalog ----------
+
+/// Vibe lädt zusätzlich Mistrals Katalog für Vibe (`/model-catalog`) und
+/// bietet dessen Modelle mit den dort genannten Stufen über die
+/// Mistral-Anbindung an – bei GLM-5.3 Flash wird „niedrig“ dann zu `none`
+/// (HTTP 400) und „maximal“ zu `high`. Brise liest denselben Katalog beim
+/// Start (nur Metadaten) und korrigiert diese Modelle mit.
+fn catalog_path() -> std::path::PathBuf {
+    crate::installer::data_dir().join("vibe-catalog.json")
+}
+
+/// Holt Vibes Modellkatalog und merkt sich Name, Anzeige, Kontext, Bilder und Stufen.
+pub async fn refresh_catalog() -> bool {
+    let Some(key) = crate::credentials::read_key() else { return false };
+    let Ok(resp) = client().get(format!("{API_BASE}/model-catalog?surface=vibe-code")).bearer_auth(key).timeout(Duration::from_secs(10)).send().await else { return false };
+    let Ok(body) = resp.json::<Value>().await else { return false };
+    let Some(models) = body["models"].as_array() else { return false };
+    let slim: Vec<Value> = models
+        .iter()
+        .filter(|m| m["capabilities"]["function_calling"] == true)
+        .map(|m| {
+            json!({
+                "id": m["id"], "label": m["label"], "vision": m["capabilities"]["vision"],
+                "context": m["max_context_length"], "reasoning": m["parameters"]["reasoning"],
+            })
+        })
+        .collect();
+    let _ = std::fs::create_dir_all(crate::installer::data_dir());
+    std::fs::write(catalog_path(), serde_json::to_vec_pretty(&slim).unwrap_or_default()).is_ok()
+}
+
+/// Katalogmodelle, deren Stufen nicht stimmen, als vollständige Einträge –
+/// außer, config.toml nennt dasselbe Modell schon (das korrigiert
+/// [`corrected_models`]).
+fn catalog_models(catalog: &[Value], doc: &toml::Table, proxy: bool) -> Vec<Value> {
+    let configured: Vec<&str> = doc
+        .get("models")
+        .and_then(|m| m.as_array())
+        .into_iter()
+        .flatten()
+        .filter_map(|m| m.as_table())
+        .flat_map(|m| [m.get("name"), m.get("alias")].into_iter().flatten().filter_map(|v| v.as_str()))
+        .collect();
+    let mut out = Vec::new();
+    for m in catalog {
+        let Some(id) = m["id"].as_str() else { continue };
+        if configured.contains(&id) {
+            continue;
+        }
+        let Some((levels, via_proxy)) = crate::thinking::vibe_levels("mistral", id) else { continue };
+        if via_proxy && !proxy {
+            continue;
+        }
+        // So bildet Vibe die Katalogwerte ab: `none` heißt dort „off“.
+        let current: Vec<&str> = m["reasoning"].as_array().into_iter().flatten().filter_map(Value::as_str).map(|v| if v == "none" { "off" } else { v }).collect();
+        if !via_proxy && current == levels {
+            continue;
+        }
+        let mut entry = json!({
+            "name": id,
+            "alias": id,
+            "provider": if via_proxy { PROVIDER } else { "mistral" },
+            "display_name": m["label"].as_str().unwrap_or(id),
+            "thinking_levels": levels,
+            "thinking": if levels.contains(&"high") { "high" } else { levels[0] },
+        });
+        if let Some(v) = m["vision"].as_bool() {
+            entry["supports_images"] = json!(v);
+        }
+        if let Some(c) = m["context"].as_u64().filter(|c| *c > 0) {
+            entry["max_context_length"] = json!(c);
+        }
+        out.push(entry);
+    }
+    out
+}
+
 /// Ergänzt die Umgebung eines `vibe-acp` um den Proxy-Anbieter und die
-/// umgeleiteten GLM-Modelle. Ohne Proxy oder ohne GLM-Eintrag bleibt alles,
-/// wie es ist (GLM dann direkt, mit „Standard“ und „hoch“).
+/// Modelle mit korrigierten Stufen (config.toml und Vibes Katalog). Ohne
+/// Proxy bleiben umgeleitete Modelle, wie sie sind (direkt, „Standard“/„hoch“).
 pub fn extend_env(env: &mut Vec<(String, String)>) {
     // Wer selbst VIBE_MODELS setzt, bekommt seine Einstellung.
     if std::env::var_os("VIBE_MODELS").is_some() {
@@ -83,7 +160,9 @@ pub fn extend_env(env: &mut Vec<(String, String)>) {
     let Some(path) = crate::config::vibe_home().map(|h| h.join("config.toml")) else { return };
     let Ok(doc) = std::fs::read_to_string(path).unwrap_or_default().parse::<toml::Table>() else { return };
     let port = crate::cortecs::start_proxy().ok();
-    let models = corrected_models(&doc, port.is_some());
+    let mut models = corrected_models(&doc, port.is_some());
+    let catalog: Vec<Value> = std::fs::read(catalog_path()).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default();
+    models.extend(catalog_models(&catalog, &doc, port.is_some()));
     if models.is_empty() {
         return;
     }
@@ -353,6 +432,23 @@ mod tests {
         let mut plain = json!({ "choices": [{ "delta": { "content": "hallo" } }] });
         convert_response(&mut plain);
         assert_eq!(plain["choices"][0]["delta"], json!({ "content": "hallo" }));
+    }
+
+    #[test]
+    fn katalog_mit_korrigierten_stufen() {
+        let doc: toml::Table = "[[models]]\nprovider = \"mistral\"\nname = \"zai-glm-5-3\"\nalias = \"glm-5-3\"\n".parse().unwrap();
+        let catalog = vec![
+            json!({ "id": "zai-glm-5-3", "label": "GLM 5.3 (Mistral Hosted)", "reasoning": ["low", "high", "max"] }),
+            json!({ "id": "zai-glm-5-3-flash", "label": "GLM 5.3 Flash (Mistral Hosted)", "vision": true, "context": 1048576, "reasoning": ["low", "high", "max"] }),
+            json!({ "id": "mistral-medium-latest", "label": "Mistral Medium 3.5", "reasoning": ["none", "high"] }),
+        ];
+        let models = catalog_models(&catalog, &doc, true);
+        assert_eq!(models.len(), 1, "GLM-5.3 steht in config.toml, Medium stimmt schon");
+        assert_eq!(models[0]["alias"], "zai-glm-5-3-flash");
+        assert_eq!(models[0]["provider"], PROVIDER);
+        assert_eq!(models[0]["thinking_levels"], json!(["off", "low", "high", "max"]));
+        assert_eq!(models[0]["supports_images"], true);
+        assert!(catalog_models(&catalog, &doc, false).is_empty(), "ohne Proxy nichts umleiten");
     }
 
     #[test]

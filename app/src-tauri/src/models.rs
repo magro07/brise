@@ -272,6 +272,8 @@ pub async fn startup_check(app: tauri::AppHandle) -> CmdResult<StartupReport> {
         return Ok(StartupReport { changed, new_models: vec![] });
     }
     changed |= ensure_default_models().await.unwrap_or(false);
+    // Vibes eigenen Modellkatalog lesen, damit auch dessen Modelle die gemessenen Stufen bekommen.
+    crate::mistral_proxy::refresh_catalog().await;
     // Unbekannte Modelle im Hintergrund messen; gilt ab dem nächsten Start von Vibe.
     tauri::async_runtime::spawn(crate::thinking::measure_configured());
 
