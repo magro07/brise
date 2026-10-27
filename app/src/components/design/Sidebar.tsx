@@ -6,6 +6,7 @@ import { askText, confirmAction } from "../../lib/dialogs";
 import { Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger, clsx } from "../ui";
 import { useDesign } from "./designStore";
 import { newDesign } from "./DesignView";
+import { ProjectGroups } from "../workbench/parts";
 
 /** Umschalter zwischen Coding-Sessions, Design- und 3D-Modus. */
 export function ModeSwitch() {
@@ -63,12 +64,13 @@ export function DesignList() {
             <span className="text-[0.9em]">Erstes Design anlegen</span>
           </button>
         )}
-        {designs.map((d) => {
-          const live = d.sessionId ? sessions[d.sessionId] : undefined;
-          return (
-            <DesignRow key={d.id} id={d.id} name={d.name} active={d.id === activeId} running={!!live?.running} waiting={(live?.pending.length ?? 0) > 0} updated={d.updated} />
-          );
-        })}
+        <ProjectGroups
+          items={designs}
+          render={(d) => {
+            const live = d.sessionId ? sessions[d.sessionId] : undefined;
+            return <DesignRow key={d.id} id={d.id} name={d.name} active={d.id === activeId} running={!!live?.running} waiting={(live?.pending.length ?? 0) > 0} updated={d.updated} />;
+          }}
+        />
       </nav>
     </>
   );

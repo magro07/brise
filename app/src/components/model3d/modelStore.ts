@@ -8,7 +8,7 @@ import { api, type ContentBlock } from "../../lib/acp";
 import { useStore, type Attachment, type Item, type Session } from "../../lib/store";
 import { load, save } from "../../lib/persist";
 import type { DesignFile } from "../../lib/design";
-import { fileSlug, handoffToSession } from "../../lib/handoff";
+import { ACCEPT_EDITS_MODES, fileSlug, handoffToSession, projectNote, skillInstruction } from "../../lib/handoff";
 import {
   MODEL_MANAGED,
   modelAbs,
@@ -65,12 +65,21 @@ interface ModelState {
   grid: boolean;
   zUp: Record<string, boolean>;
   info: ModelInfo | null;
+  /** Projekt, das der Agent zuletzt als Zuordnung gesehen hat (je Modell). */
+  seenProject: Record<string, string>;
+  /** Geöffnete Modelle als Tabs (wie die Sessions im Code-Modus). */
+  tabs: string[];
+  /** Coding-Session, die rechts neben dem Modell mitläuft (Split). */
+  splitSession: string | null;
 }
 
 interface ModelActions {
   init(): Promise<void>;
   set(p: Partial<ModelState>): void;
-  create(name: string): Promise<ModelMeta>;
+  create(name: string, opts?: { project?: string; backend?: string }): Promise<ModelMeta>;
+  /** Projekt zuordnen (oder lösen). */
+  setProject(id: string, project: string | undefined): Promise<void>;
+  closeTab(id: string): void;
   open(id: string): Promise<void>;
   rename(id: string, name: string): Promise<void>;
   remove(id: string): Promise<void>;
@@ -79,12 +88,13 @@ interface ModelActions {
   rebuild(entry: string, force?: boolean): Promise<void>;
   setParam(entry: string, name: string, value: number | boolean | string): void;
   resetParams(entry: string): void;
-  send(text: string, images: Attachment[], variants: number): Promise<void>;
+  /** `extra.prefix`: Kontext aus Referenzen; `zdr`: wie im Code-Modus. */
+  send(text: string, attachments: Attachment[], variants: number, extra?: { prefix?: string; zdr?: boolean }): Promise<void>;
   /**
    * Neues Modell mit Auftrag anlegen und die Session starten (Delegation aus einer
    * anderen Session, ADR 0007). `onSession` läuft, bevor der erste Turn beginnt.
    */
-  delegate(name: string, task: string, opts?: { author?: string; onSession?: (sessionId: string, modelId: string) => Promise<void> }): Promise<{ sessionId: string; modelId: string }>;
+  delegate(name: string, task: string, opts?: { author?: string; project?: string; onSession?: (sessionId: string, modelId: string) => Promise<void> }): Promise<{ sessionId: string; modelId: string }>;
   /** Weitere Nachricht einer anderen Session an ein delegiertes Modell. */
   message(modelId: string, text: string, author?: string): Promise<void>;
   ensureSession(meta: ModelMeta): Promise<string>;
@@ -122,10 +132,11 @@ function toBase64(buf: ArrayBuffer): string {
 
 export const ext = (p: string) => p.split(".").pop()!.toLowerCase();
 
-function preamble(meta: ModelMeta, dir: string, tools: ModelState["tools"]) {
+async function preamble(meta: ModelMeta, dir: string, tools: ModelState["tools"]) {
   return [
-    `[Brise 3D-Modus] Nutze den Skill \`3d-mode\` und halte dich an sein Ausgabeformat.`,
+    await skillInstruction("3d-mode", meta.backend ?? "vibe", "3D-Modus"),
     `Modell: „${meta.name}“. Arbeitsordner (dein cwd): ${dir}`,
+    projectNote(meta.project, "Das Modell"),
     `Standardweg: Schreibe \`model.js\` (ES-Modul, \`export default function build({ THREE, params, csg })\` gibt ein THREE.Object3D zurück; optional \`export const params = { … }\` als Regler). Brise baut es nach jeder Änderung selbst zu \`out/model.glb\` und \`out/model.stl\` und zeigt es an – kein Befehl nötig.`,
     `Einheiten: 1 = 1 mm, Y zeigt nach oben. Benenne Teile (\`mesh.name\`). Varianten nach \`variants/<a|b|c…>/model.js\`. Halte \`notes.md\` aktuell (Zweck, Maße, Teile, ## Akzeptanzkriterien).`,
     tools.openscad
@@ -174,14 +185,15 @@ export const useModel = create<ModelState & ModelActions>((set, get) => {
     // Immer den aktuellen Stand nehmen: der Aufrufer kann ein Meta ohne sessionId halten.
     const meta = get().models.find((m) => m.id === given.id) ?? given;
     const dir = modelAbs(meta.id);
+    const backend = meta.backend ?? "vibe";
     const sessions = useStore.getState().sessions;
     if (meta.sessionId && sessions[meta.sessionId]) return meta.sessionId;
     if (meta.sessionId) {
       const sid = meta.sessionId;
-      useStore.setState((st) => ({ sessions: { ...st.sessions, [sid]: { ...emptySession(sid, dir, null, meta.name), replaying: true } } }));
+      useStore.setState((st) => ({ sessions: { ...st.sessions, [sid]: { ...emptySession(sid, dir, null, meta.name, backend), replaying: true } } }));
       try {
-        const r = await api.loadSession(dir, sid, false, false, "vibe");
-        patchSession(sid, (s) => ({ ...emptySession(sid, dir, r, meta.name), items: s.items }));
+        const r = await api.loadSession(dir, sid, false, false, backend);
+        patchSession(sid, (s) => ({ ...emptySession(sid, dir, r, meta.name, backend), items: s.items }));
         return sid;
       } catch {
         // Vibe speichert Sessions erst nach dem ersten Turn – dann neu anlegen.
@@ -192,12 +204,13 @@ export const useModel = create<ModelState & ModelActions>((set, get) => {
         });
       }
     }
-    const r = await api.newSession(dir, false, false, "vibe");
-    const session = emptySession(r.sessionId, dir, r, meta.name);
+    const r = await api.newSession(dir, false, false, backend);
+    const session = emptySession(r.sessionId, dir, r, meta.name, backend);
     useStore.setState((st) => ({ sessions: { ...st.sessions, [r.sessionId]: session } }));
-    if (session.modes.some((m) => m.id === "accept-edits") && session.currentMode !== "accept-edits") {
-      await api.setMode(r.sessionId, "accept-edits").catch(() => {});
-      patchSession(r.sessionId, (s) => ({ ...s, currentMode: "accept-edits" }));
+    const acceptEdits = session.modes.find((m) => ACCEPT_EDITS_MODES.includes(m.id))?.id;
+    if (acceptEdits && session.currentMode !== acceptEdits) {
+      await api.setMode(r.sessionId, acceptEdits).catch(() => {});
+      patchSession(r.sessionId, (s) => ({ ...s, currentMode: acceptEdits }));
     }
     const latest = get().models.find((m) => m.id === meta.id) ?? meta;
     await get().saveMeta({ ...latest, sessionId: r.sessionId });
@@ -323,6 +336,9 @@ export const useModel = create<ModelState & ModelActions>((set, get) => {
     picking: false,
     picked: null,
     handoffOpen: false,
+    seenProject: {},
+    tabs: load<string[]>("model.tabs", []),
+    splitSession: null,
     tools: { openscad: null, blender: null },
     shown: {},
     build: {},
@@ -348,25 +364,58 @@ export const useModel = create<ModelState & ModelActions>((set, get) => {
       }
       models.sort((a, b) => b.updated - a.updated);
       const tools = await modelApi.tools().catch(() => ({ openscad: null, blender: null }));
-      set({ models, tools, ready: true });
+      set((s) => ({ models, tools, ready: true, tabs: s.tabs.filter((t) => models.some((m) => m.id === t)) }));
       const last = get().activeId;
       if (last && models.some((m) => m.id === last)) await get().open(last);
       else set({ activeId: null });
     },
 
-    async create(name) {
+    async create(name, opts) {
       const now = Date.now();
-      const meta: ModelMeta = { id: newModelId(), name: name.trim() || "Neues Modell", created: now, updated: now, versions: [], handoffs: [] };
+      const meta: ModelMeta = {
+        id: newModelId(),
+        name: name.trim() || "Neues Modell",
+        created: now,
+        updated: now,
+        versions: [],
+        handoffs: [],
+        ...(opts?.project ? { project: opts.project } : {}),
+        ...(opts?.backend && opts.backend !== "vibe" ? { backend: opts.backend } : {}),
+      };
       await get().saveMeta(meta);
+      if (opts?.project) set((s) => ({ seenProject: { ...s.seenProject, [meta.id]: opts.project! } }));
       await modelApi.write(`${meta.id}/notes.md`, `# ${meta.name}\n\nNoch leer – beschreibe im Chat, was entstehen soll.\n`);
       return meta;
+    },
+
+    async setProject(id, project) {
+      const meta = get().models.find((m) => m.id === id);
+      if (!meta) return;
+      const next: ModelMeta = { ...meta };
+      if (project) next.project = project;
+      else delete next.project;
+      await get().saveMeta(next);
+    },
+
+    closeTab(id) {
+      const tabs = get().tabs.filter((t) => t !== id);
+      save("model.tabs", tabs);
+      const i = get().tabs.indexOf(id);
+      set({ tabs });
+      if (get().activeId === id) {
+        const next = tabs[Math.min(i, tabs.length - 1)];
+        if (next) get().open(next);
+        else (save("model.active", null), set({ activeId: null }));
+      }
     },
 
     async open(id) {
       const meta = get().models.find((m) => m.id === id);
       if (!meta) return;
       save("model.active", id);
-      set({ activeId: id, files: [], entry: null, mode: { kind: "single" }, picked: null, picking: false, tab: "view", shown: {}, build: {}, params: {}, info: null });
+      const tabs = get().tabs.includes(id) ? get().tabs : [...get().tabs, id];
+      save("model.tabs", tabs);
+      set({ tabs, activeId: id, files: [], entry: null, mode: { kind: "single" }, picked: null, picking: false, tab: "view", shown: {}, build: {}, params: {}, info: null });
       await get().refreshFiles();
       if (useStore.getState().phase === "ready") get().ensureSession(meta).catch((e) => useStore.setState({ error: `3D-Session: ${e}` }));
     },
@@ -382,7 +431,7 @@ export const useModel = create<ModelState & ModelActions>((set, get) => {
       const meta = get().models.find((m) => m.id === id);
       await modelApi.remove(id);
       if (meta?.sessionId) api.deleteSession(meta.sessionId).catch(() => {});
-      set((s) => ({ models: s.models.filter((m) => m.id !== id), activeId: s.activeId === id ? null : s.activeId }));
+      set((s) => ({ models: s.models.filter((m) => m.id !== id), tabs: s.tabs.filter((t) => t !== id), activeId: s.activeId === id ? null : s.activeId }));
     },
 
     async saveMeta(meta) {
@@ -459,10 +508,20 @@ export const useModel = create<ModelState & ModelActions>((set, get) => {
       return inflight[meta.id];
     },
 
-    async send(text, images, variants) {
+    async send(text, attachments, variants, extra) {
       const meta = active();
       if (!meta) return;
       const dir = modelAbs(meta.id);
+      // Bilder von außerhalb in den Modell-Ordner kopieren (refs/), damit sie bei der Übergabe mitgehen.
+      const images: Attachment[] = [];
+      for (const a of attachments) {
+        if (a.kind !== "image" || a.path.replace(/\\/g, "/").startsWith(dir)) images.push(a);
+        else {
+          const data = await api.readImage(a.path).then(([, d]) => d, () => null);
+          const safe = a.name.replace(/[^\w.-]+/g, "_");
+          images.push(data ? { ...a, path: await modelApi.writeBase64(`${meta.id}/refs/${Date.now().toString(36)}-${safe}`, data) } : a);
+        }
+      }
       let sid: string;
       try {
         sid = await get().ensureSession(meta);
@@ -471,10 +530,14 @@ export const useModel = create<ModelState & ModelActions>((set, get) => {
         return;
       }
       const session = useStore.getState().sessions[sid];
-      const first = !session?.items.some((i) => i.type === "user");
+      // Slash-Befehle zählen nicht: die Einleitung geht mit der ersten echten Nachricht.
+      const first = !session?.items.some((i) => i.type === "user" && !i.text.startsWith("/"));
       const { picked, entry } = get();
       const parts: string[] = [];
-      if (first) parts.push(preamble(meta, dir, get().tools));
+      const slash = text.startsWith("/");
+      if (first) parts.push(await preamble(meta, dir, get().tools));
+      else if ((meta.project ?? "") !== (get().seenProject[meta.id] ?? meta.project ?? "")) parts.push(projectNote(meta.project, "Das Modell") || "[Brise] Das Modell gehört zu keinem Projekt mehr.");
+      if (extra?.prefix) parts.push(extra.prefix);
       if (picked) parts.push(pickedNote(picked));
       if (variants > 1) parts.push(variantsNote(variants, entry));
       else if (entry && !entry.startsWith("model.") && !picked) parts.push(`[Brise] Gerade angezeigt: \`${entry}\`. Beziehe die Bitte darauf, wenn nichts anderes gesagt ist.`);
@@ -487,10 +550,10 @@ export const useModel = create<ModelState & ModelActions>((set, get) => {
         );
       const build = entry ? get().build[entry] : undefined;
       if (build?.status === "error") parts.push(`[Brise] Der letzte Bau von \`${entry}\` ist fehlgeschlagen:\n${build.error}`);
-      parts.push(text);
-      set({ picked: null, picking: false });
+      set((s) => ({ picked: null, picking: false, seenProject: { ...s.seenProject, [meta.id]: meta.project ?? "" } }));
       const shown = [text, picked ? `↳ ${picked.path}` : "", variants > 1 ? `↳ ${variants} Varianten` : ""].filter(Boolean).join("\n");
-      await prompt(meta, parts.join("\n\n"), shown, images);
+      // Gleicher Weg wie im Code-Modus (Auto-Modell, ZDR, Anhänge, Reserve-Konto); Slash-Befehle unverändert.
+      await useStore.getState().send(slash ? text : shown, images, { sessionId: sid, zdr: extra?.zdr, prefix: slash || !parts.length ? undefined : parts.join("\n\n") });
       if (values && Object.keys(values).length && entry) {
         // Die Werte stehen jetzt im Code.
         const latest = get().models.find((m) => m.id === meta.id);
@@ -506,10 +569,10 @@ export const useModel = create<ModelState & ModelActions>((set, get) => {
 
     async delegate(name, task, opts) {
       if (!get().ready) await get().init();
-      const meta = await get().create(name);
+      const meta = await get().create(name, { project: opts?.project });
       const sid = await get().ensureSession(meta);
       await opts?.onSession?.(sid, meta.id);
-      const text = `${preamble(meta, modelAbs(meta.id), get().tools)}\n\n${task}`;
+      const text = `${await preamble(meta, modelAbs(meta.id), get().tools)}\n\n${task}`;
       const label = name.slice(0, 70);
       // Nicht geöffnet: vor dem Turn-Ende bauen und eine Version anlegen, damit die Rückmeldung ein fertiges Ergebnis meldet.
       const finish = async () => {

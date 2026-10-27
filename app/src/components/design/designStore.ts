@@ -3,7 +3,7 @@
 // Vorschau-Einstellungen und die Abläufe Senden, Versionen und Übergabe.
 
 import { create } from "zustand";
-import { api, type ContentBlock, type SessionSetup } from "../../lib/acp";
+import { api, type SessionSetup } from "../../lib/acp";
 import { useStore, type Attachment, type Item, type Session } from "../../lib/store";
 import { load, save } from "../../lib/persist";
 import {
@@ -25,7 +25,7 @@ import {
   type PickedElement,
 } from "../../lib/design";
 import { captureEntry } from "./capture";
-import { handoffToSession } from "../../lib/handoff";
+import { ACCEPT_EDITS_MODES, handoffToSession, projectNote, skillInstruction } from "../../lib/handoff";
 
 export type PreviewMode = { kind: "single" } | { kind: "compare" } | { kind: "version"; n: number };
 
@@ -49,12 +49,21 @@ interface DesignState {
   previewErrors: string[];
   /** System, dessen Stand der Agent zuletzt gesehen hat (je Design). */
   seenSystem: Record<string, number>;
+  /** Projekt, das der Agent zuletzt als Zuordnung gesehen hat (je Design). */
+  seenProject: Record<string, string>;
+  /** Geöffnete Designs als Tabs (wie die Sessions im Code-Modus). */
+  tabs: string[];
+  /** Coding-Session, die rechts neben dem Design mitläuft (Split). */
+  splitSession: string | null;
 }
 
 interface DesignActions {
   init(): Promise<void>;
   set(p: Partial<DesignState>): void;
-  create(name: string, systemId?: string): Promise<void>;
+  create(name: string, opts?: { systemId?: string; project?: string; backend?: string }): Promise<void>;
+  /** Projekt zuordnen (oder lösen); übernimmt das Design-System des Projekts. */
+  setProject(id: string, project: string | undefined): Promise<void>;
+  closeTab(id: string): void;
   open(id: string): Promise<void>;
   rename(id: string, name: string): Promise<void>;
   remove(id: string): Promise<void>;
@@ -64,27 +73,27 @@ interface DesignActions {
   removeSystem(id: string): Promise<void>;
   applySystem(systemId: string): Promise<void>;
   importSystem(project: string): Promise<DesignSystem>;
-  send(text: string, images: Attachment[], variants: number): Promise<void>;
+  /** `extra.prefix`: Kontext aus Referenzen; `zdr`: wie im Code-Modus. */
+  send(text: string, attachments: Attachment[], variants: number, extra?: { prefix?: string; zdr?: boolean }): Promise<void>;
   cancel(): Promise<void>;
   snapshot(label: string): Promise<void>;
   restore(n: number): Promise<void>;
   promote(entry: string): Promise<void>;
   handoff(opts: { project: string; criteria: string[]; notes: string; withVariants: boolean }): Promise<void>;
   /** Neues Design mit Auftrag einer anderen Session (ADR 0007); `onSession` läuft vor dem ersten Turn. */
-  delegate(name: string, task: string, opts?: { author?: string; onSession?: (sessionId: string, designId: string) => Promise<void> }): Promise<{ sessionId: string; designId: string }>;
+  delegate(name: string, task: string, opts?: { author?: string; project?: string; onSession?: (sessionId: string, designId: string) => Promise<void> }): Promise<{ sessionId: string; designId: string }>;
   /** Weitere Nachricht einer anderen Session an ein delegiertes Design. */
   message(designId: string, text: string, author?: string): Promise<void>;
 }
 
 const metaPath = (id: string) => `${id}/design.json`;
 
-export function emptySession(id: string, cwd: string, setup: SessionSetup | null, title: string): Session {
+export function emptySession(id: string, cwd: string, setup: SessionSetup | null, title: string, backend = "vibe"): Session {
   const modeOption = setup?.configOptions?.find((o) => o.id === "mode");
   return {
     id,
     cwd,
-    // Design-Sessions laufen immer über Vibe (Skill design-mode).
-    backend: "vibe",
+    backend,
     title,
     items: [],
     pending: [],
@@ -116,14 +125,17 @@ const signature = (files: DesignFile[]) =>
     .join("|");
 
 /** Erklärt dem Agenten Ort, Format und Design-System. Geht mit der ersten Nachricht mit. */
-function preamble(meta: DesignMeta, dir: string, sys: DesignSystem) {
+async function preamble(meta: DesignMeta, dir: string, sys: DesignSystem) {
   return [
-    `[Brise Design-Modus] Nutze den Skill \`design-mode\` und halte dich an sein Ausgabeformat.`,
+    await skillInstruction("design-mode", meta.backend ?? "vibe", "Design-Modus"),
     `Design: „${meta.name}“. Arbeitsordner (dein cwd): ${dir}`,
+    projectNote(meta.project, "Das Design"),
     `Schreibe das Hauptdesign nach \`index.html\` (oder \`App.jsx\` für React), Varianten nach \`variants/<a|b|c…>/index.html\`, und halte \`notes.md\` aktuell (Zweck, Aufbau, Komponenten, Zustände, ## Akzeptanzkriterien).`,
     `\`tokens.css\` und \`tokens.json\` verwaltet Brise – nicht ändern. Die Tokens sind in der Vorschau als CSS-Variablen geladen; Hell/Dunkel schaltet Brise über \`data-theme="dark"\` bzw. die Klasse \`dark\` auf <html>.`,
     tokensSummary(sys),
-  ].join("\n");
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 function systemNote(sys: DesignSystem) {
@@ -189,14 +201,15 @@ export const useDesign = create<DesignState & DesignActions>((set, get) => {
     // Immer den aktuellen Stand nehmen: der Aufrufer kann ein Meta ohne sessionId halten.
     const meta = get().designs.find((d) => d.id === given.id) ?? given;
     const dir = absPath(meta.id);
+    const backend = meta.backend ?? "vibe";
     const sessions = useStore.getState().sessions;
     if (meta.sessionId && sessions[meta.sessionId]) return meta.sessionId;
     if (meta.sessionId) {
       const sid = meta.sessionId;
-      useStore.setState((st) => ({ sessions: { ...st.sessions, [sid]: { ...emptySession(sid, dir, null, meta.name), replaying: true } } }));
+      useStore.setState((st) => ({ sessions: { ...st.sessions, [sid]: { ...emptySession(sid, dir, null, meta.name, backend), replaying: true } } }));
       try {
-        const r = await api.loadSession(dir, sid, false, false, "vibe");
-        patchSession(sid, (s) => ({ ...emptySession(sid, dir, r, meta.name), items: s.items }));
+        const r = await api.loadSession(dir, sid, false, false, backend);
+        patchSession(sid, (s) => ({ ...emptySession(sid, dir, r, meta.name, backend), items: s.items }));
         return sid;
       } catch {
         // Vibe speichert Sessions erst nach dem ersten Turn – dann neu anlegen.
@@ -207,13 +220,14 @@ export const useDesign = create<DesignState & DesignActions>((set, get) => {
         });
       }
     }
-    const r = await api.newSession(dir, false, false, "vibe");
-    const session = emptySession(r.sessionId, dir, r, meta.name);
+    const r = await api.newSession(dir, false, false, backend);
+    const session = emptySession(r.sessionId, dir, r, meta.name, backend);
     useStore.setState((st) => ({ sessions: { ...st.sessions, [r.sessionId]: session } }));
     // Dateien im eigenen Arbeitsordner ohne Rückfrage schreiben, Befehle weiter mit Freigabe.
-    if (session.modes.some((m) => m.id === "accept-edits") && session.currentMode !== "accept-edits") {
-      await api.setMode(r.sessionId, "accept-edits").catch(() => {});
-      patchSession(r.sessionId, (s) => ({ ...s, currentMode: "accept-edits" }));
+    const acceptEdits = session.modes.find((m) => ACCEPT_EDITS_MODES.includes(m.id))?.id;
+    if (acceptEdits && session.currentMode !== acceptEdits) {
+      await api.setMode(r.sessionId, acceptEdits).catch(() => {});
+      patchSession(r.sessionId, (s) => ({ ...s, currentMode: acceptEdits }));
     }
     const latest = get().designs.find((d) => d.id === meta.id) ?? meta;
     await get().saveMeta({ ...latest, sessionId: r.sessionId });
@@ -276,6 +290,9 @@ export const useDesign = create<DesignState & DesignActions>((set, get) => {
     handoffOpen: false,
     previewErrors: [],
     seenSystem: {},
+    seenProject: {},
+    tabs: load<string[]>("design.tabs", []),
+    splitSession: null,
 
     set: (p) => set(p),
 
@@ -305,33 +322,69 @@ export const useDesign = create<DesignState & DesignActions>((set, get) => {
         await designApi.write(`systems/${sys.id}.json`, JSON.stringify(sys, null, 2));
         systems.push(sys);
       }
-      set({ designs, systems, ready: true });
+      set((s) => ({ designs, systems, ready: true, tabs: s.tabs.filter((t) => designs.some((d) => d.id === t)) }));
       const last = get().activeId;
       if (last && designs.some((d) => d.id === last)) await get().open(last);
       else set({ activeId: null });
     },
 
-    async create(name, systemId) {
+    async create(name, opts) {
       const now = Date.now();
       const meta: DesignMeta = {
         id: newId("d"),
         name: name.trim() || "Neues Design",
         created: now,
         updated: now,
-        systemId: systemId ?? get().systems[0]?.id ?? "s-standard",
+        systemId: opts?.systemId ?? get().systems[0]?.id ?? "s-standard",
         versions: [],
         handoffs: [],
+        ...(opts?.backend && opts.backend !== "vibe" ? { backend: opts.backend } : {}),
       };
       await get().saveMeta(meta);
       await designApi.write(`${meta.id}/notes.md`, `# ${meta.name}\n\nNoch leer – beschreibe im Chat, was entstehen soll.\n`);
+      if (opts?.project) await get().setProject(meta.id, opts.project);
+      // Der erste Prompt enthält das Projekt schon in der Einleitung.
+      if (opts?.project) set((s) => ({ seenProject: { ...s.seenProject, [meta.id]: opts.project! } }));
       await get().open(meta.id);
+    },
+
+    async setProject(id, project) {
+      const meta = get().designs.find((d) => d.id === id);
+      if (!meta) return;
+      let systemId = meta.systemId;
+      if (project) {
+        // Design-System des Projekts: vorhandenes übernehmen, sonst aus dem Projekt importieren.
+        const own = get().systems.find((s) => s.source === project);
+        if (own) systemId = own.id;
+        else systemId = (await get().importSystem(project).catch(() => null))?.id ?? systemId;
+      }
+      const next: DesignMeta = { ...meta, systemId };
+      if (project) next.project = project;
+      else delete next.project;
+      await get().saveMeta(next);
+      if (systemId !== meta.systemId) await writeTokens(next).catch(() => {});
+      if (get().activeId === id) set((s) => ({ rev: s.rev + 1 }));
+    },
+
+    closeTab(id) {
+      const tabs = get().tabs.filter((t) => t !== id);
+      save("design.tabs", tabs);
+      const i = get().tabs.indexOf(id);
+      set({ tabs });
+      if (get().activeId === id) {
+        const next = tabs[Math.min(i, tabs.length - 1)];
+        if (next) get().open(next);
+        else (save("design.active", null), set({ activeId: null }));
+      }
     },
 
     async open(id) {
       const meta = get().designs.find((d) => d.id === id);
       if (!meta) return;
       save("design.active", id);
-      set({ activeId: id, files: [], entry: null, mode: { kind: "single" }, picked: null, picking: false, previewErrors: [], tab: "preview" });
+      const tabs = get().tabs.includes(id) ? get().tabs : [...get().tabs, id];
+      save("design.tabs", tabs);
+      set({ activeId: id, tabs, files: [], entry: null, mode: { kind: "single" }, picked: null, picking: false, previewErrors: [], tab: "preview" });
       await writeTokens(meta).catch(() => {});
       await get().refreshFiles();
       if (useStore.getState().phase === "ready") ensureSession(meta).catch((e) => useStore.setState({ error: `Design-Session: ${e}` }));
@@ -348,7 +401,7 @@ export const useDesign = create<DesignState & DesignActions>((set, get) => {
       const meta = get().designs.find((d) => d.id === id);
       await designApi.remove(id);
       if (meta?.sessionId) api.deleteSession(meta.sessionId).catch(() => {});
-      set((s) => ({ designs: s.designs.filter((d) => d.id !== id), activeId: s.activeId === id ? null : s.activeId, files: s.activeId === id ? [] : s.files }));
+      set((s) => ({ designs: s.designs.filter((d) => d.id !== id), tabs: s.tabs.filter((t) => t !== id), activeId: s.activeId === id ? null : s.activeId, files: s.activeId === id ? [] : s.files }));
     },
 
     async saveMeta(meta) {
@@ -395,20 +448,32 @@ export const useDesign = create<DesignState & DesignActions>((set, get) => {
     },
 
     async importSystem(project) {
+      const known = get().systems.find((s) => s.source === project);
       const imp = await designApi.importTokens(project);
       if (!imp.vars.length && !imp.tailwind.length) throw new Error("Keine CSS-Variablen oder Tailwind-Farben gefunden.");
       const name = project.split(/[\\/]/).filter(Boolean).pop() ?? "Projekt";
-      const sys = systemFromImport(defaultSystem(), name, project, imp);
+      // Erneuter Import aktualisiert das vorhandene System des Projekts.
+      const sys = { ...systemFromImport(defaultSystem(), name, project, imp), ...(known ? { id: known.id } : {}) };
       await get().saveSystem(sys);
       return sys;
     },
 
-    async send(text, images, variants) {
+    async send(text, attachments, variants, extra) {
       const meta = active();
       if (!meta) return;
       const dir = absPath(meta.id);
       const sys = systemOf(meta);
       await writeTokens(meta);
+      // Bilder von außerhalb in den Design-Ordner kopieren, damit sie bei der Übergabe mitgehen.
+      const images: Attachment[] = [];
+      for (const a of attachments) {
+        if (a.kind !== "image" || a.path.replace(/\\/g, "/").startsWith(dir)) images.push(a);
+        else {
+          const data = await api.readImage(a.path).then(([, d]) => d, () => null);
+          const safe = a.name.replace(/[^\w.-]+/g, "_");
+          images.push(data ? { ...a, path: await designApi.writeBase64(`${meta.id}/refs/${Date.now().toString(36)}-${safe}`, data) } : a);
+        }
+      }
       let sid: string;
       try {
         sid = await ensureSession(meta);
@@ -417,37 +482,23 @@ export const useDesign = create<DesignState & DesignActions>((set, get) => {
         return;
       }
       const session = useStore.getState().sessions[sid];
-      const first = !session?.items.some((i) => i.type === "user");
+      // Slash-Befehle zählen nicht: die Einleitung geht mit der ersten echten Nachricht.
+      const first = !session?.items.some((i) => i.type === "user" && !i.text.startsWith("/"));
       const { picked, entry } = get();
       const parts: string[] = [];
-      if (first) parts.push(preamble(meta, dir, sys));
+      const slash = text.startsWith("/");
+      if (first) parts.push(await preamble(meta, dir, sys));
       else if ((get().seenSystem[meta.id] ?? sys.updated) < sys.updated) parts.push(systemNote(sys));
+      if (!first && (meta.project ?? "") !== (get().seenProject[meta.id] ?? meta.project ?? "")) parts.push(projectNote(meta.project, "Das Design") || "[Brise] Das Design gehört zu keinem Projekt mehr.");
+      if (extra?.prefix) parts.push(extra.prefix);
       if (picked) parts.push(pickedNote(picked));
       if (variants > 1) parts.push(variantsNote(variants, entry));
       else if (entry && entry !== "index.html" && !picked) parts.push(`[Brise] Gerade angezeigt: \`${entry}\`. Beziehe die Bitte darauf, wenn nichts anderes gesagt ist.`);
-      parts.push(text);
-      set((s) => ({ seenSystem: { ...s.seenSystem, [meta.id]: sys.updated }, picked: null, picking: false }));
+      set((s) => ({ seenSystem: { ...s.seenSystem, [meta.id]: sys.updated }, seenProject: { ...s.seenProject, [meta.id]: meta.project ?? "" }, picked: null, picking: false }));
 
-      const blocks: ContentBlock[] = [{ type: "text", text: parts.join("\n\n") }];
-      for (const a of images) {
-        try {
-          const [mimeType, data] = await api.readImage(a.path);
-          blocks.push({ type: "image", mimeType, data });
-        } catch (e) {
-          pushItem(sid, { type: "notice", id: uid(), text: String(e), tone: "warn" });
-        }
-      }
+      // Gleicher Weg wie im Code-Modus (Auto-Modell, ZDR, Anhänge, Reserve-Konto); Slash-Befehle unverändert.
       const shown = [text, picked ? `↳ ${picked.selector}` : "", variants > 1 ? `↳ ${variants} Varianten` : ""].filter(Boolean).join("\n");
-      const started = Date.now();
-      patchSession(sid, (s) => ({ ...s, running: true, turnStarted: started, items: [...s.items, { type: "user", id: uid(), text: shown, attachments: images }] }));
-      try {
-        const res = await api.prompt(sid, blocks);
-        pushItem(sid, { type: "turn", id: uid(), stopReason: res.stopReason, ms: Date.now() - started, tokens: res.usage?.totalTokens });
-      } catch (e) {
-        pushItem(sid, { type: "notice", id: uid(), text: String(e), tone: "error" });
-      } finally {
-        patchSession(sid, (s) => ({ ...s, running: false, turnStarted: undefined }));
-      }
+      await useStore.getState().send(slash ? text : shown, images, { sessionId: sid, zdr: extra?.zdr, prefix: slash || !parts.length ? undefined : parts.join("\n\n") });
       if (get().activeId !== meta.id) return;
       await get().refreshFiles();
       if (variants > 1 && entries(get().files).length > 1) set({ mode: { kind: "compare" } });
@@ -457,15 +508,19 @@ export const useDesign = create<DesignState & DesignActions>((set, get) => {
     async delegate(name, task, opts) {
       if (!get().ready) await get().init();
       const now = Date.now();
-      const meta: DesignMeta = { id: newId("d"), name: name.trim() || "Neues Design", created: now, updated: now, systemId: get().systems[0]?.id ?? "s-standard", versions: [], handoffs: [] };
+      let meta: DesignMeta = { id: newId("d"), name: name.trim() || "Neues Design", created: now, updated: now, systemId: get().systems[0]?.id ?? "s-standard", versions: [], handoffs: [] };
       await get().saveMeta(meta);
+      if (opts?.project) {
+        await get().setProject(meta.id, opts.project);
+        meta = get().designs.find((d) => d.id === meta.id) ?? meta;
+      }
       await designApi.write(`${meta.id}/notes.md`, `# ${meta.name}\n\nWird gerade im Auftrag einer anderen Session entworfen.\n`);
       await writeTokens(meta);
       const sid = await ensureSession(meta);
       await opts?.onSession?.(sid, meta.id);
       const sys = systemOf(meta);
       set((s) => ({ seenSystem: { ...s.seenSystem, [meta.id]: sys.updated } }));
-      void promptQuietly(get().designs.find((d) => d.id === meta.id) ?? meta, `${preamble(meta, absPath(meta.id), sys)}\n\n${task}`, task, opts?.author);
+      void promptQuietly(get().designs.find((d) => d.id === meta.id) ?? meta, `${await preamble(meta, absPath(meta.id), sys)}\n\n${task}`, task, opts?.author);
       return { sessionId: sid, designId: meta.id };
     },
 

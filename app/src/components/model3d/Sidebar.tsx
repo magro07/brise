@@ -5,6 +5,7 @@ import { relativeTime } from "../../lib/format";
 import { askText, confirmAction } from "../../lib/dialogs";
 import { Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger, clsx } from "../ui";
 import { useModel } from "./modelStore";
+import { ProjectGroups, askNewWork } from "../workbench/parts";
 
 /** Liste der 3D-Modelle für die Seitenleiste im 3D-Modus. */
 export function ModelList() {
@@ -33,7 +34,7 @@ export function ModelList() {
             <span className="text-[0.9em]">Erstes Modell anlegen</span>
           </button>
         )}
-        {models.map((m) => {
+        <ProjectGroups items={models} render={(m) => {
           const live = m.sessionId ? sessions[m.sessionId] : undefined;
           const running = !!live?.running;
           const waiting = (live?.pending.length ?? 0) > 0;
@@ -80,16 +81,17 @@ export function ModelList() {
               </Menu>
             </div>
           );
-        })}
+        }} />
       </nav>
     </>
   );
 }
 
-export async function newModel(prompt?: string) {
-  const name = await askText("Name des Modells", "z. B. Wandhalterung");
-  if (name == null) return;
-  const meta = await useModel.getState().create(name || "Neues Modell");
+export async function newModel(prompt?: string, project?: string) {
+  const answer = await askNewWork("3d", project);
+  if (!answer) return;
+  await useModel.getState().init();
+  const meta = await useModel.getState().create(answer.name || "Neues Modell", { project: answer.project, backend: answer.backend });
   useStore.getState().setView("3d");
   await useModel.getState().open(meta.id);
   if (prompt) setTimeout(() => useModel.getState().send(prompt, [], 1), 300);

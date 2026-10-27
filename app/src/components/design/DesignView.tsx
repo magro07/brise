@@ -1,11 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { open as openDialog } from "@tauri-apps/plugin-dialog";
+import { useEffect, useMemo, useState } from "react";
 import {
-  ArrowUp,
   Columns3,
   FileCode2,
   History,
-  ImagePlus,
   LayoutTemplate,
   Monitor,
   Moon,
@@ -22,13 +19,16 @@ import {
   Tablet,
   X,
 } from "lucide-react";
-import { api } from "../../lib/acp";
-import { useStore, type Attachment } from "../../lib/store";
+import { useStore } from "../../lib/store";
 import { relativeTime } from "../../lib/format";
 import { askText } from "../../lib/dialogs";
-import { designApi, entries, tokensCss, type Device } from "../../lib/design";
+import { absPath, designApi, entries, tokensCss, type Device } from "../../lib/design";
 import { Conversation } from "../chat/Conversation";
 import { PermissionPrompt } from "../composer/Pinned";
+import { Composer } from "../composer/Composer";
+import { SidePanel } from "../panels/SidePanel";
+import { TerminalPanel } from "../tools/Terminal";
+import { ProjectMenu, SplitMenu, SplitSession, WorkTabs, askNewWork, useSplitFocus } from "../workbench/parts";
 import { Button, IconButton, Logo, Menu, MenuContent, MenuItem, MenuLabel, MenuSeparator, MenuTrigger, clsx } from "../ui";
 import { useDesign } from "./designStore";
 import { CompareGrid, PreviewFrame } from "./Preview";
@@ -57,19 +57,45 @@ export function DesignView() {
     if (phase === "ready" && id && ready) useDesign.getState().open(id);
   }, [phase === "ready", ready]);
 
+  const activeSession = useActiveDesignSession();
   if (!ready) return <div className="flex flex-1 items-center justify-center text-muted">Lade Designs …</div>;
   return (
-    <div data-brise="design" className="flex min-h-0 min-w-0 flex-1">
-      {activeId ? <Workbench key={activeId} /> : <DesignHome />}
+    <div data-brise="design" className="flex min-h-0 min-w-0 flex-1 flex-col">
+      <DesignTabs />
+      <div className="flex min-h-0 min-w-0 flex-1">
+        {activeId ? <Workbench key={activeId} /> : <DesignHome />}
+        <SidePanel session={activeSession} />
+      </div>
+      <WorkTerminal />
       <HandoffDialog />
     </div>
   );
 }
 
-export async function newDesign(prompt?: string) {
-  const name = await askText("Name des Designs", "z. B. Preisseite");
-  if (name == null) return;
-  await useDesign.getState().create(name || "Neues Design");
+function useActiveDesignSession() {
+  const sid = useDesign((s) => s.designs.find((d) => d.id === s.activeId)?.sessionId);
+  return useStore((s) => (sid ? s.sessions[sid] : undefined));
+}
+
+function DesignTabs() {
+  const tabs = useDesign((s) => s.tabs);
+  const designs = useDesign((s) => s.designs);
+  const activeId = useDesign((s) => s.activeId);
+  const sessions = useStore((s) => s.sessions);
+  const list = tabs.flatMap((id) => {
+    const d = designs.find((x) => x.id === id);
+    return d ? [{ id, name: d.name, session: d.sessionId ? sessions[d.sessionId] : undefined }] : [];
+  });
+  const { open, closeTab } = useDesign.getState();
+  return <WorkTabs tabs={list} active={activeId} icon={<Palette />} onOpen={open} onClose={closeTab} onNew={() => newDesign()} newLabel="Neues Design" />;
+}
+
+export async function newDesign(prompt?: string, project?: string) {
+  const answer = await askNewWork("design", project);
+  if (!answer) return;
+  useStore.getState().setView("design");
+  await useDesign.getState().init();
+  await useDesign.getState().create(answer.name || "Neues Design", { project: answer.project, backend: answer.backend });
   if (prompt) setTimeout(() => useDesign.getState().send(prompt, [], 1), 300);
 }
 
@@ -128,6 +154,7 @@ function Workbench() {
   const session = useStore((s) => (meta.sessionId ? s.sessions[meta.sessionId] : undefined));
   const [width, setWidth] = useState(() => Number(localStorage.getItem("brise.design.chatWidth")) || 360);
   const pending = session?.pending[0];
+  const split = useDesign((s) => s.splitSession);
 
   const drag = (e: React.MouseEvent) => {
     const start = e.clientX;
@@ -144,10 +171,11 @@ function Workbench() {
 
   return (
     <>
-      <div className="flex min-h-0 shrink-0 flex-col border-r border-line" style={{ width }}>
-        <div className="flex h-12 shrink-0 items-center gap-2 border-b border-line px-3" data-tauri-drag-region>
-          <Palette className="h-4 w-4 text-accent" />
+      <div className="flex min-h-0 shrink-0 flex-col border-r border-line" style={{ width }} onMouseDownCapture={() => useSplitFocus.setState({ on: false })}>
+        <div className="flex h-12 shrink-0 items-center gap-1.5 border-b border-line px-3" data-tauri-drag-region>
+          <Palette className="h-4 w-4 shrink-0 text-accent" />
           <span className="min-w-0 flex-1 truncate font-medium">{meta.name}</span>
+          <ProjectMenu value={meta.project} onChange={(p) => useDesign.getState().setProject(meta.id, p)} />
           <IconButton
             label="Umbenennen"
             size="sm"
@@ -180,11 +208,12 @@ function Workbench() {
           </div>
         )}
         <div className="shrink-0 px-3 pb-3">
-          {session && pending ? <PermissionPrompt session={session} pending={pending} /> : <DesignComposer running={!!session?.running} />}
+          {session && pending ? <PermissionPrompt session={session} pending={pending} /> : <DesignComposer />}
         </div>
       </div>
       <div className="w-1 shrink-0 cursor-col-resize hover:bg-accent/40" onMouseDown={drag} role="separator" aria-label="Breite des Chats ändern" />
       <Stage />
+      {split && <SplitSession id={split} onClose={() => useDesign.setState({ splitSession: null })} />}
     </>
   );
 }
@@ -225,6 +254,12 @@ function Stage() {
           ]}
         />
         <div className="flex-1" />
+        <SplitMenu
+          project={meta.project}
+          current={useDesign((s) => s.splitSession)}
+          lastHandoff={meta.handoffs[meta.handoffs.length - 1]?.sessionId}
+          onPick={(id) => set({ splitSession: id })}
+        />
         <Button variant="primary" size="sm" disabled={!list.length} onClick={() => set({ handoffOpen: true })} title="Neue Coding-Session mit vollständigem Auftrag in einem Projekt starten">
           <Send className="h-3.5 w-3.5" /> <span className="hidden @[560px]:inline">An Session übergeben</span>
           <span className="@[560px]:hidden">Übergeben</span>
@@ -437,134 +472,76 @@ function FilesView() {
   );
 }
 
-const IMAGE_EXT = /\.(png|jpe?g|gif|webp)$/i;
-
-/** Eingabe im Design-Modus: Text, Vorlagen-Bilder, ausgewähltes Element, Anzahl Varianten. */
-function DesignComposer({ running }: { running: boolean }) {
-  const id = useDesign((s) => s.activeId)!;
+/** Eingabe im Design-Modus: der Code-Composer mit ausgewähltem Element und Anzahl Varianten. */
+function DesignComposer() {
+  const meta = useDesign((s) => s.designs.find((d) => d.id === s.activeId))!;
+  const session = useStore((s) => (meta.sessionId ? s.sessions[meta.sessionId] : undefined));
   const picked = useDesign((s) => s.picked);
-  const [text, setText] = useState("");
-  const [images, setImages] = useState<Attachment[]>([]);
+  const picking = useDesign((s) => s.picking);
+  const splitFocus = useSplitFocus((s) => s.on);
   const [variants, setVariants] = useState(1);
-  const ref = useRef<HTMLTextAreaElement>(null);
-
-  useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    el.style.height = "auto";
-    el.style.height = `${Math.min(el.scrollHeight, 220)}px`;
-  }, [text]);
-  useEffect(() => {
-    if (picked) ref.current?.focus();
-  }, [picked]);
-
-  // Bilder in den Design-Ordner kopieren, damit sie bei der Übergabe mitgehen.
-  const addImage = async (name: string, data: string) => {
-    const safe = name.replace(/[^\w.-]+/g, "_");
-    const abs = await designApi.writeBase64(`${id}/refs/${Date.now().toString(36)}-${safe}`, data);
-    setImages((l) => [...l, { kind: "image", path: abs, name }]);
-  };
-  const pick = async () => {
-    const chosen = await openDialog({ multiple: true, title: "Vorlage oder Screenshot anhängen", filters: [{ name: "Bilder", extensions: ["png", "jpg", "jpeg", "webp", "gif"] }] });
-    for (const p of Array.isArray(chosen) ? chosen : chosen ? [chosen] : []) {
-      if (!IMAGE_EXT.test(p)) continue;
-      const [, data] = await api.readImage(p);
-      await addImage(p.split(/[\\/]/).pop()!, data);
-    }
-  };
-  const onPaste = (e: React.ClipboardEvent) => {
-    const file = [...e.clipboardData.files].find((f) => f.type.startsWith("image/"));
-    if (!file) return;
-    e.preventDefault();
-    const reader = new FileReader();
-    reader.onload = () => addImage(file.name && file.name !== "image.png" ? file.name : `eingefuegt.${file.type.split("/")[1] || "png"}`, String(reader.result).split(",")[1]);
-    reader.readAsDataURL(file);
-  };
-  const submit = () => {
-    const t = text.trim();
-    if (!t || running) return;
-    useDesign.getState().send(t, images, variants);
-    setText("");
-    setImages([]);
-    setVariants(1);
-  };
-
   return (
-    <div className="rounded-2xl border border-line bg-elev shadow-soft focus-within:border-line-strong">
-      {(picked || images.length > 0) && (
-        <div className="flex flex-wrap gap-1.5 px-3 pt-2.5">
-          {picked && (
-            <span className="inline-flex max-w-full items-center gap-1 rounded-md border border-accent/50 bg-accent-soft px-2 py-0.5 text-[0.8em]" title={picked.html}>
-              <MousePointerClick className="h-3 w-3 shrink-0 text-accent" />
-              <span className="truncate font-mono">{picked.selector}</span>
-              <button onClick={() => useDesign.setState({ picked: null })} aria-label="Auswahl entfernen">
-                <X className="h-3 w-3" />
-              </button>
-            </span>
-          )}
-          {images.map((a) => (
-            <span key={a.path} className="inline-flex items-center gap-1 rounded-md border border-line bg-panel px-2 py-0.5 text-[0.8em]">
-              <ImagePlus className="h-3 w-3" /> {a.name}
-              <button onClick={() => setImages((l) => l.filter((x) => x !== a))} aria-label="Entfernen">
-                <X className="h-3 w-3" />
-              </button>
-            </span>
-          ))}
-        </div>
-      )}
-      <textarea
-        ref={ref}
-        value={text}
-        onChange={(e) => setText(e.target.value)}
-        onPaste={onPaste}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
-            e.preventDefault();
-            submit();
-          }
-        }}
-        rows={2}
-        placeholder={picked ? "Was soll sich an diesem Element ändern? (z. B. „größer, mit Icon“)" : "Beschreibe das Design oder eine Änderung …"}
-        className="block max-h-[220px] w-full resize-none bg-transparent px-3.5 pt-3 outline-none placeholder:text-muted"
-      />
-      <div className="flex items-center gap-1 px-2 pb-2">
-        <IconButton label="Vorlage/Screenshot anhängen (auch per Einfügen)" onClick={pick}>
-          <ImagePlus className="h-4 w-4" />
-        </IconButton>
-        <IconButton label="Element in der Vorschau auswählen" active={useDesign((s) => s.picking)} onClick={() => useDesign.setState((s) => ({ picking: !s.picking, tab: "preview" }))}>
-          <MousePointerClick className="h-4 w-4" />
-        </IconButton>
-        <Menu>
-          <MenuTrigger asChild>
-            <button className={clsx("flex h-8 items-center gap-1 rounded-md px-2 text-[0.86em] hover:bg-hover", variants > 1 ? "text-accent" : "text-muted")}>
-              <Columns3 className="h-3.5 w-3.5" /> {variants > 1 ? `${variants} Varianten` : "1 Entwurf"}
+    <Composer
+      session={session}
+      project={meta.project ?? absPath(meta.id)}
+      focused={!splitFocus}
+      exclude={meta.id}
+      disabled={!session}
+      focusKey={picked}
+      placeholder={
+        !session
+          ? "Verbinde mit dem Agenten …"
+          : picked
+            ? "Was soll sich an diesem Element ändern? (z. B. „größer, mit Icon“)"
+            : "Beschreibe das Design oder eine Änderung …  @ für Dateien, Projekte, Designs, / für Befehle"
+      }
+      onSend={(text, attachments, opts) => {
+        useDesign.getState().send(text, attachments, variants, opts);
+        setVariants(1);
+      }}
+      onCancel={() => useDesign.getState().cancel()}
+      onPasteImage={(name, data) => designApi.writeBase64(`${meta.id}/refs/${Date.now().toString(36)}-${name.replace(/[^\w.-]+/g, "_")}`, data)}
+      chips={
+        picked && (
+          <span className="inline-flex h-7 max-w-full items-center gap-1 rounded-lg border border-accent/50 bg-accent-soft px-2 text-[0.84em]" title={picked.html}>
+            <MousePointerClick className="h-3 w-3 shrink-0 text-accent" />
+            <span className="truncate font-mono">{picked.selector}</span>
+            <button onClick={() => useDesign.setState({ picked: null })} aria-label="Auswahl entfernen">
+              <X className="h-3 w-3" />
             </button>
-          </MenuTrigger>
-          <MenuContent side="top">
-            <MenuLabel>Wie viele Varianten?</MenuLabel>
-            {[1, 2, 3, 4].map((n) => (
-              <MenuItem key={n} onSelect={() => setVariants(n)} checked={variants === n}>
-                {n === 1 ? "Ein Entwurf" : `${n} Varianten zum Vergleichen`}
-              </MenuItem>
-            ))}
-          </MenuContent>
-        </Menu>
-        <div className="flex-1" />
-        {running ? (
-          <Button size="sm" variant="secondary" onClick={() => useDesign.getState().cancel()}>
-            <Square className="h-3 w-3" /> Stopp
-          </Button>
-        ) : (
-          <button
-            onClick={submit}
-            disabled={!text.trim()}
-            className="flex h-8 w-8 items-center justify-center rounded-full bg-accent text-accent-fg disabled:opacity-30"
-            aria-label="Senden"
-          >
-            <ArrowUp className="h-4 w-4" />
-          </button>
-        )}
-      </div>
-    </div>
+          </span>
+        )
+      }
+      tools={
+        <>
+          <IconButton label="Element in der Vorschau auswählen" active={picking} onClick={() => useDesign.setState((s) => ({ picking: !s.picking, tab: "preview" }))}>
+            <MousePointerClick className="h-4 w-4" />
+          </IconButton>
+          <Menu>
+            <MenuTrigger asChild>
+              <button className={clsx("inline-flex h-7 items-center gap-1 rounded-lg px-2 text-[0.86em] hover:bg-hover", variants > 1 ? "text-accent" : "text-fg-2")} aria-label="Varianten">
+                <Columns3 className="h-3.5 w-3.5" /> <span className="hidden @[620px]:inline">{variants > 1 ? `${variants} Varianten` : "1 Entwurf"}</span>
+                {variants > 1 && <span className="@[620px]:hidden">{variants}</span>}
+              </button>
+            </MenuTrigger>
+            <MenuContent side="top">
+              <MenuLabel>Wie viele Varianten?</MenuLabel>
+              {[1, 2, 3, 4].map((n) => (
+                <MenuItem key={n} onSelect={() => setVariants(n)} checked={variants === n}>
+                  {n === 1 ? "Ein Entwurf" : `${n} Varianten zum Vergleichen`}
+                </MenuItem>
+              ))}
+            </MenuContent>
+          </Menu>
+        </>
+      }
+    />
   );
+}
+
+/** Terminal (Strg+`) wie im Code-Modus: im zugeordneten Projekt, sonst im Arbeitsordner. */
+function WorkTerminal() {
+  const meta = useDesign((s) => s.designs.find((x) => x.id === s.activeId));
+  const cwd = meta ? (meta.project ?? absPath(meta.id)) : null;
+  return cwd ? <TerminalPanel cwd={cwd} /> : null;
 }

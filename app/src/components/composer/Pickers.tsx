@@ -80,7 +80,7 @@ export function ModePicker({ session }: { session?: Session }) {
               icon={<Icon />}
               checked={m.id === current}
               description={i?.description ?? m.description}
-              onSelect={() => setOption("mode", m.id)}
+              onSelect={() => setOption("mode", m.id, session?.id)}
             >
               {i?.label ?? m.name}
             </MenuItem>
@@ -132,7 +132,7 @@ export function OptionPicker({ session, id }: { session?: Session; id: "model" |
               description={o.description}
               onSelect={() => {
                 if (autoCapable) setPrefs({ autoModel: false });
-                setOption("model", o.value);
+                setOption("model", o.value, session?.id);
               }}
             >
               {o.name}
@@ -158,7 +158,7 @@ export function OptionPicker({ session, id }: { session?: Session; id: "model" |
             key={o.value}
             checked={o.value === current}
             description={(id as string) === "model" ? o.description : undefined}
-            onSelect={() => setOption(id, o.value)}
+            onSelect={() => setOption(id, o.value, session?.id)}
           >
             {label(o.value)}
           </MenuItem>
@@ -232,7 +232,7 @@ export function ThinkingPicker({ session }: { session?: Session }) {
             checked={!auto && o.value === current}
             onSelect={() => {
               setAuto(false);
-              setOption("thinking", o.value);
+              setOption("thinking", o.value, session?.id);
             }}
           >
             {THINKING_LABEL[o.value] ?? o.name}
