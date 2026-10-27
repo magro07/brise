@@ -35,6 +35,8 @@ import { SecretPrompt } from "./components/secrets/SecretPrompt";
 import { initSecrets, useSecretRequest } from "./lib/secrets";
 import { initOrchestra } from "./lib/orchestra";
 import { OrchStrip } from "./components/orchestra/Orchestra";
+import { initComputer } from "./lib/computer";
+import { ComputerBanner } from "./components/computer/Computer";
 
 /** Backend-Events abonnieren und einmal mit Vibe verbinden. */
 function useBackend() {
@@ -67,6 +69,7 @@ function useBackend() {
     const stopSecrets = initSecrets();
     const stopPolicy = initPolicy();
     const stopOrchestra = initOrchestra();
+    const stopComputer = initComputer();
     api.readCustomization().then((c) => s().applyCustomization({ ...c, settings: { ...c.settings, overrides: undefined } }));
     api.startupProject().then((p) => {
       if (p) s().openProject(p);
@@ -78,6 +81,7 @@ function useBackend() {
       stopSecrets();
       stopPolicy();
       stopOrchestra();
+      stopComputer();
     };
   }, []);
 }
@@ -248,7 +252,9 @@ export default function App() {
       {phase !== "ready" ? (
         <StartScreen />
       ) : (
-        <div className="flex h-full">
+        <div className="flex h-full flex-col">
+          <ComputerBanner />
+          <div className="flex min-h-0 flex-1">
           {sidebarOpen && <Sidebar />}
           {view === "settings" ? (
             <SettingsView />
@@ -261,6 +267,7 @@ export default function App() {
           ) : (
             <Workspace />
           )}
+          </div>
         </div>
       )}
       <CommandPalette />

@@ -504,6 +504,9 @@ async fn handle(line: &str) -> CmdResult<String> {
     let caller = crate::secrets::session_for_tag(msg["tag"].as_str().unwrap_or("")).ok_or("Unbekannte Session – bitte kurz warten und erneut versuchen.")?;
     let cwd = msg["cwd"].as_str().unwrap_or("").to_string();
     let args = &msg["args"];
+    if let Some(tool) = msg["tool"].as_str().and_then(|t| t.strip_prefix("computer:")) {
+        return crate::computer::handle(&caller, &cwd, tool, args).await;
+    }
     if parent_of(&caller).is_some() {
         return Err("Untersessions können keine weiteren Sessions steuern.".into());
     }

@@ -594,7 +594,8 @@ export function initCollab(): () => void {
     }),
     listen<{ key: string; request: PermissionRequest }>("acp:permission", (e) => {
       const { key, request } = e.payload;
-      if (!useCollab.getState().hosts[request.sessionId]) return;
+      // Computer Use auf dem Rechner des Hosts gibt nur der Host selbst frei.
+      if (key.startsWith("cu:") || !useCollab.getState().hosts[request.sessionId]) return;
       permissionSession[key] = request.sessionId;
       publish(request.sessionId, {
         t: "permission",
@@ -619,7 +620,7 @@ export function initCollab(): () => void {
     listen<{ sessionId: string; key: string; optionId: string | null; by: string }>("collab:decide", (e) => {
       const { sessionId, key, optionId, by } = e.payload;
       const pending = useStore.getState().sessions[sessionId]?.pending.find((p) => p.key === key);
-      if (!pending || !guestOption(optionId)) return;
+      if (!pending || pending.computer || !guestOption(optionId)) return;
       const option = pending.options.find((o) => o.optionId === optionId);
       if (optionId !== null && !option) return;
       pushItem(sessionId, { type: "notice", id: cid(), text: `${by} hat entschieden: ${option?.name ?? "abgebrochen"}`, tone: "info" });

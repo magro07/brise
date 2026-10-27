@@ -1,10 +1,11 @@
 import { useState } from "react";
-import { ChevronDown, CircleCheck, CircleDot, Circle, ListChecks, ShieldAlert } from "lucide-react";
+import { ChevronDown, CircleCheck, CircleDot, Circle, ListChecks, MonitorCog, ShieldAlert } from "lucide-react";
 import { useStore, type PendingPermission, type Session, type ToolItem } from "../../lib/store";
 import { maskSecrets, short } from "../../lib/format";
 import { Button, clsx } from "../ui";
 import { toolIcon, toolTitle } from "../chat/ToolCall";
 import { agentName } from "../../lib/backends";
+import { ComputerAskPreview } from "../computer/Computer";
 
 const OPTION_LABEL: Record<string, string> = {
   allow_once: "Erlauben",
@@ -36,6 +37,7 @@ function scopeOf(o: PendingPermission["options"][number]) {
 export function PermissionPrompt({ session, pending }: { session: Session; pending: PendingPermission }) {
   const answer = useStore((s) => s.answerPermission);
   const tool = session.items.find((i): i is ToolItem => i.type === "tool" && i.toolCallId === pending.toolCallId);
+  if (pending.computer) return <ComputerPrompt session={session} pending={pending} answer={answer} />;
   const Icon = tool ? toolIcon(tool) : ShieldAlert;
   const { verb, target } = tool ? toolTitle(tool) : { verb: "", target: "Werkzeug ausführen" };
   const input = pending.rawInput as Record<string, unknown> | undefined;
@@ -80,6 +82,34 @@ export function PermissionPrompt({ session, pending }: { session: Session; pendi
               </Button>
             );
           })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Freigabe für Computer Use: Aktion in Worten, Screenshot mit Zielpunkt. */
+function ComputerPrompt({ session, pending, answer }: { session: Session; pending: PendingPermission; answer: (key: string, optionId: string | null) => Promise<void> }) {
+  const c = pending.computer!;
+  const observe = /computer_(screenshot|zoom|list_windows)/.test(c.tool);
+  return (
+    <div className="mb-2 overflow-hidden rounded-2xl border border-accent/50 bg-elev shadow-pop fade-in" data-brise="computer-ask">
+      <div className="flex items-center gap-2 border-b border-line bg-accent-soft px-4 py-2.5">
+        <MonitorCog className="h-4 w-4 text-accent" />
+        <span className="font-medium">
+          {agentName(session.backend)} möchte {c.activate ? "Computer Use einschalten" : observe ? "den Bildschirm sehen" : "den Computer bedienen"}
+        </span>
+        {session.pending.length > 1 && <span className="ml-auto text-[0.82em] text-muted">+{session.pending.length - 1} weitere</span>}
+      </div>
+      <div className="px-4 py-3">
+        <div className="font-medium selectable">{c.summary.charAt(0).toUpperCase() + c.summary.slice(1)}</div>
+        <ComputerAskPreview image={c.image} point={c.point} activate={c.activate} />
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          {pending.options.map((o, n) => (
+            <Button key={o.optionId} variant={o.kind.startsWith("reject") ? "danger" : n === 0 ? "primary" : "secondary"} onClick={() => answer(pending.key, o.optionId)}>
+              {o.name}
+            </Button>
+          ))}
         </div>
       </div>
     </div>

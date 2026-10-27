@@ -6,6 +6,7 @@ mod backends;
 mod bench;
 mod decision;
 mod git;
+mod computer;
 mod config;
 mod cortecs;
 mod credentials;
@@ -103,6 +104,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .manage(agent::AgentState::default())
         .manage(terminal::Terminals::default())
         .manage(meter::Meter::default())
@@ -124,6 +126,7 @@ pub fn run() {
             }
             collab::start(app.handle());
             orchestra::start(app.handle());
+            computer::start(app.handle());
             if let Err(err) = policy::apply() {
                 eprintln!("Team-Richtlinie anwenden: {err}");
             }
@@ -324,6 +327,12 @@ pub fn run() {
             orchestra::orch_reject,
             orchestra::orch_forget,
             orchestra::orch_costs,
+            computer::cu_status,
+            computer::cu_set_enabled,
+            computer::cu_set_project,
+            computer::cu_stop,
+            computer::cu_request_access,
+            computer::cu_prepare,
         ])
         .run(tauri::generate_context!())
         .expect("Brise konnte nicht gestartet werden");

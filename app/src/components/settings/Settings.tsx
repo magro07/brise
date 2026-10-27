@@ -30,6 +30,7 @@ import { AgentsSettings } from "../agents/AgentsSettings";
 
 import { looksSecret, maskSecrets } from "../../lib/format";
 import { AccountsCard } from "./Accounts";
+import { ComputerSettings } from "../computer/Computer";
 import { Button, Spinner, Switch, clsx } from "../ui";
 import { MODE_INFO } from "../composer/Pickers";
 import { confirmAction } from "../../lib/dialogs";
@@ -665,6 +666,7 @@ export function SettingsView() {
             <>
               <SearchCard />
               <VoiceCard field={field} vibe={vibe} />
+              <ComputerSettings />
               {vibe ? <SkillsView values={values} write={write} /> : null}
               {vibe && <WebCard values={values} write={write} />}
               {vibe && (
