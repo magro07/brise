@@ -51,6 +51,17 @@ const IDLE: Duration = Duration::from_secs(6);
 /// Not-Aus-Tastenkürzel (global, wo das System es erlaubt).
 pub const STOP_SHORTCUT: &str = if cfg!(target_os = "macos") { "Cmd+Shift+Escape" } else { "Ctrl+Alt+Escape" };
 
+/// Not-Aus-Kürzel für die Anzeige. Unter Wayland läuft das Kürzel über XWayland
+/// und greift nur, solange ein X11-Fenster den Fokus hat – dort ist der Not-Aus
+/// das Fernsteuerungs-Symbol des Systems, also kein Kürzel anzeigen.
+fn shown_shortcut() -> &'static str {
+    if platform::wayland() {
+        ""
+    } else {
+        STOP_SHORTCUT
+    }
+}
+
 pub const MCP_INSTRUCTIONS: &str = "Computer Use: Mit computer_screenshot siehst du den Bildschirm, mit computer_click, computer_type, computer_key usw. \
     bedienst du ihn. Koordinaten beziehen sich immer auf den zuletzt gelieferten Screenshot (Pixel im Bild). Prüfe nach Aktionen mit einem neuen Screenshot, \
     ob sie gewirkt haben. Jede Aktion kann eine Freigabe des Nutzers brauchen; Passwortfelder füllt Brise nicht aus, Brises eigenes Fenster ist ausgeblendet.";
@@ -340,8 +351,8 @@ pub fn start(app: &AppHandle) {
             emergency_stop(&handle, "Tastenkürzel");
         }
     }) {
-        // Unter Wayland gibt es keine globalen Kürzel; dort hält GNOME selbst
-        // einen Stopp-Knopf für die Fernsteuerung bereit.
+        // Ohne globale Kürzel bleibt der Stopp-Knopf in Brise (und unter Wayland
+        // das Fernsteuerungs-Symbol des Systems, siehe `system_stop`).
         eprintln!("Computer Use: Not-Aus-Kürzel {STOP_SHORTCUT} nicht verfügbar: {e}");
     }
 }
@@ -374,6 +385,16 @@ pub fn emergency_stop(app: &AppHandle, by: &str) {
     restore_brise(app);
     let _ = app.emit("cu:stopped", json!({ "sessions": sessions, "by": by }));
     let _ = app.emit("cu:state", json!({ "active": false }));
+}
+
+/// Das System hat die Fernsteuerung beendet (Wayland: Symbol oben rechts →
+/// Beenden). Gilt wie der Not-Aus – sonst baute Brise die Sitzung beim nächsten
+/// Werkzeugaufruf mit der gemerkten Freigabe still wieder auf.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub(crate) fn system_stop() {
+    if let Some(app) = APP.get() {
+        emergency_stop(app, "Fernsteuerung vom System beendet");
+    }
 }
 
 fn stopped_since(stop_gen: u64) -> CmdResult<()> {
@@ -484,7 +505,7 @@ fn show_card(app: &AppHandle, key: &str, a: &Ask<'_>) {
             "activate": a.activate,
             "image": view.as_ref().filter(|_| a.point.is_some()).map(|v| v.thumb.clone()),
             "point": point,
-            "shortcut": STOP_SHORTCUT,
+            "shortcut": shown_shortcut(),
         } }
     });
     // Unter Wayland ist Brise während der Steuerung minimiert – für die Karte zurückholen.
@@ -639,7 +660,7 @@ pub async fn handle(session: &str, cwd: &str, tool: &str, args: &Value) -> CmdRe
 fn mark_active(app: &AppHandle, session: &str, line: &str) {
     let at = now_ms();
     with_state(|s| s.active = Some((session.to_string(), at)));
-    let _ = app.emit("cu:state", json!({ "active": true, "sessionId": session, "summary": line, "shortcut": STOP_SHORTCUT }));
+    let _ = app.emit("cu:state", json!({ "active": true, "sessionId": session, "summary": line, "shortcut": shown_shortcut() }));
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
         tokio::time::sleep(IDLE).await;
@@ -679,7 +700,8 @@ fn brise_rects(app: &AppHandle) -> Vec<platform::Rect> {
 }
 
 /// Wayland: Fensterpositionen sind unbekannt. Damit kein Klick auf Brise selbst
-/// landet (Freigabekarten, Einstellungen), tritt Brise für Eingaben beiseite.
+/// landet (Freigabekarten, Einstellungen) und Brise nicht im Bild steht, tritt
+/// Brise für Eingaben und Screenshots beiseite.
 fn hide_brise(app: &AppHandle) {
     if !platform::wayland() {
         return;
@@ -688,7 +710,8 @@ fn hide_brise(app: &AppHandle) {
         if w.is_visible().unwrap_or(false) && !w.is_minimized().unwrap_or(false) {
             let _ = w.minimize();
             with_state(|s| s.hidden = true);
-            std::thread::sleep(Duration::from_millis(250));
+            // Minimier-Animation abwarten, sonst steht Brise halb im Screenshot.
+            std::thread::sleep(Duration::from_millis(450));
         }
     }
 }
@@ -736,7 +759,8 @@ fn target(app: &AppHandle, session: &str, args: &Value, kx: &str, ky: &str) -> C
 
 async fn run(app: &AppHandle, session: &str, tool: &str, args: &Value, stop_gen: u64) -> CmdResult<Vec<Value>> {
     use platform::Input;
-    if !OBSERVE.contains(&tool) {
+    // Unter Wayland auch für Screenshots: dort lässt sich Brise nicht maskieren.
+    if tool != "computer_list_windows" {
         hide_brise(app);
     }
     let input = |a: Input| async move { platform::input(a).await };
@@ -987,7 +1011,7 @@ pub async fn cu_status() -> Status {
     Status {
         settings: s,
         platform: caps,
-        shortcut: STOP_SHORTCUT,
+        shortcut: shown_shortcut(),
         locked: crate::policy::check_computer_use().err(),
         active: with_state(|s| s.active.as_ref().map(|a| a.0.clone())),
     }

@@ -5,6 +5,7 @@
 //! hilft `ydotool`, falls installiert.
 
 use std::process::Command;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use ashpd::desktop::remote_desktop::{Axis, DeviceType, KeyState, RemoteDesktop, SelectDevicesOptions};
@@ -12,6 +13,7 @@ use ashpd::desktop::screencast::{Screencast, SelectSourcesOptions, SourceType};
 use ashpd::desktop::screenshot::{Screenshot, ScreenshotProxy};
 use ashpd::desktop::{PersistMode, Session};
 use ashpd::enumflags2::BitFlags;
+use futures_util::StreamExt;
 use tokio::sync::Mutex;
 
 use super::{Button, Caps, Input, Shot};
@@ -34,11 +36,13 @@ struct StreamGeo {
 
 struct Remote {
     proxy: RemoteDesktop,
-    session: Session<RemoteDesktop>,
+    session: std::sync::Arc<Session<RemoteDesktop>>,
     streams: Vec<StreamGeo>,
 }
 
 static REMOTE: Mutex<Option<Remote>> = Mutex::const_new(None);
+/// Zählt aufgebaute Sitzungen, damit ein später Abbruch nicht die nächste trifft.
+static REMOTE_GEN: AtomicU64 = AtomicU64::new(0);
 /// Größe des letzten Portal-Screenshots (Pixel) – für die Umrechnung auf das logische Layout.
 static LAST: std::sync::Mutex<(u32, u32)> = std::sync::Mutex::new((0, 0));
 
@@ -106,10 +110,18 @@ async fn start_remote() -> CmdResult<Remote> {
         .map_err(e)?
         .response()
         .map_err(|err| format!("Fernsteuerung nicht freigegeben ({err}). Brise fragt beim nächsten Versuch erneut."))?;
-    crate::computer::save_portal_token(selected.restore_token().map(str::to_string));
+    eprintln!(
+        "computer use: Portal gab frei: {:?}, Bildschirme {:?}",
+        selected.devices(),
+        selected.streams().iter().map(|s| (s.position(), s.size())).collect::<Vec<_>>()
+    );
+    // Eine Freigabe ohne Maus nicht merken – sonst stellt das Portal genau
+    // diese Auswahl künftig ohne Rückfrage wieder her.
     if !selected.devices().contains(DeviceType::Pointer) {
-        return Err("Das System hat die Maus nicht freigegeben.".into());
+        crate::computer::save_portal_token(None);
+        return Err("Das System hat nur den Bildschirm freigegeben, nicht Maus und Tastatur. Unter GNOME im Dialog „Entfernter Bildschirm“ den Schalter „Fernzugriff zulassen“ einschalten (am besten auch „Diese Auswahl merken“) und erneut versuchen.".into());
     }
+    crate::computer::save_portal_token(selected.restore_token().map(str::to_string));
     let streams = selected
         .streams()
         .iter()
@@ -119,11 +131,27 @@ async fn start_remote() -> CmdResult<Remote> {
             StreamGeo { node: s.pipe_wire_node_id(), x: x as f64, y: y as f64, w: w as f64, h: h as f64 }
         })
         .collect();
+    // Beendet der Nutzer die Fernsteuerung über das System, ist das ein Not-Aus.
+    let generation = REMOTE_GEN.fetch_add(1, Ordering::SeqCst) + 1;
+    let session = std::sync::Arc::new(session);
+    let watched = session.clone();
+    tauri::async_runtime::spawn(async move {
+        let Ok(closed) = watched.receive_closed().await else { return };
+        let mut closed = std::pin::pin!(closed);
+        if closed.next().await.is_some() && REMOTE_GEN.load(Ordering::SeqCst) == generation {
+            *REMOTE.lock().await = None;
+            crate::computer::system_stop();
+        }
+    });
     Ok(Remote { proxy, session, streams })
 }
 
 /// Bildpunkt des letzten Screenshots → (Stream, Position im Stream).
-fn locate(streams: &[StreamGeo], x: f64, y: f64) -> CmdResult<(u32, f64, f64)> {
+/// Die Portale melden Stream-Lage und -Größe logisch. Mutter (GNOME) erwartet
+/// Mauspositionen im Stream aber in Bildschirmpixeln – es teilt sie wieder durch
+/// den Skalierungsfaktor (`meta_screen_cast_monitor_stream_transform_position`) –,
+/// KWin dagegen logisch. `physical` wählt die GNOME-Rechnung.
+fn locate(streams: &[StreamGeo], x: f64, y: f64, physical: bool) -> CmdResult<(u32, f64, f64)> {
     let (min_x, min_y) = streams.iter().fold((f64::MAX, f64::MAX), |(a, b), s| (a.min(s.x), b.min(s.y)));
     let max_x = streams.iter().map(|s| s.x + s.w).fold(0.0, f64::max);
     let (pw, _) = *LAST.lock().unwrap_or_else(|p| p.into_inner());
@@ -134,7 +162,13 @@ fn locate(streams: &[StreamGeo], x: f64, y: f64) -> CmdResult<(u32, f64, f64)> {
     let scale = if pw > 0 { pw as f64 / (max_x - min_x) } else { 1.0 };
     let (lx, ly) = (min_x + x / scale, min_y + y / scale);
     let s = streams.iter().find(|s| lx >= s.x && ly >= s.y && lx < s.x + s.w && ly < s.y + s.h).unwrap_or(&streams[0]);
-    Ok((s.node, (lx - s.x).clamp(0.0, (s.w - 1.0).max(0.0)), (ly - s.y).clamp(0.0, (s.h - 1.0).max(0.0))))
+    let f = if physical { scale } else { 1.0 };
+    Ok((s.node, ((lx - s.x) * f).clamp(0.0, (s.w * f - 1.0).max(0.0)), ((ly - s.y) * f).clamp(0.0, (s.h * f - 1.0).max(0.0))))
+}
+
+/// GNOME/Mutter rechnet Stream-Positionen in Bildschirmpixeln (siehe `locate`).
+fn mutter() -> bool {
+    std::env::var("XDG_CURRENT_DESKTOP").is_ok_and(|d| d.split(':').any(|x| x.eq_ignore_ascii_case("gnome")))
 }
 
 async fn remote() -> CmdResult<tokio::sync::MutexGuard<'static, Option<Remote>>> {
@@ -171,7 +205,7 @@ async fn pause(ms: u64) {
 async fn send(r: &Remote, a: &Input) -> CmdResult<()> {
     let (p, s) = (&r.proxy, &r.session);
     let to = |x: f64, y: f64| async move {
-        let (node, lx, ly) = locate(&r.streams, x, y)?;
+        let (node, lx, ly) = locate(&r.streams, x, y, mutter())?;
         p.notify_pointer_motion_absolute(s, node, lx, ly, Default::default()).await.map_err(e)?;
         pause(30).await;
         Ok::<(), String>(())
@@ -291,8 +325,10 @@ pub async fn capabilities() -> Caps {
         caps.input = true;
         caps.input_detail = "ydotool (Rückfall ohne Portal)".into();
     }
-    caps.notes.push("Unter Wayland gibt es keine Fensterliste; Brise minimiert sich während Eingaben, damit kein Klick auf Brise selbst landet.".into());
-    caps.notes.push("Not-Aus unter GNOME: Fernsteuerungs-Symbol oben rechts → Beenden, oder der Knopf im Hinweis von Brise.".into());
+    caps.notes.push("Unter Wayland gibt es keine Fensterliste; Brise minimiert sich während Screenshots und Eingaben, damit es weder im Bild steht noch selbst angeklickt wird.".into());
+    caps.notes.push("GNOME-Dialog „Entfernter Bildschirm“: „Fernzugriff zulassen“ einschalten und „Diese Auswahl merken“ anhaken.".into());
+    caps.notes.push("Danach kann sich Brise nicht selbst nach vorn holen: Bei einer neuen Freigabekarte meldet GNOME „Brise ist bereit“ – anklicken.".into());
+    caps.notes.push("Not-Aus unter GNOME: Fernsteuerungs-Symbol oben rechts → Beenden (bricht ab und nimmt Freigaben zurück), oder der Stopp-Knopf in Brise.".into());
     caps
 }
 
@@ -396,8 +432,16 @@ mod tests {
         // Zwei Bildschirme logisch nebeneinander (je 1280×800), Screenshot doppelt so groß.
         let streams = vec![StreamGeo { node: 1, x: 0.0, y: 0.0, w: 1280.0, h: 800.0 }, StreamGeo { node: 2, x: 1280.0, y: 0.0, w: 1280.0, h: 800.0 }];
         *LAST.lock().unwrap() = (5120, 1600);
-        assert_eq!(locate(&streams, 200.0, 100.0).unwrap(), (1, 100.0, 50.0));
-        assert_eq!(locate(&streams, 2760.0, 400.0).unwrap(), (2, 100.0, 200.0));
+        assert_eq!(locate(&streams, 200.0, 100.0, false).unwrap(), (1, 100.0, 50.0));
+        assert_eq!(locate(&streams, 2760.0, 400.0, false).unwrap(), (2, 100.0, 200.0));
+        // Mutter: Position im Stream in Bildschirmpixeln.
+        assert_eq!(locate(&streams, 2760.0, 400.0, true).unwrap(), (2, 200.0, 400.0));
+
+        // GNOME mit 125 %: 3840×2160 Pixel, logisch 3072×1728 (gemessen auf Fedora 44).
+        let streams = vec![StreamGeo { node: 7, x: 0.0, y: 0.0, w: 3072.0, h: 1728.0 }];
+        *LAST.lock().unwrap() = (3840, 2160);
+        assert_eq!(locate(&streams, 2961.0, 1098.0, true).unwrap(), (7, 2961.0, 1098.0));
+        assert_eq!(locate(&streams, 2960.0, 1100.0, false).unwrap(), (7, 2368.0, 880.0));
     }
 
     #[test]
