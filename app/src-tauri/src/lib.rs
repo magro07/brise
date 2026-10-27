@@ -93,6 +93,31 @@ fn adopt_shell_path() {
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
+// PERF-PROBE (temporär)
+#[tauri::command]
+fn perf_log(text: String) {
+    println!("PERF {text}");
+}
+
+fn perf_probe_setup(app: &tauri::App) {
+    use tauri::Manager;
+    let Ok(path) = std::env::var("BRISE_PERF_SCRIPT") else { return };
+    let w = app.get_webview_window("main").unwrap();
+    if let Ok(size) = std::env::var("BRISE_PERF_SIZE") {
+        let (a, b) = size.split_once('x').unwrap();
+        let _ = w.set_position(tauri::LogicalPosition::new(0.0, 0.0));
+        let _ = w.set_size(tauri::LogicalSize::new(a.parse::<f64>().unwrap(), b.parse::<f64>().unwrap()));
+    }
+    if std::env::var("BRISE_PERF_FULLSCREEN").is_ok() {
+        let _ = w.set_fullscreen(true);
+    }
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_secs(5));
+        let js = std::fs::read_to_string(path).unwrap();
+        let _ = w.eval(&js);
+    });
+}
+
 pub fn run() {
     #[cfg(unix)]
     adopt_shell_path();
@@ -104,6 +129,7 @@ pub fn run() {
         .manage(meter::Meter::default())
         .manage(collab::CollabState::default())
         .setup(|app| {
+            perf_probe_setup(app);
             customize::watch(app.handle().clone());
             secrets::startup_cleanup();
             secrets::watch(app.handle().clone());
@@ -118,6 +144,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            perf_log,
             agent::agent_connect,
             agent::startup_project,
             agent::auth_status,

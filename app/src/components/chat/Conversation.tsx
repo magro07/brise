@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle, ArrowDown, Brain, Check, Wand2, CheckCircle2, ChevronRight, CircleSlash, Copy, FileText, Image, Info, Network, Scale, Square, Volume2 } from "lucide-react";
 import { useStore } from "../../lib/store";
 import { agentName, useVoiceAvailable } from "../../lib/backends";
@@ -162,6 +162,98 @@ function MessageActions({ sessionId, itemId, text }: { sessionId: string; itemId
   );
 }
 
+/** Ein Block des Verlaufs. Beim Streaming ändert sich nur der letzte Block – die übrigen rendern nicht neu. */
+const BlockView = memo(function BlockView({ block: b, live, sessionId, cwd }: { block: Block; live: boolean; sessionId: string; cwd: string }) {
+  if (b.kind === "tools") return <ToolGroup items={b.items} cwd={cwd} live={live} />;
+  const item = b.item;
+  switch (item.type) {
+    case "user":
+      if (item.author === NOTE_AUTHOR)
+        return (
+          <div data-brise="orch-note" className="rounded-xl border border-dashed border-line-strong bg-panel px-3.5 py-2.5 text-[0.88em] fade-in">
+            <div className="mb-1 flex items-center gap-1.5 text-[0.85em] font-medium text-muted">
+              <Network className="h-3.5 w-3.5 text-accent" /> {NOTE_AUTHOR}
+            </div>
+            <div className="whitespace-pre-wrap text-fg-2 selectable">{item.text}</div>
+          </div>
+        );
+      return (
+        <div data-brise="user-message" className="flex flex-col items-end gap-1.5 fade-in">
+          {item.author && <span className="text-[0.76em] text-muted">{item.author}</span>}
+          <div className="max-w-[85%] whitespace-pre-wrap rounded-2xl rounded-br-md bg-user px-4 py-2.5 selectable">{item.text}</div>
+          {(item.routed || item.zdr) && (
+            <span className="inline-flex items-center gap-1 text-[0.76em] text-muted" title={item.routed?.reason}>
+              {item.routed && (
+                <>
+                  <Wand2 className="h-3 w-3" /> Auto: {item.routed.model}
+                  <span className="opacity-70">· {LEVEL_LABEL[item.routed.level]}</span>
+                  {item.routed.probabilities?.[item.routed.level] != null && (
+                    <span className="opacity-70">{Math.round(item.routed.probabilities[item.routed.level] * 100)} %</span>
+                  )}
+                </>
+              )}
+              {item.zdr && (
+                <span className="rounded bg-ok-soft px-1 font-medium text-ok" title="Ging an ein Cortecs-Modell ohne Datenspeicherung (Zero Data Retention)">
+                  ZDR
+                </span>
+              )}
+            </span>
+          )}
+          {item.attachments && item.attachments.length > 0 && (
+            <div className="flex flex-wrap justify-end gap-1.5">
+              {item.attachments.map((a) => (
+                <span key={a.path} className="inline-flex items-center gap-1 rounded-md border border-line bg-elev px-2 py-0.5 text-[0.8em] text-fg-2">
+                  {a.kind === "image" ? <Image className="h-3 w-3" /> : <FileText className="h-3 w-3" />}
+                  {a.name}
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+      );
+    case "assistant":
+      return (
+        <div data-brise="assistant-message" className="group/msg fade-in">
+          <Markdown text={item.text} />
+          {!live && <MessageActions sessionId={sessionId} itemId={item.id} text={item.text} />}
+        </div>
+      );
+    case "thought":
+      return <Thought text={item.text} live={live} />;
+    case "notice":
+      return (
+        <div
+         
+          className={clsx(
+            "flex items-start gap-2 rounded-lg px-3 py-2 text-[0.9em]",
+            item.tone === "error" && "bg-bad-soft text-bad",
+            item.tone === "warn" && "bg-warn-soft text-warn",
+            item.tone === "info" && "bg-panel text-muted",
+          )}
+        >
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+          <span className="whitespace-pre-wrap selectable">{item.text}</span>
+        </div>
+      );
+    case "turn":
+      return <TurnFooter item={item} />;
+    case "council":
+      return <CouncilItemCard item={item} sessionId={sessionId} />;
+    case "orch":
+      return <OrchCard kind={item.kind} refId={item.ref} />;
+    default:
+      return null;
+  }
+}, sameBlock);
+
+function sameBlock(a: { block: Block; live: boolean; sessionId: string; cwd: string }, b: { block: Block; live: boolean; sessionId: string; cwd: string }) {
+  if (a.live !== b.live || a.sessionId !== b.sessionId || a.cwd !== b.cwd || a.block.kind !== b.block.kind) return false;
+  if (a.block.kind === "item") return a.block.item === (b.block as typeof a.block).item;
+  const x = a.block.items;
+  const y = (b.block as typeof a.block).items;
+  return x.length === y.length && x.every((item, i) => item === y[i]);
+}
+
 export function Conversation({ session }: { session: Session }) {
   const scroller = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
@@ -202,89 +294,9 @@ export function Conversation({ session }: { session: Session }) {
           )}
           {session.replaying && session.items.length === 0 && <div className="py-10 text-center text-muted">Lade Verlauf …</div>}
           <div className="space-y-4">
-            {blocks.map((b, n) => {
-              const live = session.running && n === lastIndex;
-              if (b.kind === "tools") return <ToolGroup key={b.id} items={b.items} cwd={session.cwd} live={live} />;
-              const item = b.item;
-              switch (item.type) {
-                case "user":
-                  if (item.author === NOTE_AUTHOR)
-                    return (
-                      <div key={item.id} data-brise="orch-note" className="rounded-xl border border-dashed border-line-strong bg-panel px-3.5 py-2.5 text-[0.88em] fade-in">
-                        <div className="mb-1 flex items-center gap-1.5 text-[0.85em] font-medium text-muted">
-                          <Network className="h-3.5 w-3.5 text-accent" /> {NOTE_AUTHOR}
-                        </div>
-                        <div className="whitespace-pre-wrap text-fg-2 selectable">{item.text}</div>
-                      </div>
-                    );
-                  return (
-                    <div key={item.id} data-brise="user-message" className="flex flex-col items-end gap-1.5 fade-in">
-                      {item.author && <span className="text-[0.76em] text-muted">{item.author}</span>}
-                      <div className="max-w-[85%] whitespace-pre-wrap rounded-2xl rounded-br-md bg-user px-4 py-2.5 selectable">{item.text}</div>
-                      {(item.routed || item.zdr) && (
-                        <span className="inline-flex items-center gap-1 text-[0.76em] text-muted" title={item.routed?.reason}>
-                          {item.routed && (
-                            <>
-                              <Wand2 className="h-3 w-3" /> Auto: {item.routed.model}
-                              <span className="opacity-70">· {LEVEL_LABEL[item.routed.level]}</span>
-                              {item.routed.probabilities?.[item.routed.level] != null && (
-                                <span className="opacity-70">{Math.round(item.routed.probabilities[item.routed.level] * 100)} %</span>
-                              )}
-                            </>
-                          )}
-                          {item.zdr && (
-                            <span className="rounded bg-ok-soft px-1 font-medium text-ok" title="Ging an ein Cortecs-Modell ohne Datenspeicherung (Zero Data Retention)">
-                              ZDR
-                            </span>
-                          )}
-                        </span>
-                      )}
-                      {item.attachments && item.attachments.length > 0 && (
-                        <div className="flex flex-wrap justify-end gap-1.5">
-                          {item.attachments.map((a) => (
-                            <span key={a.path} className="inline-flex items-center gap-1 rounded-md border border-line bg-elev px-2 py-0.5 text-[0.8em] text-fg-2">
-                              {a.kind === "image" ? <Image className="h-3 w-3" /> : <FileText className="h-3 w-3" />}
-                              {a.name}
-                            </span>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  );
-                case "assistant":
-                  return (
-                    <div key={item.id} data-brise="assistant-message" className="group/msg fade-in">
-                      <Markdown text={item.text} />
-                      {!live && <MessageActions sessionId={session.id} itemId={item.id} text={item.text} />}
-                    </div>
-                  );
-                case "thought":
-                  return <Thought key={item.id} text={item.text} live={live} />;
-                case "notice":
-                  return (
-                    <div
-                      key={item.id}
-                      className={clsx(
-                        "flex items-start gap-2 rounded-lg px-3 py-2 text-[0.9em]",
-                        item.tone === "error" && "bg-bad-soft text-bad",
-                        item.tone === "warn" && "bg-warn-soft text-warn",
-                        item.tone === "info" && "bg-panel text-muted",
-                      )}
-                    >
-                      <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-                      <span className="whitespace-pre-wrap selectable">{item.text}</span>
-                    </div>
-                  );
-                case "turn":
-                  return <TurnFooter key={item.id} item={item} />;
-                case "council":
-                  return <CouncilItemCard key={item.id} item={item} sessionId={session.id} />;
-                case "orch":
-                  return <OrchCard key={item.id} kind={item.kind} refId={item.ref} />;
-                default:
-                  return null;
-              }
-            })}
+            {blocks.map((b, n) => (
+              <BlockView key={b.kind === "tools" ? b.id : b.item.id} block={b} live={session.running && n === lastIndex} sessionId={session.id} cwd={session.cwd} />
+            ))}
             <OpenCards session={session} />
             {session.running && session.pending.length === 0 && <Working since={session.turnStarted} backend={session.backend} />}
           </div>
