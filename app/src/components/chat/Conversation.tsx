@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle, ArrowDown, Brain, Check, Wand2, CheckCircle2, ChevronRight, CircleSlash, Copy, FileText, Image, Info, Network, Scale, Square, Volume2 } from "lucide-react";
 import { useStore } from "../../lib/store";
 import { agentName, useVoiceAvailable } from "../../lib/backends";
@@ -29,11 +29,22 @@ function toBlocks(items: Item[]): Block[] {
   return blocks;
 }
 
+/** Meldet der Konversation, dass der Nutzer selbst etwas aufklappt. */
+const UserLayoutContext = createContext<() => void>(() => {});
+
 function Thought({ text, live }: { text: string; live: boolean }) {
   const [open, setOpen] = useState(false);
+  const onUserLayout = useContext(UserLayoutContext);
   return (
     <div>
-      <button className="flex h-7 items-center gap-2 rounded-md px-1.5 text-[0.9em] text-muted hover:bg-hover hover:text-fg" onClick={() => setOpen(!open)}>
+      <button
+        className="flex h-7 items-center gap-2 rounded-md px-1.5 text-[0.9em] text-muted hover:bg-hover hover:text-fg"
+        onClick={() => {
+          // Wer aufklappt, will lesen: nicht mehr ans Ende mitscrollen.
+          if (!open) onUserLayout();
+          setOpen(!open);
+        }}
+      >
         <Brain className="h-3.5 w-3.5" />
         {live ? <span className="shimmer-text">Denkt nach …</span> : <span>Gedankengang</span>}
         <ChevronRight className={clsx("h-3.5 w-3.5 transition-transform", open && "rotate-90")} />
@@ -164,21 +175,52 @@ function MessageActions({ sessionId, itemId, text }: { sessionId: string; itemId
 
 export function Conversation({ session }: { session: Session }) {
   const scroller = useRef<HTMLDivElement>(null);
+  const content = useRef<HTMLDivElement>(null);
+  // Am Ende mitwandern, bis der Nutzer selbst wegscrollt oder etwas aufklappt.
   const stick = useRef(true);
+  // Zeitpunkt der letzten Nutzereingabe am Scrollbereich. Nur Scroll-Events kurz danach
+  // ändern `stick`; Events durch wachsenden Inhalt oder eigenes Scrollen nicht.
+  const userInput = useRef(0);
   const [showJump, setShowJump] = useState(false);
   const blocks = useMemo(() => toBlocks(session.items), [session.items]);
 
-  useEffect(() => {
+  const toBottom = useCallback(() => {
     const el = scroller.current;
-    if (el && stick.current) el.scrollTop = el.scrollHeight;
-  }, [session.items, session.running, session.pending.length]);
+    if (el) el.scrollTop = el.scrollHeight;
+  }, []);
+
+  // Jede Höhenänderung (Streaming, Bilder, Diffs) einmal pro Frame nachführen.
+  useEffect(() => {
+    const el = content.current;
+    if (!el) return;
+    let frame = 0;
+    const ro = new ResizeObserver(() => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        if (stick.current) toBottom();
+      });
+    });
+    ro.observe(el);
+    return () => {
+      cancelAnimationFrame(frame);
+      ro.disconnect();
+    };
+  }, [toBottom]);
 
   // Beim Wechsel der Session ganz nach unten.
   useEffect(() => {
     stick.current = true;
-    const el = scroller.current;
-    if (el) el.scrollTop = el.scrollHeight;
-  }, [session.id]);
+    setShowJump(false);
+    toBottom();
+  }, [session.id, toBottom]);
+
+  const onUserLayout = useCallback(() => {
+    stick.current = false;
+    setShowJump(true);
+  }, []);
+  const markUserInput = () => {
+    userInput.current = Date.now();
+  };
 
   const lastIndex = blocks.length - 1;
 
@@ -187,14 +229,23 @@ export function Conversation({ session }: { session: Session }) {
       <div
         ref={scroller}
         className="h-full overflow-y-auto"
+        onWheel={markUserInput}
+        onTouchMove={markUserInput}
+        // Nur die Scrollleiste selbst: Klicks auf Inhalte sind keine Scrollabsicht.
+        onPointerDown={(e) => e.target === e.currentTarget && markUserInput()}
+        // Ziehen an der Scrollleiste dauert länger als ein einzelnes Ereignis.
+        onPointerMove={(e) => e.buttons && e.target === e.currentTarget && markUserInput()}
+        onKeyDown={markUserInput}
         onScroll={(e) => {
+          if (Date.now() - userInput.current > 400) return;
           const el = e.currentTarget;
-          const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+          const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 8;
           stick.current = atBottom;
           setShowJump(!atBottom);
         }}
       >
-        <div className="mx-auto max-w-[820px] px-6 pb-8 pt-6">
+        <UserLayoutContext.Provider value={onUserLayout}>
+        <div ref={content} className="mx-auto max-w-[820px] px-6 pb-8 pt-6">
           {session.readOnly && !session.guest && (
             <div className="mb-4 flex items-center gap-2 rounded-lg border border-line bg-panel px-3 py-2 text-[0.88em] text-muted">
               <Info className="h-4 w-4" /> Verlauf eines Subagenten – nur lesbar.
@@ -289,12 +340,14 @@ export function Conversation({ session }: { session: Session }) {
             {session.running && session.pending.length === 0 && <Working since={session.turnStarted} backend={session.backend} />}
           </div>
         </div>
+        </UserLayoutContext.Provider>
       </div>
       {showJump && (
         <button
           className="absolute bottom-3 left-1/2 flex h-8 w-8 -translate-x-1/2 items-center justify-center rounded-full border border-line bg-elev text-muted shadow-pop hover:text-fg"
           onClick={() => {
             stick.current = true;
+            setShowJump(false);
             scroller.current?.scrollTo({ top: scroller.current.scrollHeight, behavior: "smooth" });
           }}
           aria-label="Nach unten"
