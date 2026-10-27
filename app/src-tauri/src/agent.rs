@@ -255,7 +255,12 @@ async fn start_agent(
         }
         PathBuf::from(p)
     });
-    let (conn, events, child) = rpc::spawn_with_env(launch.program.as_os_str(), &launch.args, env, trace.as_deref()).map_err(|e| e.to_string())?;
+    // Gemessene Denkstufen je Modell, GLM & Co. über Brises Proxy (mistral_proxy.rs).
+    let mut env = env.to_vec();
+    if backend == DEFAULT_BACKEND {
+        crate::mistral_proxy::extend_env(&mut env);
+    }
+    let (conn, events, child) = rpc::spawn_with_env(launch.program.as_os_str(), &launch.args, &env, trace.as_deref()).map_err(|e| e.to_string())?;
 
     let init = conn
         .request(

@@ -338,7 +338,9 @@ fn model_entry(name: &str, alias: &str, display: &str, info: Option<&CortecsMode
         }
         if m.tags.iter().any(|t| t == "Reasoning") {
             entry["thinking"] = json!("high");
-            entry["thinking_levels"] = json!(["low", "high", "max"]);
+            // Gemessene Stufen (thinking.rs), sonst die bisherige Annahme.
+            let levels = crate::thinking::config_levels(PROVIDER, name).unwrap_or_else(|| vec!["low", "high", "max"]);
+            entry["thinking_levels"] = json!(levels);
         }
     }
     entry
@@ -641,6 +643,9 @@ pub(crate) async fn respond(sock: &mut tokio::net::TcpStream, status: u16, body:
 /// (auch Streams) und dabei den Verbrauch mitlesen.
 async fn serve(mut sock: tokio::net::TcpStream) -> Result<(), String> {
     let req = read_request(&mut sock).await?;
+    if req.path.starts_with(crate::mistral_proxy::PATH) {
+        return crate::mistral_proxy::forward(&mut sock, &req.method, &req.path, &req.headers, req.body).await;
+    }
     if req.path.starts_with("/p/") {
         return crate::providers::forward(&mut sock, req).await;
     }

@@ -16,6 +16,8 @@ mod embeddings;
 mod files;
 mod meter;
 mod mistral;
+mod mistral_proxy;
+mod thinking;
 mod model3d;
 mod models;
 mod orchestra;

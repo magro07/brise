@@ -140,12 +140,18 @@ fn model_entry(name: &str, alias: &str, display: &str, info: Option<&CatalogMode
         if m.context > 0 {
             entry["max_context_length"] = json!(m.context);
         }
-        if m.reasoning {
-            // Vibes Mistral-Anbindung kennt auf der Leitung nur `none`/`high`
-            // („low“ → none, alles darüber → high). GLM-5.3 lehnt `none` ab,
-            // daher nur „off“ (Server-Standard) und „high“ anbieten.
-            entry["thinking"] = json!("high");
-            entry["thinking_levels"] = json!(["off", "high"]);
+        // Gemessene Stufen (thinking.rs); in Brise korrigiert bzw. leitet
+        // mistral_proxy.rs sie beim Start von Vibe, hier gilt, was auch die
+        // Vibe-CLI ohne Brise richtig schickt.
+        match crate::thinking::config_levels("mistral", name) {
+            Some(levels) => {
+                if levels.contains(&"high") {
+                    entry["thinking"] = json!("high");
+                }
+                entry["thinking_levels"] = json!(levels);
+            }
+            None if m.reasoning => entry["thinking"] = json!("high"),
+            None => {}
         }
     }
     entry
@@ -187,8 +193,9 @@ pub async fn ensure_default_models() -> CmdResult<bool> {
 }
 
 /// Korrigiert Denkstufen bestehender GLM-/Large-4-Einträge (auch von Hand
-/// angelegter): „low“ würde Vibe als `none` senden – GLM-5.3 antwortet dann
-/// mit HTTP 400.
+/// angelegter) auf die gemessenen (thinking.rs): „low“ würde Vibe als `none`
+/// senden – GLM-5.3 antwortet dann mit HTTP 400; „max“ bei Large 4 wäre nur
+/// ein zweites „high“.
 fn fix_thinking_levels() -> CmdResult<bool> {
     edit_config(|doc| {
         let Some(arr) = doc.get_mut("models").and_then(Item::as_array_of_tables_mut) else { return Ok(()) };
@@ -203,14 +210,16 @@ fn fix_thinking_levels() -> CmdResult<bool> {
                 .and_then(|v| v.as_array())
                 .map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect())
                 .unwrap_or_default();
-            if levels != ["off", "high"] {
-                let mut a = toml_edit::Array::new();
-                a.push("off");
-                a.push("high");
+            let Some(wanted) = crate::thinking::config_levels("mistral", &name) else { continue };
+            if levels != wanted {
+                let a: toml_edit::Array = wanted.iter().copied().collect();
                 t.insert("thinking_levels", Item::Value(toml_edit::Value::Array(a)));
             }
+            // Über Brise gültige Stufen (z. B. „max“ bei GLM) bleiben stehen: Vibe
+            // schreibt die gewählte Stufe hierher zurück, die CLI fällt selbst auf „high“.
             let thinking = t.get("thinking").and_then(|v| v.as_str()).unwrap_or("");
-            if thinking != "off" && thinking != "high" {
+            let via_brise = crate::thinking::vibe_levels("mistral", &name).map(|(l, _)| l).unwrap_or_default();
+            if !wanted.contains(&thinking) && !via_brise.contains(&thinking) {
                 t.insert("thinking", toml_edit::value("high"));
             }
         }
@@ -263,6 +272,8 @@ pub async fn startup_check(app: tauri::AppHandle) -> CmdResult<StartupReport> {
         return Ok(StartupReport { changed, new_models: vec![] });
     }
     changed |= ensure_default_models().await.unwrap_or(false);
+    // Unbekannte Modelle im Hintergrund messen; gilt ab dem nächsten Start von Vibe.
+    tauri::async_runtime::spawn(crate::thinking::measure_configured());
 
     let catalog = match model_catalog().await {
         Ok(c) => c,
