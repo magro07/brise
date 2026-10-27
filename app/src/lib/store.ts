@@ -18,6 +18,7 @@ import {
 } from "./acp";
 import { load, save } from "./persist";
 import { cortecs } from "./cortecs";
+import { refIsZdr, useProviders } from "./providers";
 import { allowedPrefs } from "./policy";
 import { promptWithReserve } from "./accounts";
 import type { Suggestion } from "./acp";
@@ -185,8 +186,10 @@ export interface Prefs {
   routing: { simple: string; standard: string; complex: string };
   /** Eigene Akzentfarbe (per Chat oder Einstellungen), null = Standard. */
   accent: string | null;
-  /** Modell für Brises Helfer: Einstufung, Vorschläge, Commit-Nachrichten. */
+  /** Alt (bis 0.2): Mistral-Modell für Brises Helfer – nur noch für die Migration. */
   assistModel: string;
+  /** Modell je Funktion von Brise als „anbieter/modell“; leer = automatisch (providers.rs). */
+  taskModels: TaskModels;
   /** Auto: festes Modell + Denkstufe steuern ("reasoning") oder Modell je Stufe wechseln ("routing"). */
   autoStrategy: "reasoning" | "routing";
   /** Modell für Auto mit Denkstufen-Steuerung. */
@@ -197,7 +200,7 @@ export interface Prefs {
   tourDone: boolean;
   /** Model Council (liest auch der MCP-Server brise-council, siehe council.rs). */
   council: CouncilPrefs;
-  /** Wer Brises Entscheidungen trifft: Mistral Small oder Cortecs-Decision-Modelle (ZDR). */
+  /** Alt (bis 0.2): Entscheidungen über Mistral oder Cortecs – nur noch für die Migration. */
   decisionProvider: "mistral" | "cortecs";
   /** Prompts vor dem Senden auf sensible Daten prüfen. */
   sensitivityCheck: boolean;
@@ -211,6 +214,17 @@ export interface Prefs {
   enabledBackends: string[];
   /** Master-Session (liest auch orchestra.rs über sync_prefs). */
   orchestra: OrchestraPrefs;
+}
+
+export interface TaskModels {
+  /** Aufgabe einstufen (Auto) und Denkstufe nachsteuern. */
+  decide: string;
+  /** Vorschläge und Commit-Nachrichten. */
+  helper: string;
+  /** Zweite Prüfung auf sensible Daten nach lokalen Treffern. */
+  sensitivity: string;
+  /** Richtermodell für Benchmarks ohne eigenes Modell. */
+  judge: string;
 }
 
 export interface OrchestraPrefs {
@@ -581,20 +595,34 @@ export function isZdr(st: { prefs: Prefs }, s?: Session): boolean {
   return !!s && (!!s.zdr || st.prefs.zdrProjects.includes(s.cwd));
 }
 
-/**
- * Wer entscheidet (Einstufung, Denkstufe)? In ZDR-Sessions nur Cortecs – sonst
- * ginge der Prompt doch an Mistral. Ohne Cortecs-Key dann gar kein Modell.
- */
-function deciderFor(st: { prefs: Prefs; cortecs: State["cortecs"] }, s?: Session): "mistral" | "cortecs" | null {
-  if (isZdr(st, s)) return st.cortecs.key ? "cortecs" : null;
-  return st.prefs.decisionProvider === "cortecs" && st.cortecs.key ? "cortecs" : "mistral";
+/** Modell für einen Helfer-Aufruf: `model` als „anbieter/modell“ (leer = Backend wählt), `provider` nur für Cortecs ohne Modell. */
+export interface HelperModel {
+  model: string;
+  provider?: string;
 }
 
-/** Anbieter für Brises Helfer (Vorschläge, Commit-Nachricht) in einem Projekt; null = nicht erlaubt. */
-export function helperProvider(cwd: string): "mistral" | "cortecs" | null {
+/**
+ * Wer entscheidet (Einstufung, Denkstufe)? In ZDR-Sessions nur Modelle ohne
+ * Datenspeicherung (Cortecs, lokal, als ZDR markiert) – sonst ginge der Prompt
+ * doch an einen Anbieter, der speichert. Ohne solches Modell: gar keins.
+ */
+function helperFor(st: { prefs: Prefs; cortecs: State["cortecs"] }, chosen: string, zdr: boolean): HelperModel | null {
+  if (zdr) {
+    if (chosen && refIsZdr(chosen)) return { model: chosen };
+    return st.cortecs.key ? { model: "", provider: "cortecs" } : null;
+  }
+  if (!chosen && st.prefs.decisionProvider === "cortecs" && st.cortecs.key) return { model: "", provider: "cortecs" };
+  return { model: chosen };
+}
+
+function deciderFor(st: { prefs: Prefs; cortecs: State["cortecs"] }, s?: Session): HelperModel | null {
+  return helperFor(st, st.prefs.taskModels.decide, isZdr(st, s));
+}
+
+/** Modell für Brises Helfer (Vorschläge, Commit-Nachricht) in einem Projekt; null = nicht erlaubt. */
+export function helperProvider(cwd: string): HelperModel | null {
   const st = useStore.getState();
-  if (st.prefs.zdrProjects.includes(cwd)) return st.cortecs.key ? "cortecs" : null;
-  return st.prefs.decisionProvider === "cortecs" && st.cortecs.key ? "cortecs" : "mistral";
+  return helperFor(st, st.prefs.taskModels.helper, st.prefs.zdrProjects.includes(cwd));
 }
 
 // ---------- Store ----------
@@ -624,8 +652,15 @@ const initialPrefs: Prefs = {
   defaultBackend: "vibe",
   enabledBackends: ["vibe"],
   orchestra: ORCHESTRA_DEFAULTS,
+  taskModels: { decide: "", helper: "", sensitivity: "", judge: "" },
   ...load<Partial<Prefs>>("prefs", {}),
 };
+// Migration von 0.2: eigenes Task-Modell (Mistral) übernehmen; Cortecs als
+// Entscheider bleibt über decisionProvider wirksam, bis man neu wählt.
+if (!load<Partial<Prefs>>("prefs", {}).taskModels) {
+  const legacy = initialPrefs.decisionProvider !== "cortecs" && initialPrefs.assistModel && initialPrefs.assistModel !== "mistral-small-latest" ? `mistral/${initialPrefs.assistModel}` : "";
+  initialPrefs.taskModels = { decide: legacy, helper: legacy, sensitivity: "", judge: "" };
+}
 initialPrefs.council = { ...COUNCIL_DEFAULTS, ...initialPrefs.council };
 initialPrefs.orchestra = { ...ORCHESTRA_DEFAULTS, ...initialPrefs.orchestra };
 
@@ -720,7 +755,7 @@ export const useStore = create<State & Actions>((set, get) => {
       .filter(Boolean)
       .join("\n");
     api
-      .adjustReasoning(s.currentTask ?? "", `${progress}\nSignal: ${trigger}`, current, st.prefs.assistModel, decider)
+      .adjustReasoning(s.currentTask ?? "", `${progress}\nSignal: ${trigger}`, current, decider.model, decider.provider)
       .then(async (r) => {
         const target = nearestThinking(r.level, levels);
         if (!target || target === current || !get().sessions[sid]?.running) return;
@@ -1080,6 +1115,7 @@ export const useStore = create<State & Actions>((set, get) => {
           set({ phase: "ready" });
         }
         get().refreshCortecs();
+        useProviders.getState().refresh();
         // Weitere aktivierte Backends im Hintergrund, damit ihre Sessions in der Sidebar stehen.
         const others = enabledBackends.filter((b) => b !== defaultBackend && b !== "vibe");
         Promise.allSettled(others.map((b) => get().connectBackend(b, false))).then(() => get().refreshIndex());
@@ -1367,7 +1403,7 @@ export const useStore = create<State & Actions>((set, get) => {
           .map((i) => (i.type === "user" ? i.text : ""))
           .join("\n");
         const fallback = { level: heuristicLevel(text), reason: "Schätzung ohne KI", probabilities: undefined };
-        const verdict = decider ? await api.classifyTask(text, history, prefs.assistModel, decider).catch(() => fallback) : fallback;
+        const verdict = decider ? await api.classifyTask(text, history, decider.model, decider.provider).catch(() => fallback) : fallback;
         const zdrModels = get().cortecs.models;
         const available = modelOption.options.map((o) => o.value).filter((m) => !zdr || zdrModels.includes(m));
         const needsVision = attachments.some((a) => a.kind === "image");

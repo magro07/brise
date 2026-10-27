@@ -1,17 +1,12 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { shortcut } from "../../lib/platform";
 import {
-  Globe,
-  Sparkles,
   Plus,
   Wand2,
   FolderOpen,
   AlertTriangle,
   ArrowLeft,
-  AudioLines,
-  DatabaseZap,
   Download,
-  Bot,
   ChartColumn,
   Boxes,
   Cpu,
@@ -24,11 +19,7 @@ import {
   Lock,
   SlidersHorizontal,
   Trash2,
-  UserRound,
-  Scale,
   Users,
-  Network,
-  FlaskConical,
 } from "lucide-react";
 import { CouncilSettings } from "./CouncilSettings";
 import { api, type CatalogModel, type ConfigFile, type ConfigOption, type IndexStatus, type JsonSchema, type SkillInfo } from "../../lib/acp";
@@ -37,8 +28,6 @@ import { tokens } from "../../lib/format";
 import { useStore, type Theme } from "../../lib/store";
 import { AgentsSettings } from "../agents/AgentsSettings";
 
-/** Abschnitte, die Vibes Konfiguration brauchen – ohne Vibe-Verbindung ausgeblendet. */
-const VIBE_SECTIONS = new Set(["account", "models", "permissions", "agents", "skills", "web", "voice", "advanced"]);
 import { looksSecret, maskSecrets } from "../../lib/format";
 import { AccountsCard } from "./Accounts";
 import { Button, Spinner, Switch, clsx } from "../ui";
@@ -46,32 +35,96 @@ import { MODE_INFO } from "../composer/Pickers";
 import { confirmAction } from "../../lib/dialogs";
 import { UsagePage } from "../usage/UsagePage";
 import { BenchPage } from "../bench/BenchPage";
-import { CortecsView } from "./CortecsSettings";
+import { CortecsVibe, PrivacyView } from "./CortecsSettings";
 import { CollabSettings } from "../collab/CollabSettings";
 import { SecretsCard } from "./SecretsSettings";
 import { OrchestraSettings } from "../orchestra/Orchestra";
 import { managedBy, sectionAccess, usePolicy } from "../../lib/policy";
+import { ProvidersSettings, NoProviderHint } from "./ProvidersSettings";
+import { ModelSelect } from "./ModelSelect";
+import { CORTECS_DECISION, providersApi, refLabel, useProviders, type Purpose } from "../../lib/providers";
 
+/** Einstellungsbereiche; IDs sind zugleich die Bereiche der Team-Richtlinien (policy.rs). */
 const SECTIONS = [
   { id: "general", label: "Allgemein", icon: Palette },
-  { id: "backends", label: "Agenten", icon: Boxes },
-  { id: "account", label: "Konto", icon: UserRound },
-  { id: "usage", label: "Nutzung", icon: ChartColumn },
-  { id: "bench", label: "Benchmarks", icon: FlaskConical },
-  { id: "models", label: "Modelle & Kontext", icon: Cpu },
-  { id: "permissions", label: "Freigaben & Sicherheit", icon: ShieldCheck },
-  { id: "cortecs", label: "Cortecs & Datenschutz", icon: ShieldCheck },
-  { id: "agents", label: "Vibe-Agents & Subagents", icon: Bot },
-  { id: "skills", label: "Skills", icon: Sparkles },
-  { id: "web", label: "Websuche & Recherche", icon: Globe },
-  { id: "voice", label: "Sprache", icon: AudioLines },
-  { id: "embeddings", label: "Embeddings & Suche", icon: DatabaseZap },
-  { id: "council", label: "Council", icon: Scale },
-  { id: "tools", label: "Werkzeuge & MCP", icon: Plug },
-  { id: "collab", label: "Zusammenarbeit", icon: Users },
-  { id: "orchestra", label: "Master-Session", icon: Network },
+  { id: "providers", label: "Anbieter & Schlüssel", icon: KeyRound },
+  { id: "agents", label: "Agenten", icon: Boxes },
+  { id: "models", label: "Modelle & Automatik", icon: Cpu },
+  { id: "privacy", label: "Datenschutz & Sicherheit", icon: ShieldCheck },
+  { id: "usage", label: "Nutzung & Budget", icon: ChartColumn },
+  { id: "tools", label: "Werkzeuge", icon: Plug },
+  { id: "collab", label: "Zusammenarbeit & Team", icon: Users },
   { id: "advanced", label: "Erweitert", icon: SlidersHorizontal },
 ] as const;
+
+/** Unterseiten (Reiter) eines Bereichs. */
+const SUBS: Record<string, [string, string][]> = {
+  agents: [
+    ["", "Übersicht"],
+    ["vibe", "Vibe"],
+  ],
+  usage: [
+    ["", "Nutzung"],
+    ["bench", "Benchmarks"],
+  ],
+};
+
+/** Alte Bereichs-IDs (Links aus älteren Versionen, Befehle) → neuer Bereich/Reiter. */
+const LEGACY: Record<string, string> = {
+  account: "agents/vibe",
+  backends: "agents",
+  cortecs: "privacy",
+  permissions: "privacy",
+  council: "models",
+  orchestra: "models",
+  bench: "usage/bench",
+  skills: "tools",
+  web: "tools",
+  voice: "tools",
+  embeddings: "tools",
+};
+
+/** Suchbare Einträge: Titel der Karten je Bereich plus Stichwörter. */
+const SEARCH: { section: string; title: string; keywords?: string }[] = [
+  { section: "general", title: "Darstellung", keywords: "farbschema hell dunkel akzentfarbe schriftgröße theme" },
+  { section: "general", title: "Benachrichtigungen" },
+  { section: "general", title: "Einführung", keywords: "tour" },
+  { section: "general", title: "Tastenkürzel", keywords: "shortcut" },
+  { section: "providers", title: "Anbieter", keywords: "mistral anthropic openai gemini google cortecs schlüssel api-key key" },
+  { section: "providers", title: "OpenAI-kompatibel", keywords: "ollama lm studio vllm openrouter groq together azure lokal endpunkt base-url" },
+  { section: "agents", title: "Coding-Agenten", keywords: "claude code codex gemini vibe anmelden login installieren konto abo" },
+  { section: "agents", title: "Verhalten", keywords: "standard-agent start" },
+  { section: "agents/vibe", title: "Vibe-Konto", keywords: "mistral plan anmelden abmelden konto" },
+  { section: "agents/vibe", title: "Mehrere Accounts", keywords: "multikey reserve schlüssel konten" },
+  { section: "agents/vibe", title: "In Vibe verfügbar", keywords: "modelle vibe katalog hinzufügen" },
+  { section: "agents/vibe", title: "Modell manuell hinzufügen" },
+  { section: "agents/vibe", title: "Subagents", keywords: "explore researcher" },
+  { section: "agents/vibe", title: "Effizienz", keywords: "komprimieren kontext compact" },
+  { section: "agents/vibe", title: "Alle Optionen", keywords: "config.toml erweitert" },
+  { section: "models", title: "Auto", keywords: "auto-wahl modellwahl denkstufe strategie routing" },
+  { section: "models", title: "Modelle für Brises Funktionen", keywords: "task-modell einstufung entscheidungen vorschläge commit-nachricht richter benchmark" },
+  { section: "models", title: "Spezialmodelle", keywords: "codestral fim vervollständigung ocr voxtral embeddings" },
+  { section: "models", title: "Model Council", keywords: "council review fehlersuche schlussprüfung vorsitz tageslimit" },
+  { section: "models", title: "Kurator und Arbeiter", keywords: "master-session untersessions pool eskalation budget" },
+  { section: "privacy", title: "Freigaben", keywords: "berechtigungen yolo modus allowlist befehle" },
+  { section: "privacy", title: "Sensible Daten", keywords: "dsgvo sensibilität prüfung" },
+  { section: "privacy", title: "Projekte ohne Datenspeicherung (ZDR)", keywords: "zdr zero data retention" },
+  { section: "privacy", title: "Cortecs", keywords: "eu § 203 berufsgeheimnis sovereign" },
+  { section: "privacy", title: "Secrets", keywords: "geheimnisse passwörter tokens" },
+  { section: "usage", title: "Nutzung", keywords: "kosten budget monat tokens statistik" },
+  { section: "usage", title: "Preistabelle", keywords: "preise" },
+  { section: "usage/bench", title: "Benchmarks", keywords: "vergleich test richter" },
+  { section: "tools", title: "Semantische Suche", keywords: "embeddings index codesuche" },
+  { section: "tools", title: "Sprache", keywords: "spracheingabe vorlesen mikrofon stt tts voxtral" },
+  { section: "tools", title: "Skills", keywords: "rea reverse engineering" },
+  { section: "tools", title: "Websuche", keywords: "deep research recherche web_fetch" },
+  { section: "tools", title: "MCP-Server", keywords: "werkzeuge connectors" },
+  { section: "collab", title: "Zusammenarbeit", keywords: "team teilen gäste admin richtlinien" },
+  { section: "advanced", title: "Datenordner", keywords: "pfade logs" },
+];
+
+/** Anker einer Karte für die Suche. */
+const anchor = (title: string) => `card-${title.toLowerCase().replace(/[^a-z0-9äöüß]+/g, "-")}`;
 
 /** Deutsche Bezeichnungen für die wichtigsten Vibe-Einstellungen. */
 const LABELS: Record<string, [string, string?]> = {
@@ -235,7 +288,7 @@ function Field({ name, prop, value, onChange, options }: FieldProps) {
 
 export function Card({ title, children, description }: { title?: string; description?: ReactNode; children: ReactNode }) {
   return (
-    <section className="mb-6">
+    <section className="mb-6 scroll-mt-4" id={title ? anchor(title) : undefined}>
       {title && <h3 className="mb-1 text-[0.95em] font-semibold">{title}</h3>}
       {description && <p className="mb-2 text-[0.88em] text-muted">{description}</p>}
       <div className="divide-y divide-line overflow-hidden rounded-xl border border-line bg-elev">{children}</div>
@@ -244,22 +297,22 @@ export function Card({ title, children, description }: { title?: string; descrip
 }
 
 export function SettingsView() {
-  const section = useStore((s) => s.settingsSection);
+  const rawSection = useStore((s) => s.settingsSection);
   const setView = useStore((s) => s.setView);
   const prefs = useStore((s) => s.prefs);
   const setPrefs = useStore((s) => s.setPrefs);
-  const auth = useStore((s) => s.auth);
-  const info = useStore((s) => s.connectInfo);
-  const template = useStore((s) => s.template);
-  const { signOut, connect } = useStore.getState();
+  const { connect } = useStore.getState();
   const [schema, setSchema] = useState<JsonSchema | null>(null);
   const [config, setConfig] = useState<ConfigFile | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [dirty, setDirty] = useState(false);
   const [query, setQuery] = useState("");
+  const [search, setSearch] = useState("");
+  const [target, setTarget] = useState<string | null>(null);
   const vibe = useStore((s) => !!s.agents.vibe);
   const effective = usePolicy((s) => s.effective);
-  const sections = SECTIONS.filter((s) => (vibe || !VIBE_SECTIONS.has(s.id)) && sectionAccess(s.id, effective) !== "hidden");
+  const [section, sub = ""] = (LEGACY[rawSection] ?? rawSection).split("/");
+  const sections = SECTIONS.filter((s) => sectionAccess(s.id, effective) !== "hidden");
   const access = sectionAccess(section, effective);
 
   const reload = useCallback(async () => {
@@ -276,6 +329,19 @@ export function SettingsView() {
     api.configSchema().then((r) => setSchema(r.schema)).catch((e) => setError(String(e)));
   }, [reload, vibe]);
 
+  // Suchtreffer: nach dem Wechsel des Bereichs zur Karte scrollen.
+  useEffect(() => {
+    if (!target) return;
+    const t = setTimeout(() => {
+      const el = document.getElementById(target);
+      el?.scrollIntoView({ behavior: "smooth", block: "start" });
+      el?.classList.add("ring-2", "ring-accent/50", "rounded-xl");
+      setTimeout(() => el?.classList.remove("ring-2", "ring-accent/50", "rounded-xl"), 1600);
+      setTarget(null);
+    }, 80);
+    return () => clearTimeout(t);
+  }, [target, rawSection]);
+
   const write = async (key: string[], value: unknown) => {
     try {
       await api.writeConfig(key, value);
@@ -290,11 +356,11 @@ export function SettingsView() {
   const props = schema?.properties ?? {};
   const values = (config?.values ?? {}) as Record<string, unknown>;
 
-  const modeOptions = (template?.modes.length ? template.modes : Object.keys(MODE_INFO).map((id) => ({ id, name: id }))).map((m) => ({
+  const modeOptions = (useStore.getState().templates.vibe?.modes.length ? useStore.getState().templates.vibe!.modes : Object.keys(MODE_INFO).map((id) => ({ id, name: id }))).map((m) => ({
     value: m.id,
     label: MODE_INFO[m.id]?.label ?? m.name,
   }));
-  const modelOptions = template?.config.find((o) => o.id === "model")?.options?.map((o) => ({ value: o.value, label: o.name }));
+  const modelOptions = useStore.getState().templates.vibe?.config.find((o) => o.id === "model")?.options?.map((o) => ({ value: o.value, label: o.name }));
 
   const field = (key: string) => {
     const prop = props[key];
@@ -312,31 +378,102 @@ export function SettingsView() {
     [schema, query],
   );
 
+  const hits = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return [];
+    const words = q.split(/\s+/);
+    const vibeKeys = Object.entries(LABELS).map(([k, [label, desc]]) => ({ section: SECTION_KEYS.permissions.includes(k) ? "privacy" : SECTION_KEYS.voice.includes(k) || SECTION_KEYS.tools.includes(k) ? "tools" : "agents/vibe", title: label, keywords: `${k} ${desc ?? ""}` }));
+    return [...SEARCH, ...vibeKeys]
+      .filter((e) => {
+        const hay = `${e.title} ${e.keywords ?? ""} ${SECTIONS.find((s) => s.id === e.section.split("/")[0])?.label ?? ""}`.toLowerCase();
+        return words.every((w) => hay.includes(w)) && sectionAccess(e.section.split("/")[0], effective) !== "hidden";
+      })
+      .slice(0, 12);
+  }, [search, effective]);
+
+  const goto = (to: string, card?: string) => {
+    setView("settings", to);
+    if (card) setTarget(anchor(card));
+    setSearch("");
+  };
+
+  const vibeHint = (
+    <div className="mb-4 rounded-xl border border-line bg-panel px-4 py-3 text-[0.92em] text-fg-2">
+      Diese Einstellungen gehören zu Vibe. Vibe ist gerade nicht verbunden – unter <b>Agenten</b> installieren oder verbinden.
+    </div>
+  );
+
   return (
     <div className="flex min-h-0 flex-1">
-      <nav className="w-60 shrink-0 border-r border-line bg-panel p-3">
+      <nav className="flex w-60 shrink-0 flex-col border-r border-line bg-panel p-3">
         <button className="mb-3 flex h-8 items-center gap-2 rounded-lg px-2 text-fg-2 hover:bg-hover hover:text-fg" onClick={() => setView("chat")}>
           <ArrowLeft className="h-4 w-4" /> Zurück
         </button>
-        {sections.map((s) => (
-          <button
-            key={s.id}
-            onClick={() => setView("settings", s.id)}
-            className={clsx(
-              "flex h-9 w-full items-center gap-2.5 rounded-lg px-2.5 text-left",
-              section === s.id ? "bg-active text-fg" : "text-fg-2 hover:bg-hover hover:text-fg",
-            )}
-          >
-            <s.icon className="h-4 w-4 text-muted" />
-            <span className="flex-1">{s.label}</span>
-            {sectionAccess(s.id, effective) === "read" && <Lock className="h-3.5 w-3.5 text-muted" aria-label="vom Admin verwaltet" />}
-          </button>
-        ))}
+        <div className="relative mb-3">
+          <Search className="absolute left-2.5 top-2 h-4 w-4 text-muted" />
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && hits[0]) goto(hits[0].section, hits[0].title);
+              if (e.key === "Escape") setSearch("");
+            }}
+            placeholder="Einstellungen suchen …"
+            className="h-8 w-full rounded-lg border border-line bg-elev pl-8 pr-2 text-[0.92em] outline-none focus:border-accent"
+            data-testid="settings-search"
+          />
+        </div>
+        {search.trim() ? (
+          <div className="space-y-0.5" data-testid="settings-search-results">
+            {hits.length === 0 && <div className="px-2 py-1.5 text-[0.88em] text-muted">Nichts gefunden.</div>}
+            {hits.map((h, n) => (
+              <button key={`${h.section}-${h.title}-${n}`} onClick={() => goto(h.section, h.title)} className="block w-full rounded-lg px-2.5 py-1.5 text-left hover:bg-hover">
+                <div className="truncate">{h.title}</div>
+                <div className="truncate text-[0.8em] text-muted">
+                  {SECTIONS.find((s) => s.id === h.section.split("/")[0])?.label}
+                  {h.section.includes("/") ? ` → ${SUBS[h.section.split("/")[0]]?.find(([id]) => id === h.section.split("/")[1])?.[1] ?? ""}` : ""}
+                </div>
+              </button>
+            ))}
+          </div>
+        ) : (
+          sections.map((s) => (
+            <button
+              key={s.id}
+              onClick={() => setView("settings", s.id)}
+              data-testid={`settings-nav-${s.id}`}
+              className={clsx(
+                "flex h-9 w-full items-center gap-2.5 rounded-lg px-2.5 text-left",
+                section === s.id ? "bg-active text-fg" : "text-fg-2 hover:bg-hover hover:text-fg",
+              )}
+            >
+              <s.icon className="h-4 w-4 text-muted" />
+              <span className="flex-1">{s.label}</span>
+              {sectionAccess(s.id, effective) === "read" && <Lock className="h-3.5 w-3.5 text-muted" aria-label="vom Admin verwaltet" />}
+            </button>
+          ))
+        )}
       </nav>
 
       <div className="min-w-0 flex-1 overflow-y-auto">
-        <div className={clsx("mx-auto px-8 py-8", section === "bench" ? "max-w-[1080px]" : "max-w-[760px]")}>
-          <h1 className="mb-6 text-[1.5em] font-semibold tracking-tight">{SECTIONS.find((s) => s.id === section)?.label}</h1>
+        <div className={clsx("mx-auto px-8 py-8", section === "usage" ? "max-w-[1080px]" : "max-w-[780px]")}>
+          <h1 className="mb-4 text-[1.5em] font-semibold tracking-tight">{SECTIONS.find((s) => s.id === section)?.label}</h1>
+          {SUBS[section] && (
+            <div className="mb-6 flex gap-1 border-b border-line" role="tablist">
+              {SUBS[section].map(([id, label]) => (
+                <button
+                  key={id}
+                  role="tab"
+                  aria-selected={sub === id}
+                  onClick={() => setView("settings", id ? `${section}/${id}` : section)}
+                  data-testid={`settings-tab-${section}-${id || "main"}`}
+                  className={clsx("-mb-px border-b-2 px-3 py-1.5", sub === id ? "border-accent text-fg" : "border-transparent text-muted hover:text-fg")}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          )}
 
           {error && (
             <div className="mb-4 flex items-start gap-2 rounded-lg bg-bad-soft px-3 py-2 text-[0.9em] text-bad">
@@ -368,8 +505,6 @@ export function SettingsView() {
 
           {access !== "hidden" && (
           <fieldset disabled={access !== "edit"} className="m-0 min-w-0 border-0 p-0">
-          {section === "backends" && <AgentsSettings />}
-
           {section === "general" && (
             <>
               <Card title="Darstellung">
@@ -449,166 +584,303 @@ export function SettingsView() {
             </>
           )}
 
-          {section === "account" && (
-            <>
-              <Card title="Mistral-Konto">
-                <Row
-                  title={auth?.authenticated ? "Angemeldet" : "Nicht angemeldet"}
-                  description={auth?.authenticated ? `Zugang über deinen Mistral-Plan (gespeichert: ${auth.authState === "os_keyring" ? "Schlüsselbund des Systems" : auth.authState})` : "Melde dich an, um Vibe zu nutzen."}
-                  control={
-                    auth?.signOutAvailable ? (
-                      <Button variant="danger" onClick={async () => (await confirmAction("Wirklich abmelden? Der gespeicherte Schlüssel wird entfernt.", true)) && signOut()}>
-                        Abmelden
-                      </Button>
-                    ) : null
-                  }
-                />
-              </Card>
-              <KeyCard />
-              <AccountsCard />
-              <Card title="Mistral Vibe">
-                <Row title="Version" control={<span className="text-fg-2">{info?.init.agentInfo?.version ?? "–"}</span>} />
-                <VibeUpdateRow />
-                <Row title="Programm" control={<span className="font-mono text-[0.82em] text-fg-2 selectable">{info?.agentPath}</span>} />
-                <Row title="Konfiguration" control={<span className="font-mono text-[0.82em] text-fg-2 selectable">{config?.path}</span>} />
-              </Card>
-            </>
-          )}
+          {section === "providers" && <ProvidersSettings />}
 
-          {section === "usage" && <UsagePage />}
+          {section === "agents" && sub === "" && <AgentsSettings />}
 
-          {section === "bench" && <BenchPage />}
+          {section === "agents" && sub === "vibe" &&
+            (vibe ? (
+              <>
+                <VibeAccount config={config} />
+                <ModelsCard onChange={() => setDirty(true)} />
+                <CortecsVibe onModelsChanged={() => setDirty(true)} />
+                <Card title="Subagents" description="Subagents übernehmen Teilaufgaben mit eigenem Kontext, z. B. „explore“ zum Durchsuchen des Codes oder „researcher“ für Webrecherche. Sie nutzen das Modell der Hauptsession – ein eigenes Modell pro Subagent unterstützt Vibe derzeit nicht.">
+                  {SECTION_KEYS.agents.map(field)}
+                </Card>
+                <EfficiencyCard values={values} write={write} />
+                <Card title="Weitere Einstellungen">{SECTION_KEYS.models.map(field)}</Card>
+                <section className="mb-6" id={anchor("Alle Optionen")}>
+                  <h3 className="mb-1 text-[0.95em] font-semibold">Alle Optionen</h3>
+                  <p className="mb-2 text-[0.88em] text-muted">Alle weiteren Optionen aus Vibes config.toml. Leere Felder nutzen Vibes Standardwert.</p>
+                  <div className="relative mb-2">
+                    <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted" />
+                    <input
+                      value={query}
+                      onChange={(e) => setQuery(e.target.value)}
+                      placeholder="Option filtern …"
+                      className="h-9 w-full rounded-lg border border-line bg-elev pl-9 pr-3 outline-none focus:border-accent"
+                    />
+                  </div>
+                  <div className="divide-y divide-line overflow-hidden rounded-xl border border-line bg-elev">{advanced.map(([k]) => field(k))}</div>
+                </section>
+              </>
+            ) : (
+              vibeHint
+            ))}
 
           {section === "models" && (
             <>
               <AutoModelCard />
-              <ModelsCard onChange={() => setDirty(true)} />
-              <MoreMistralCard />
-              <EfficiencyCard values={values} write={write} />
-              <Card title="Weitere Einstellungen">{SECTION_KEYS.models.map(field)}</Card>
+              <TaskModelsCard />
+              <SpecialModelsCard />
+              <CouncilSettings />
+              <div className="mt-8" />
+              <OrchestraSettings />
             </>
           )}
 
-          {section === "skills" && <SkillsView values={values} write={write} />}
-
-          {section === "cortecs" && <CortecsView onModelsChanged={() => setDirty(true)} />}
-
-          {section === "permissions" && (
+          {section === "privacy" && (
             <>
-              {values.bypass_tool_permissions === true && (
-                <div className="mb-4 flex items-start gap-3 rounded-xl border border-bad/40 bg-bad-soft px-4 py-3 text-[0.92em]">
-                  <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-bad" />
-                  <div>
-                    <div className="font-semibold text-bad">Freigaben sind komplett abgeschaltet</div>
-                    <div className="text-fg-2">Vibe führt Shell-Befehle und Änderungen ohne Rückfrage aus, egal welcher Modus gewählt ist.</div>
-                  </div>
-                </div>
+              {vibe && (
+                <>
+                  {values.bypass_tool_permissions === true && (
+                    <div className="mb-4 flex items-start gap-3 rounded-xl border border-bad/40 bg-bad-soft px-4 py-3 text-[0.92em]">
+                      <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-bad" />
+                      <div>
+                        <div className="font-semibold text-bad">Freigaben sind in Vibe komplett abgeschaltet</div>
+                        <div className="text-fg-2">Vibe führt Shell-Befehle und Änderungen ohne Rückfrage aus, egal welcher Modus gewählt ist.</div>
+                      </div>
+                    </div>
+                  )}
+                  <Card title="Freigaben" description="Für Vibe. Claude Code, Codex und Gemini fragen nach ihren eigenen Regeln; den Modus wählst du pro Session im Eingabefeld.">
+                    {SECTION_KEYS.permissions.map(field)}
+                  </Card>
+                  <Allowlist values={values} write={write} />
+                </>
               )}
-              <Card>{SECTION_KEYS.permissions.map(field)}</Card>
-              <Allowlist values={values} write={write} />
+              <PrivacyView />
               <SecretsCard />
             </>
           )}
 
-          {section === "voice" && (
-            <>
-              <Card title="Spracheingabe" description="Über das Mikrofon im Eingabefeld. Vibe nimmt auf und transkribiert live mit Mistrals Voxtral.">
-                <Row
-                  title="Sprache"
-                  description="Voxtral erkennt die Sprache meist auch selbst."
-                  control={
-                    <select
-                      value={prefs.sttLanguage}
-                      onChange={(e) => setPrefs({ sttLanguage: e.target.value })}
-                      className="h-8 min-w-[180px] rounded-lg border border-line bg-elev px-2 text-[0.92em] outline-none focus:border-accent"
-                    >
-                      {STT_LANGUAGES.map(([v, l]) => (
-                        <option key={v} value={v}>
-                          {l}
-                        </option>
-                      ))}
-                    </select>
-                  }
-                />
-                {field("active_transcribe_model")}
-              </Card>
-              <Card title="Vorlesen" description="Vibe fasst die Antwort kurz zusammen und liest sie mit Voxtral TTS vor.">
-                <Row
-                  title="Antworten automatisch vorlesen"
-                  description="Nach jedem abgeschlossenen Turn."
-                  control={<Switch checked={prefs.autoNarrate} onChange={(v) => setPrefs({ autoNarrate: v })} />}
-                />
-                {field("active_tts_model")}
-              </Card>
-            </>
-          )}
-
-          {section === "embeddings" && (
-            <>
-              <Card title="Embedding-Modell" description="Für die semantische Codesuche. Läuft über deinen Mistral-Key; ein Modellwechsel erfordert neues Indexieren.">
-                {EMBED_MODELS.map(([id, label, desc]) => (
-                  <Row
-                    key={id}
-                    title={label}
-                    description={desc}
-                    control={
-                      <input type="radio" name="embed" checked={prefs.embedModel === id} onChange={() => setPrefs({ embedModel: id })} className="h-4 w-4 accent-[var(--accent)]" />
-                    }
-                  />
-                ))}
-              </Card>
-              <Card title="Vibe und die Suche">
-                <Row
-                  title="Vibe darf die semantische Suche nutzen"
-                  description="Brise hängt sich als MCP-Werkzeug „semantic_code_search“ in neue Sessions indexierter Projekte."
-                  control={<Switch checked={prefs.agentSearch} onChange={(v) => setPrefs({ agentSearch: v })} />}
-                />
-              </Card>
-              <IndexCard />
-            </>
-          )}
-
-          {section === "agents" && (
-            <>
-              <Card description="Subagents übernehmen Teilaufgaben mit eigenem Kontext, z. B. „explore“ zum Durchsuchen des Codes oder „researcher“ für Webrecherche. Sie nutzen das Modell der Hauptsession – ein eigenes Modell pro Subagent unterstützt Vibe derzeit nicht.">
-                {SECTION_KEYS.agents.map(field)}
-              </Card>
-            </>
-          )}
-
-          {section === "web" && <WebCard values={values} write={write} />}
-          {section === "council" && <CouncilSettings />}
-          {section === "collab" && <CollabSettings />}
-          {section === "orchestra" && <OrchestraSettings />}
+          {section === "usage" && sub === "" && <UsagePage />}
+          {section === "usage" && sub === "bench" && <BenchPage />}
 
           {section === "tools" && (
             <>
-              <Card>{SECTION_KEYS.tools.map(field)}</Card>
-              <McpServers values={values} write={write} />
+              <SearchCard />
+              <VoiceCard field={field} vibe={vibe} />
+              {vibe ? <SkillsView values={values} write={write} /> : null}
+              {vibe && <WebCard values={values} write={write} />}
+              {vibe && (
+                <>
+                  <Card title="MCP-Server" description="Externe Werkzeuge für Vibe. Bearbeiten weiterer Details in config.toml.">
+                    {SECTION_KEYS.tools.map(field)}
+                  </Card>
+                  <McpServers values={values} write={write} />
+                </>
+              )}
+              {!vibe && <p className="text-[0.88em] text-muted">Skills, Websuche und MCP-Server richtet Brise in Vibes Konfiguration ein – sie erscheinen, sobald Vibe verbunden ist.</p>}
             </>
           )}
 
-          {section === "advanced" && (
-            <>
-              <div className="relative mb-4">
-                <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted" />
-                <input
-                  value={query}
-                  onChange={(e) => setQuery(e.target.value)}
-                  placeholder="Einstellung suchen …"
-                  className="h-9 w-full rounded-lg border border-line bg-elev pl-9 pr-3 outline-none focus:border-accent"
-                />
-              </div>
-              <Card description="Alle weiteren Optionen aus Vibes config.toml. Leere Felder nutzen Vibes Standardwert.">
-                {advanced.map(([k]) => field(k))}
-              </Card>
-            </>
-          )}
+          {section === "collab" && <CollabSettings />}
+
+          {section === "advanced" && <AdvancedView />}
           </fieldset>
           )}
         </div>
       </div>
     </div>
+  );
+}
+
+/** Erweitert: Datenordner und Konfigurationsdateien. */
+function AdvancedView() {
+  const [info, setInfo] = useState<{ path: string | null; dataDir: string } | null>(null);
+  useEffect(() => {
+    api.installInfo().then(setInfo).catch(() => {});
+  }, []);
+  const reveal = (p?: string | null) => p && revealItemInDir(p).catch(() => {});
+  return (
+    <>
+      <Card title="Datenordner" description="Brise speichert Einstellungen, Nutzungsjournal, Council-Läufe, Benchmarks und Indizes hier. Schlüssel liegen nie in diesem Ordner, sondern im Schlüsselbund des Systems.">
+        <Row
+          title="Ordner"
+          description={<span className="font-mono text-[0.85em] selectable">{info?.dataDir ?? "…"}</span>}
+          control={
+            <Button size="sm" onClick={() => reveal(info?.dataDir)}>
+              <FolderOpen className="h-3.5 w-3.5" /> Zeigen
+            </Button>
+          }
+        />
+        <Row title="Anbieter" description={<span className="font-mono text-[0.85em]">providers.json, provider-models.json – ohne Schlüssel</span>} control={null} />
+        <Row title="Nutzungsjournal" description={<span className="font-mono text-[0.85em]">usage/JJJJ-MM.jsonl</span>} control={null} />
+      </Card>
+    </>
+  );
+}
+
+/** Agenten → Vibe: Konto, Schlüssel, mehrere Accounts, Version. */
+function VibeAccount({ config }: { config: ConfigFile | null }) {
+  const auth = useStore((s) => s.auth);
+  const info = useStore((s) => s.connectInfo);
+  const { signOut } = useStore.getState();
+  return (
+    <>
+      <Card title="Vibe-Konto">
+        <Row
+          title={auth?.authenticated ? "Angemeldet" : "Nicht angemeldet"}
+          description={
+            auth?.authenticated
+              ? `Vibe läuft über deinen Mistral-Zugang (gespeichert: ${auth.authState === "os_keyring" ? "Schlüsselbund des Systems" : auth.authState}).`
+              : "Melde dich an, um Vibe zu nutzen."
+          }
+          control={
+            auth?.signOutAvailable ? (
+              <Button variant="danger" onClick={async () => (await confirmAction("Wirklich abmelden? Der gespeicherte Schlüssel wird entfernt.", true)) && signOut()}>
+                Abmelden
+              </Button>
+            ) : null
+          }
+        />
+        <Row title="Version" control={<span className="text-fg-2">{info?.init.agentInfo?.version ?? "–"}</span>} />
+        <VibeUpdateRow />
+        <Row title="Programm" control={<span className="font-mono text-[0.82em] text-fg-2 selectable">{info?.agentPath}</span>} />
+        <Row title="Konfiguration" control={<span className="font-mono text-[0.82em] text-fg-2 selectable">{config?.path}</span>} />
+      </Card>
+      <KeyCard />
+      <AccountsCard />
+    </>
+  );
+}
+
+const PURPOSES: [Purpose, string, string][] = [
+  ["decide", "Einstufung und Denkstufe", "Stuft jede Anfrage für „Auto“ ein und steuert die Denkstufe nach. Schnell und günstig ist hier wichtiger als klug."],
+  ["helper", "Vorschläge und Commit-Nachrichten", "Persönliche Vorschläge auf dem Startbildschirm und Commit-Nachrichten im Git-Panel."],
+  ["judge", "Richter für Benchmarks", "Bewertet Antworten bei Prüfungen vom Typ „Richter“ ohne eigenes Modell."],
+];
+
+/** Modelle für Brises eigene Funktionen – aus allen Anbietern mit Schlüssel. */
+function TaskModelsCard() {
+  const prefs = useStore((s) => s.prefs);
+  const setPrefs = useStore((s) => s.setPrefs);
+  const list = useProviders((s) => s.list);
+  const [auto, setAuto] = useState<Partial<Record<Purpose, string | null>>>({});
+  useEffect(() => {
+    for (const [p] of PURPOSES) providersApi.functionModel(p).then((m) => setAuto((a) => ({ ...a, [p]: m }))).catch(() => {});
+  }, [list, prefs.taskModels]);
+  return (
+    <Card
+      title="Modelle für Brises Funktionen"
+      description="Neben dem Coding-Agenten trifft Brise kleine Entscheidungen selbst. Jedes Modell kann bei einem anderen Anbieter liegen. In Projekten ohne Datenspeicherung nimmt Brise nur Modelle ohne Datenspeicherung."
+    >
+      <NoProviderHint />
+      {PURPOSES.map(([id, title, desc]) => (
+        <Row
+          key={id}
+          title={title}
+          description={
+            <>
+              {desc}
+              {!prefs.taskModels[id] && <span className="block text-fg-2">Automatisch: {auto[id] ? refLabel(auto[id]!, list) : "kein Anbieter – Heuristik"}</span>}
+            </>
+          }
+          control={
+            <ModelSelect
+              value={prefs.taskModels[id]}
+              emptyLabel="Automatisch"
+              extra={id === "decide" ? { cortecs: CORTECS_DECISION } : undefined}
+              onChange={(v) => setPrefs({ taskModels: { ...prefs.taskModels, [id]: v } })}
+              testId={`task-model-${id}`}
+            />
+          }
+        />
+      ))}
+    </Card>
+  );
+}
+
+/** Funktionen, die nur bei einem bestimmten Anbieter gehen – klar gekennzeichnet. */
+function SpecialModelsCard() {
+  const prefs = useStore((s) => s.prefs);
+  const setPrefs = useStore((s) => s.setPrefs);
+  const mistral = useProviders((s) => s.list.find((p) => p.id === "mistral")?.usable ?? false);
+  const only = <span className="rounded bg-hover px-1.5 py-px text-[0.82em] text-fg-2">nur Mistral</span>;
+  return (
+    <Card title="Spezialmodelle" description="Diese Funktionen gibt es nur bei einem bestimmten Anbieter. Ohne dessen Schlüssel sind sie aus.">
+      <Row
+        title={<span className="flex items-center gap-2">Codestral-Vervollständigung im Editor {only}</span>}
+        description="Grauer Vorschlag beim Tippen (Fill-in-the-Middle), Tab übernimmt."
+        control={<Switch checked={prefs.fim && mistral} disabled={!mistral} onChange={(v) => setPrefs({ fim: v })} />}
+      />
+      <Row title={<span className="flex items-center gap-2">Mistral OCR {only}</span>} description="PDF-, Word- und PowerPoint-Anhänge werden in Text umgewandelt, bevor der Agent sie liest." control={<Badge>{mistral ? "automatisch" : "aus"}</Badge>} />
+      <Row
+        title={<span className="flex items-center gap-2">Voxtral (Sprache) <span className="rounded bg-hover px-1.5 py-px text-[0.82em] text-fg-2">nur über Vibe</span></span>}
+        description="Spracheingabe und Vorlesen laufen über Vibe mit Mistrals Voxtral. Eine Alternative (z. B. Whisper über OpenAI-kompatible Anbieter) gibt es noch nicht – siehe Werkzeuge → Sprache."
+        control={<Badge>Vibe</Badge>}
+      />
+      <Row title="Embeddings" description="Semantische Codesuche – Mistral, OpenAI oder jeder OpenAI-kompatible Anbieter mit /embeddings (z. B. Ollama). Siehe Werkzeuge → Semantische Suche." control={<Badge>wählbar</Badge>} />
+    </Card>
+  );
+}
+
+/** Werkzeuge → Semantische Suche: Embedding-Modell aus allen Anbietern. */
+function SearchCard() {
+  const prefs = useStore((s) => s.prefs);
+  const setPrefs = useStore((s) => s.setPrefs);
+  const value = prefs.embedModel.includes("/") ? prefs.embedModel : `mistral/${prefs.embedModel}`;
+  return (
+    <>
+      <Card title="Semantische Suche" description="Findet Code nach Bedeutung statt nach Wortlaut. Ein Modellwechsel erfordert neues Indexieren.">
+        <Row
+          title="Embedding-Modell"
+          description="Empfohlen: codestral-embed (für Code). Alternativen: text-embedding-3-small (OpenAI) oder lokal z. B. nomic-embed-text (Ollama)."
+          control={
+            <ModelSelect
+              value={value}
+              kind="embed"
+              extra={{ mistral: EMBED_MODELS.map(([id]) => id) }}
+              onChange={(v) => setPrefs({ embedModel: v.startsWith("mistral/") ? v.slice(8) : v })}
+              testId="embed-model"
+            />
+          }
+        />
+        <Row
+          title="Agenten dürfen die semantische Suche nutzen"
+          description="Brise hängt sich als MCP-Werkzeug „semantic_code_search“ in neue Sessions indexierter Projekte."
+          control={<Switch checked={prefs.agentSearch} onChange={(v) => setPrefs({ agentSearch: v })} />}
+        />
+      </Card>
+      <IndexCard />
+    </>
+  );
+}
+
+/** Werkzeuge → Sprache. Läuft über Vibe (Voxtral). */
+function VoiceCard({ field, vibe }: { field: (key: string) => ReactNode; vibe: boolean }) {
+  const prefs = useStore((s) => s.prefs);
+  const setPrefs = useStore((s) => s.setPrefs);
+  return (
+    <Card
+      title="Sprache"
+      description="Mikrofon im Eingabefeld und Vorlesen der Antworten. Beides läuft über Vibe mit Mistrals Voxtral; ohne Vibe ist es aus. Eine Alternative über andere Anbieter (z. B. Whisper) gibt es noch nicht."
+    >
+      <Row
+        title="Sprache der Spracheingabe"
+        description="Voxtral erkennt die Sprache meist auch selbst."
+        control={
+          <select
+            value={prefs.sttLanguage}
+            onChange={(e) => setPrefs({ sttLanguage: e.target.value })}
+            className="h-8 min-w-[180px] rounded-lg border border-line bg-elev px-2 text-[0.92em] outline-none focus:border-accent"
+          >
+            {STT_LANGUAGES.map(([v, l]) => (
+              <option key={v} value={v}>
+                {l}
+              </option>
+            ))}
+          </select>
+        }
+      />
+      {vibe && field("active_transcribe_model")}
+      <Row
+        title="Antworten automatisch vorlesen"
+        description="Vibe fasst die Antwort nach jedem Turn kurz zusammen und liest sie vor."
+        control={<Switch checked={prefs.autoNarrate} onChange={(v) => setPrefs({ autoNarrate: v })} />}
+      />
+      {vibe && field("active_tts_model")}
+    </Card>
   );
 }
 
@@ -1091,39 +1363,6 @@ function SkillsView({ values, write }: { values: Record<string, unknown>; write:
         );
       })}
     </>
-  );
-}
-
-function MoreMistralCard() {
-  const prefs = useStore((s) => s.prefs);
-  const setPrefs = useStore((s) => s.setPrefs);
-  return (
-    <Card title="Weitere Mistral-Modelle" description="Brise nutzt neben dem Chat-Modell gezielt spezialisierte Modelle – alles über deinen Mistral-Key.">
-      <Row
-        title="Codestral-Vervollständigung im Editor"
-        description="Grauer Vorschlag beim Tippen (Fill-in-the-Middle), Tab übernimmt."
-        control={<Switch checked={prefs.fim} onChange={(v) => setPrefs({ fim: v })} />}
-      />
-      <Row
-        title="Task-Modell"
-        description="Stuft Aufgaben für „Auto“ ein und schreibt persönliche Vorschläge und Commit-Nachrichten. Schnell und günstig ist hier wichtiger als klug."
-        control={
-          <select
-            value={prefs.assistModel}
-            onChange={(e) => setPrefs({ assistModel: e.target.value })}
-            className="h-8 min-w-[220px] rounded-lg border border-line bg-elev px-2 text-[0.92em] outline-none focus:border-accent"
-          >
-            <option value="mistral-small-latest">Mistral Small (empfohlen)</option>
-            <option value="ministral-8b-latest">Ministral 8B (schneller)</option>
-            <option value="ministral-3b-latest">Ministral 3B (am schnellsten)</option>
-            <option value="mistral-medium-latest">Mistral Medium (gründlicher)</option>
-          </select>
-        }
-      />
-      <Row title="Mistral OCR" description="PDF-, Word- und PowerPoint-Anhänge werden automatisch in Text umgewandelt, bevor Vibe sie liest." control={<Badge>automatisch</Badge>} />
-      <Row title="Voxtral" description="Spracheingabe (Realtime) und Vorlesen (TTS) – siehe Einstellungen → Sprache." control={<Badge>aktiv</Badge>} />
-      <Row title="Codestral Embed" description="Semantische Codesuche – siehe Einstellungen → Embeddings & Suche." control={<Badge>aktiv</Badge>} />
-    </Card>
   );
 }
 

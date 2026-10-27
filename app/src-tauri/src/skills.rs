@@ -165,7 +165,7 @@ pub fn write_agent_profiles() -> CmdResult<bool> {
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let m = "";
     let explore = format!(
-        r#"# Von Brise verwaltet – Änderungen in Brise unter Einstellungen → Agents.
+        r#"# Von Brise verwaltet – Änderungen in Brise unter Einstellungen → Agenten → Vibe (Subagents).
 display_name = "Explore"
 description = "Read-only subagent for codebase exploration (grep, read, semantic search)"
 safety = "safe"
@@ -175,7 +175,7 @@ system_prompt_id = "explore"
 {m}"#
     );
     let researcher = format!(
-        r#"# Von Brise verwaltet – Änderungen in Brise unter Einstellungen → Agents.
+        r#"# Von Brise verwaltet – Änderungen in Brise unter Einstellungen → Agenten → Vibe (Subagents).
 display_name = "Researcher"
 description = "Read-only web research subagent: searches the web, reads primary sources and returns findings with URLs. Use one per sub-question; run several in parallel."
 safety = "safe"

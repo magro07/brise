@@ -305,7 +305,7 @@ function Context({ session }: { session: Session }) {
 function Agents({ session }: { session: Session }) {
   const openChild = useStore((s) => s.openChildSession);
   const list = subagents(session);
-  if (!list.length) return <Empty text="Vibe hat in dieser Session noch keine Subagents gestartet. Für größere Aufgaben verteilt Vibe Arbeit automatisch an Subagents, z. B. „explore“ zum Durchsuchen des Codes." />;
+  if (!list.length) return <Empty text="In dieser Session liefen noch keine Subagents. Für größere Aufgaben verteilt der Agent Arbeit oft selbst an Subagents, z. B. zum Durchsuchen des Codes." />;
   return (
     <div className="space-y-2">
       {list.map((t) => {
@@ -351,7 +351,7 @@ function Tasks({ session }: { session: Session }) {
   );
 }
 
-/** Semantische Codesuche über Mistral-Embeddings. */
+/** Semantische Codesuche über Embeddings (Anbieter laut Einstellungen → Werkzeuge). */
 function SemanticSearch({ cwd }: { cwd: string }) {
   const model = useStore((s) => s.prefs.embedModel);
   const progress = useStore((s) => s.indexing[cwd]);

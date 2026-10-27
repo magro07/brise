@@ -105,7 +105,7 @@ function useShortcuts() {
   }, []);
 }
 
-/** Hinweis, wenn Mistral seit dem letzten Start neue Modelle anbietet. */
+/** Hinweis, wenn Mistral seit dem letzten Start neue Modelle anbietet (für Vibe). */
 function NewModelsBanner() {
   const models = useStore((s) => s.newModels);
   const [busy, setBusy] = useState(false);

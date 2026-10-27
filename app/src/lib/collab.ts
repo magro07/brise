@@ -54,7 +54,7 @@ export interface BilledTo {
 }
 
 /** Agent-Backends (heute nur Vibe, später z. B. Claude Code über ACP). */
-export const BACKEND_LABEL: Record<string, string> = { vibe: "Mistral Vibe", claude: "Claude Code", "claude-code": "Claude Code", codex: "Codex", gemini: "Gemini" };
+export const BACKEND_LABEL: Record<string, string> = { vibe: "Vibe", claude: "Claude Code", "claude-code": "Claude Code", codex: "Codex", gemini: "Gemini" };
 
 export interface TeamSession {
   sessionId: string;
@@ -160,7 +160,7 @@ export interface CollabPrefs {
   expiresMinutes: number;
   /** Gast-Prompts automatisch ausführen, sobald die Session frei ist. */
   autoRun: boolean;
-  /** Eigenes Abo, wie es andere sehen (z. B. „Mistral Vibe Pro“). */
+  /** Eigenes Abo, wie es andere sehen (z. B. „Vibe Pro“, „Claude Max“). */
   plan: string;
   /** Rolle für Mitglieder gemeinsamer Teams. */
   teamRole: CollabRole;
@@ -315,7 +315,7 @@ export const policyFromPrefs = (p: CollabPrefs): Policy => ({
   dailyTokens: p.dailyTokens > 0 ? p.dailyTokens : null,
 });
 
-export const planLabel = () => useCollab.getState().prefs.plan.trim() || "Mistral-Plan";
+export const planLabel = () => useCollab.getState().prefs.plan.trim() || "eigenes Abo";
 
 export async function share(sessionId: string) {
   const { prefs, teams } = useCollab.getState();

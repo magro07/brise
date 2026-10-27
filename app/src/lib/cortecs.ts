@@ -54,7 +54,8 @@ export interface SensitiveVerdict {
   flagged: boolean;
   categories: SensitiveCategory[];
   reason: string;
-  checkedBy: "local" | "cortecs";
+  /** "local", "cortecs" oder die ID des Anbieters, dessen Modell geprüft hat. */
+  checkedBy: string;
   model: string | null;
   ms: number;
   costEur: number;
@@ -72,8 +73,9 @@ export const cortecs = {
   addModel: (id: string) => invoke<string>("cortecs_add_model", { id }),
   utilityActive: (on: boolean) => invoke<boolean>("cortecs_utility_active", { on }),
   projectConfig: () => invoke<{ readable: boolean; status?: number; config?: any }>("cortecs_project_config"),
-  checkSensitivity: (text: string, attachments: string[], cwd: string | null, remote: boolean) =>
-    invoke<SensitiveVerdict>("sensitivity_check", { text, attachments, cwd, remote, model: null }),
+  /** `model`: „anbieter/modell“ für die zweite Prüfung, null = laut Einstellungen (sonst Cortecs, falls vorhanden). */
+  checkSensitivity: (text: string, attachments: string[], cwd: string | null, remote: boolean, model: string | null = null) =>
+    invoke<SensitiveVerdict>("sensitivity_check", { text, attachments, cwd, remote, model }),
 };
 
 /** Vibe-Aliase der Cortecs-Modelle beginnen mit „cortecs-“ (Brise trägt nur ZDR-Modelle ein). */

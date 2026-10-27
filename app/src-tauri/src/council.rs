@@ -769,7 +769,7 @@ fn prepare(cwd: &str, tool: Tool, args: &Value) -> CmdResult<(Run, String, Vec<(
     if cfg.daily_limit_eur > 0.0 && spent + est > cfg.daily_limit_eur {
         return Err(format!(
             "Council-Tageslimit erreicht: heute {:.2} € verbraucht, dieser Aufruf kostet geschätzt {:.2} €, Limit {:.2} €. \
-             Der Nutzer kann das Limit unter Einstellungen → Council erhöhen. Arbeite ohne Council weiter und sag es dem Nutzer.",
+             Der Nutzer kann das Limit unter Einstellungen → Modelle & Automatik erhöhen. Arbeite ohne Council weiter und sag es dem Nutzer.",
             spent, est, cfg.daily_limit_eur
         ));
     }

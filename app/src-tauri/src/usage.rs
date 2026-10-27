@@ -687,7 +687,7 @@ pub fn master_costs(master: &str) -> MasterCosts {
     out
 }
 
-/// Eigenes Monatsbudget in Euro (Einstellungen → Nutzung).
+/// Eigenes Monatsbudget in Euro über alle Anbieter (Einstellungen → Nutzung & Budget).
 pub fn monthly_budget_eur() -> Option<f64> {
     Some(load_settings().budget_eur)
 }

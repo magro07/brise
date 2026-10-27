@@ -226,9 +226,9 @@ export function DraftHero({ project }: { project: string }) {
     setLoading(true);
     const recent = index.filter((x) => x.cwd === project).slice(0, 8).map((x) => x.title ?? "").filter(Boolean);
     try {
-      const provider = helperProvider(project);
-      if (!provider) throw new Error("ZDR-Projekt ohne Cortecs");
-      const list = await api.projectSuggestions(project, recent, useStore.getState().prefs.assistModel, refresh, provider);
+      const helper = helperProvider(project);
+      if (!helper) throw new Error("ZDR-Projekt ohne passenden Anbieter");
+      const list = await api.projectSuggestions(project, recent, helper.model, refresh, helper.provider);
       setSuggestions(list.slice(0, 4));
       setPersonal(true);
     } catch {

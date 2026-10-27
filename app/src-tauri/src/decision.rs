@@ -4,7 +4,7 @@
 //! den Einstellungen (`taskModels`) und kann bei jedem konfigurierten Anbieter
 //! liegen (providers.rs). Cortecs-Decision-Modelle laufen über die
 //! Decisions-API (cortecs.rs). Siehe docs/adr/0001-agent-backends.md,
-//! docs/adr/0004-cortecs.md und docs/adr/0008-anbieter.md.
+//! docs/adr/0004-cortecs.md und docs/adr/0009-anbieter.md.
 
 use serde::Serialize;
 

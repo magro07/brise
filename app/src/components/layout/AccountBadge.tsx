@@ -26,7 +26,7 @@ export function AccountBadge({ sessionId }: { sessionId?: string }) {
   const name = sessionId ? bound?.name : accountForProject(list, project)?.name;
   if (!name) return null;
   return (
-    <Tip label={sessionId ? "Mistral-Account dieser Session" : "Account für die neue Session (Einstellungen → Konto)"}>
+    <Tip label={sessionId ? "Vibe-Account dieser Session" : "Account für die neue Session (Einstellungen → Agenten → Vibe)"}>
       <span className="flex shrink-0 items-center gap-1 rounded bg-hover px-1.5 text-[0.75em] text-muted">
         <KeyRound className="h-3 w-3" />
         {name}

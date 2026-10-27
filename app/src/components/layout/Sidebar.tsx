@@ -46,7 +46,10 @@ export function Sidebar() {
   const activeSessionId = useStore((s) => s.activeSessionId);
   const view = useStore((s) => s.view);
   const auth = useStore((s) => s.auth);
-  const info = useStore((s) => s.connectInfo);
+  const defaultBackend = useStore((s) => s.prefs.defaultBackend);
+  const info = useStore((s) => s.agents[s.prefs.defaultBackend] ?? s.connectInfo);
+  const backendTitle = useStore((s) => s.backends.find((b) => b.id === s.prefs.defaultBackend)?.title) ?? info?.title ?? defaultBackend;
+  const authed = defaultBackend === "vibe" ? !!auth?.authenticated : !!info?.auth?.authenticated;
   const { newDraft, selectSession, removeProject, deleteSession, setView, set } = useStore.getState();
   const [query, setQuery] = useState("");
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
@@ -254,18 +257,18 @@ export function Sidebar() {
         </SideButton>
         <div className="mt-1 flex items-center gap-2.5 rounded-lg px-2.5 py-2">
           <div className="relative flex h-7 w-7 items-center justify-center rounded-full bg-accent-soft text-[0.8em] font-semibold text-accent">
-            M
+            {backendTitle.charAt(0).toUpperCase()}
             <span
               className={clsx(
                 "absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border-2 border-sidebar",
-                auth?.authenticated ? "bg-ok" : "bg-muted",
+                authed ? "bg-ok" : "bg-muted",
               )}
             />
           </div>
           <div className="min-w-0 flex-1 leading-tight">
-            <div className="truncate text-[0.9em]">{auth?.authenticated ? "Mistral-Plan" : "Nicht angemeldet"}</div>
+            <div className="truncate text-[0.9em]">{authed ? (defaultBackend === "vibe" ? "Vibe-Plan" : info?.auth?.label ?? "Angemeldet") : "Nicht angemeldet"}</div>
             <div className="truncate text-[0.78em] text-muted">
-              {info?.init.agentInfo?.title ?? "Vibe"} {info?.init.agentInfo?.version}
+              {info?.init.agentInfo?.title ?? backendTitle} {info?.init.agentInfo?.version}
             </div>
           </div>
         </div>

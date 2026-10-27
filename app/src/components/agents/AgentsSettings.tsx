@@ -3,6 +3,7 @@ import { AlertTriangle, CheckCircle2, Download, LogIn, RefreshCw, TerminalSquare
 import { api, type AuthStatus, type BackendInfo } from "../../lib/acp";
 import { useTerminalRequest } from "../../lib/backends";
 import { useStore } from "../../lib/store";
+import { useProviders } from "../../lib/providers";
 import { Button, Spinner, Switch, clsx } from "../ui";
 import { Card, Row } from "../settings/Settings";
 import { BackendBadge } from "./BackendPicker";
@@ -14,7 +15,7 @@ export function AgentsSettings() {
   const prefs = useStore((s) => s.prefs);
   const { setPrefs, refreshBackends } = useStore.getState();
   const [auth, setAuth] = useState<Record<string, AuthStatus | null>>({});
-  const [providers, setProviders] = useState<{ id: string; title: string; available: boolean }[]>([]);
+  const providers = useProviders((s) => s.list);
 
   const probe = (id: string) =>
     (agents[id]?.caps.vibeExtensions ? Promise.resolve(agents[id].auth) : api.backendAuth(id))
@@ -23,7 +24,7 @@ export function AgentsSettings() {
 
   useEffect(() => {
     refreshBackends();
-    api.decisionProviders().then(setProviders).catch(() => {});
+    useProviders.getState().refresh();
   }, []);
   useEffect(() => {
     for (const b of backends) if (b.installed) probe(b.id);
@@ -85,18 +86,20 @@ export function AgentsSettings() {
           ))}
       </Card>
 
-      <Card
-        title="Entscheidungsmodell"
-        description="Kleine Entscheidungen trifft Brise selbst: Aufgabe einstufen, Denkstufe nachsteuern, Vorschläge, Commit-Nachrichten. Den Anbieter wählst du unter Einstellungen → Cortecs & Datenschutz."
-      >
+      <Card title="API-Schlüssel der Anbieter" description="Für Brises eigene Modellaufrufe und für Modelle, die Brise in Vibe einträgt. Claude Code, Codex und Gemini melden sich selbst an (oben).">
         {providers.map((p) => (
           <Row
             key={p.id}
-            title={p.title}
-            description={!p.available ? "Kein Schlüssel – Brise schätzt ohne KI (Heuristik)." : p.id === "mistral" ? `Modell: ${prefs.assistModel}` : "Decision-Modelle ohne Datenspeicherung"}
-            control={p.id === prefs.decisionProvider ? <span className="text-[0.86em] text-ok">aktiv</span> : null}
+            title={p.name}
+            description={p.hasKey ? (p.keySource === "vibe" ? "Schlüssel mit Vibe geteilt" : p.keySource === "env" ? "Schlüssel aus Umgebungsvariable" : "Schlüssel im Schlüsselbund") : p.keyOptional ? "lokal, ohne Schlüssel" : "kein Schlüssel"}
+            control={p.usable ? <CheckCircle2 className="h-4 w-4 text-ok" /> : <span className="text-[0.86em] text-muted">–</span>}
           />
         ))}
+        <div className="px-4 py-2.5">
+          <Button size="sm" onClick={() => useStore.getState().setView("settings", "providers")}>
+            Anbieter & Schlüssel verwalten
+          </Button>
+        </div>
       </Card>
     </>
   );
@@ -108,6 +111,18 @@ function BackendRow({ backend: b, auth, connected, onChanged }: { backend: Backe
   const [error, setError] = useState<string | null>(null);
   const [lines, setLines] = useState<string[]>([]);
   const mine = useRef(false);
+  const [plan, setPlan] = useState<string | null>(null);
+  // Vibe-Plan (/whoami). Verbrauch oder Limit liefert Mistral dort nicht.
+  useEffect(() => {
+    if (b.id !== "vibe" || !connected) return;
+    const st = useStore.getState();
+    const sid = st.activeSessionId ?? Object.values(st.prepared).find((id) => id !== "…");
+    if (sid)
+      api
+        .ext<{ plan?: { name?: string; title?: string | null; kind?: string } }>("account/read", { sessionId: sid })
+        .then((a) => a.plan && setPlan(a.plan.title ?? `${a.plan.kind ?? ""} · ${a.plan.name ?? ""}`))
+        .catch(() => {});
+  }, [b.id, connected]);
   const log = useRef<HTMLPreElement>(null);
 
   // Installationsausgabe (install:progress) nur mitschreiben, solange diese Zeile installiert.
@@ -191,6 +206,10 @@ function BackendRow({ backend: b, auth, connected, onChanged }: { backend: Backe
           <div className="mt-1.5 text-[0.84em]">
             {b.installed ? status : <span className="text-muted">{b.installBlocker ?? "nicht installiert"}</span>}
           </div>
+          {b.id === "vibe" && plan && <div className="mt-1 text-[0.84em] text-fg-2">Plan: {plan} · Kosten schätzt Brise selbst (Nutzung & Budget)</div>}
+          {b.id === "claude" && auth?.authenticated && /max|pro|abo/i.test(`${auth.label} ${auth.detail}`) && (
+            <div className="mt-1 text-[0.84em] text-fg-2">Abo – die tatsächlichen Kosten kennt Brise nicht; die Nutzung zeigt Tokens und eine Schätzung.</div>
+          )}
           {b.command && <div className="mt-1 break-all font-mono text-[0.75em] text-muted selectable">{b.command}</div>}
           {b.installed && !auth?.authenticated && b.loginHint && !b.loginAvailable && <div className="mt-1 text-[0.82em] text-muted">{b.loginHint}</div>}
         </div>
@@ -203,6 +222,11 @@ function BackendRow({ backend: b, auth, connected, onChanged }: { backend: Backe
           {b.installed && b.loginAvailable && (
             <Button size="sm" variant={auth?.authenticated ? "secondary" : "primary"} onClick={doLogin} title={b.loginHint ?? undefined}>
               <LogIn className="h-3.5 w-3.5" /> {auth?.authenticated ? "Anders anmelden" : "Anmelden"}
+            </Button>
+          )}
+          {b.installed && b.id === "vibe" && (
+            <Button size="sm" variant="ghost" onClick={() => useStore.getState().setView("settings", "agents/vibe")}>
+              Vibe-Einstellungen
             </Button>
           )}
           {b.installed && b.id !== "vibe" && (

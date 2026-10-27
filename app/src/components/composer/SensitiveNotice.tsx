@@ -37,7 +37,9 @@ export function SensitiveNotice({
             <span className="text-[0.8em] text-muted">
               {verdict.checkedBy === "cortecs"
                 ? `geprüft mit Cortecs ${verdict.model ?? ""} (ohne Datenspeicherung) · ${verdict.ms} ms · ${euro(verdict.costEur)}`
-                : "lokal geprüft"}
+                : verdict.checkedBy !== "local"
+                  ? `geprüft mit ${verdict.model ?? verdict.checkedBy} · ${verdict.ms} ms · ${euro(verdict.costEur)}`
+                  : "lokal geprüft"}
             </span>
           </div>
           <p className="mt-0.5 text-[0.88em] text-fg-2">
@@ -76,7 +78,7 @@ export function SensitiveNotice({
                 <ShieldCheck className="h-3.5 w-3.5" /> Auf sicheres Cortecs-Modell (ZDR) wechseln
               </Button>
             ) : (
-              <Button size="sm" variant="primary" onClick={() => setView("settings", "cortecs")}>
+              <Button size="sm" variant="primary" onClick={() => setView("settings", "privacy")}>
                 <ShieldCheck className="h-3.5 w-3.5" /> Cortecs einrichten
               </Button>
             )}

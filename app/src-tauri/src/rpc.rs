@@ -140,7 +140,7 @@ pub fn spawn_with_env(
     command.creation_flags(0x0800_0000); // kein Konsolenfenster unter Windows
     let mut child = command
         .spawn()
-        .with_context(|| format!("Konnte {} nicht starten – ist Mistral Vibe installiert?", program.to_string_lossy()))?;
+        .with_context(|| format!("Konnte {} nicht starten – ist der Agent installiert?", program.to_string_lossy()))?;
 
     let mut stdin = child.stdin.take().expect("stdin ist gepiped");
     let stdout = child.stdout.take().expect("stdout ist gepiped");

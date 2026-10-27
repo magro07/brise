@@ -4,6 +4,7 @@ import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { benchApi, type BenchTarget, type BenchTask, type Benchmark, type Check } from "../../lib/bench";
 import { useStore } from "../../lib/store";
 import { Button, clsx } from "../ui";
+import { ModelSelect } from "../settings/ModelSelect";
 
 const input = "h-8 w-full rounded-md border border-line bg-bg px-2 text-[0.92em] outline-none focus:border-accent";
 const area = "w-full rounded-md border border-line bg-bg px-2 py-1.5 font-mono text-[0.88em] outline-none focus:border-accent selectable";
@@ -131,8 +132,8 @@ export function BenchEditor({ initial, onCancel, onSaved }: { initial: Benchmark
             <Field label="Beschreibung">
               <input className={input} value={bench.description ?? ""} onChange={(e) => setBench({ ...bench, description: e.target.value })} />
             </Field>
-            <Field label="Richtermodell" hint="Für Prüfungen „Richtermodell bewertet“ ohne eigenes Modell. Mistral-Modell-ID oder cortecs/<modell> (ZDR). Standard: mistral-small-latest.">
-              <input className={input} value={bench.judgeModel ?? ""} onChange={(e) => setBench({ ...bench, judgeModel: e.target.value })} placeholder="mistral-small-latest" />
+            <Field label="Richtermodell" hint="Für Prüfungen „Richtermodell bewertet“ ohne eigenes Modell – jeder Anbieter mit Schlüssel, z. B. cortecs/<modell> für ZDR. Standard: Richter unter Modelle & Automatik.">
+              <ModelSelect value={bench.judgeModel ?? ""} emptyLabel="Standard (Modelle & Automatik)" onChange={(judgeModel) => setBench({ ...bench, judgeModel })} className="w-full max-w-none" />
             </Field>
           </section>
 
@@ -188,7 +189,7 @@ function TargetRow({ target, onChange, onRemove }: { target: BenchTarget; onChan
     }
     return out;
   };
-  const known = backends.length ? backends : [{ id: "vibe", title: "Mistral Vibe", installed: true }];
+  const known = backends.length ? backends : [{ id: "vibe", title: "Vibe", installed: true }];
   return (
     <div className="grid grid-cols-[130px_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_auto] items-end gap-2 rounded-xl border border-line bg-elev p-3">
       <Field label="Agent">
@@ -363,7 +364,7 @@ function CheckForm({ check, onChange, onRemove }: { check: Check; onChange: (c: 
               placeholder="Woran soll der Richter die Antwort messen?"
             />
             <div className="flex gap-2">
-              <input className={input} value={check.model ?? ""} onChange={(e) => onChange({ ...check, model: e.target.value || undefined })} placeholder="Modell (sonst Richtermodell des Benchmarks)" />
+              <ModelSelect value={check.model ?? ""} emptyLabel="Richtermodell des Benchmarks" onChange={(m) => onChange({ ...check, model: m || undefined })} className="max-w-none flex-1" />
               <input
                 className={clsx(input, "w-36")}
                 type="number"

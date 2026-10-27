@@ -222,9 +222,9 @@ export function GitPanel({ cwd }: { cwd: string }) {
                 onClick={() =>
                   run("msg", async () => {
                     if (!staged.length) await api.git(cwd, "stage_all");
-                    const provider = helperProvider(cwd);
-                    if (!provider) throw new Error("Dieses Projekt nutzt nur Modelle ohne Datenspeicherung – dafür fehlt der Cortecs-Key.");
-                    setMessage(await api.commitMessage(cwd, useStore.getState().prefs.assistModel, provider));
+                    const helper = helperProvider(cwd);
+                    if (!helper) throw new Error("Dieses Projekt nutzt nur Modelle ohne Datenspeicherung – dafür fehlt ein passender Anbieter (Cortecs, lokal oder als ZDR markiert).");
+                    setMessage(await api.commitMessage(cwd, helper.model, helper.provider));
                   })
                 }
               >

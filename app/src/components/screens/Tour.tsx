@@ -43,7 +43,7 @@ const STEPS: Step[] = [
   {
     target: '[data-tour="settings"]',
     title: "Einstellungen – oder einfach fragen",
-    text: "Modelle, Skills, Websuche, Sprache und mehr findest du in den Einstellungen. Oder sag es dem Agenten im Chat: „Mach Brise orange und die Schrift größer.“",
+    text: "Anbieter und Schlüssel, Modelle, Skills, Websuche, Sprache und mehr findest du in den Einstellungen – oben mit Suchfeld. Oder sag es dem Agenten im Chat: „Mach Brise orange und die Schrift größer.“",
   },
   {
     title: "Los geht’s",

@@ -230,7 +230,8 @@ export function Composer({ session, project, focused = true }: { session?: Sessi
     if (st.prefs.sensitivityCheck && !safe && !t.startsWith("/")) {
       setChecking(true);
       const files = attachments.filter((a) => a.kind === "file").map((a) => a.path);
-      const verdict = await cortecs.checkSensitivity(t, files, project, st.cortecs.key).catch(() => null);
+      const remote = !!st.prefs.taskModels.sensitivity || st.cortecs.key;
+      const verdict = await cortecs.checkSensitivity(t, files, project, remote, st.prefs.taskModels.sensitivity || null).catch(() => null);
       setChecking(false);
       if (verdict?.flagged) {
         setFlagged({ verdict, text: t, attachments });

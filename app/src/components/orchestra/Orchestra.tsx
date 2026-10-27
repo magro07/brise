@@ -428,6 +428,7 @@ function CuratorCard({ locked }: { locked: boolean }) {
   const prefs = useStore((s) => s.prefs.orchestra);
   const setPrefs = useStore((s) => s.setPrefs);
   const project = useStore((s) => s.activeProject);
+  const templates = useStore((s) => s.templates);
   const set = (patch: Partial<typeof prefs>) => setPrefs({ orchestra: { ...prefs, ...patch } });
   const workers = prefs.workers;
   const setWorker = (i: number, patch: Partial<(typeof workers)[number]>) => set({ workers: workers.map((w, n) => (n === i ? { ...w, ...patch } : w)) });
@@ -446,7 +447,7 @@ function CuratorCard({ locked }: { locked: boolean }) {
                 <option key={b} value={b}>{BACKEND_NAME[b]}</option>
               ))}
             </select>
-            <input value={prefs.curatorModel} disabled={locked} onChange={(e) => set({ curatorModel: e.target.value.trim() })} placeholder="z. B. opus, mistral-large-4" className={clsx(input, "w-[170px]")} data-testid="orch-curator-model" />
+            <input value={prefs.curatorModel} disabled={locked} list={`orch-models-${prefs.curatorBackend}`} onChange={(e) => set({ curatorModel: e.target.value.trim() })} placeholder="z. B. opus, mistral-large-4" className={clsx(input, "w-[170px]")} data-testid="orch-curator-model" />
           </div>
         }
       />
@@ -465,7 +466,7 @@ function CuratorCard({ locked }: { locked: boolean }) {
                   <option key={b} value={b}>{BACKEND_NAME[b]}</option>
                 ))}
               </select>
-              <input value={w.model} disabled={locked} onChange={(e) => setWorker(i, { model: e.target.value.trim() })} placeholder="Modell-Alias" className={clsx(input, "min-w-0 flex-1")} />
+              <input value={w.model} disabled={locked} list={`orch-models-${w.backend}`} onChange={(e) => setWorker(i, { model: e.target.value.trim() })} placeholder="Modell-Alias" className={clsx(input, "min-w-0 flex-1")} />
               <button className="text-muted hover:text-bad disabled:opacity-40" disabled={locked || workers.length <= 1} onClick={() => set({ workers: workers.filter((_, n) => n !== i) })} aria-label="Entfernen">
                 <Trash2 className="h-3.5 w-3.5" />
               </button>
@@ -475,7 +476,20 @@ function CuratorCard({ locked }: { locked: boolean }) {
         <Button size="sm" variant="ghost" className="mt-2" disabled={locked} onClick={() => set({ workers: [...workers, { backend: "vibe", model: "", tier: 1 }] })}>
           <Plus className="h-3.5 w-3.5" /> Arbeiter hinzufügen
         </Button>
-        <p className="mt-1 text-[0.8em] text-muted">Innerhalb einer Stufe gewinnt das günstigste Modell (Preistabelle), bei Gleichstand das schnellere (t/s im Journal). Modelle, die dein Team nicht erlaubt, werden übersprungen.</p>
+        {BACKENDS.map((b) => (
+          <datalist key={b} id={`orch-models-${b}`}>
+            {(templates[b]?.config.find((o) => o.id === "model")?.options ?? []).map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.name}
+              </option>
+            ))}
+          </datalist>
+        ))}
+        <p className="mt-1 text-[0.8em] text-muted">
+          Innerhalb einer Stufe gewinnt das günstigste Modell (Preistabelle bzw. Preis des Anbieters, lokal = 0 €), bei Gleichstand das schnellere (t/s im Journal). Modelle
+          anderer Anbieter (OpenAI-kompatibel, lokal) stehen für Vibe-Arbeiter bereit, sobald sie unter Anbieter &amp; Schlüssel für Vibe freigegeben sind. Modelle, die dein
+          Team nicht erlaubt, werden übersprungen.
+        </p>
       </div>
       <Row
         title="Höchste Eskalation"

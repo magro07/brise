@@ -57,7 +57,7 @@ export function BackendPicker({ session }: { session?: Session }) {
           );
         })}
         <MenuSeparator />
-        <MenuItem icon={<Settings2 />} onSelect={() => setView("settings", "backends")}>
+        <MenuItem icon={<Settings2 />} onSelect={() => setView("settings", "agents")}>
           Agenten verwalten …
         </MenuItem>
       </MenuContent>

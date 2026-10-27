@@ -387,7 +387,7 @@ fn max_parallel() -> usize {
 pub fn check_enabled() -> CmdResult<()> {
     crate::policy::check_orchestra()?;
     if !prefs().enabled {
-        return Err("Die Master-Session ist in den Einstellungen ausgeschaltet (Einstellungen → Master-Session).".into());
+        return Err("Die Master-Session ist in den Einstellungen ausgeschaltet (Einstellungen → Modelle & Automatik).".into());
     }
     Ok(())
 }
@@ -713,7 +713,7 @@ async fn choose_worker(
     let Some(w) = pick(&pool, min) else {
         return match backend {
             Some(b) => Ok(Choice { backend: b, model: None, tier: 0, level: Some(level), reason: "kein passender Arbeiter im Pool – Standardmodell des Backends".into() }),
-            None => Err("Kein erlaubtes Arbeiter-Modell im Pool (Einstellungen → Master-Session, Team-Richtlinie).".into()),
+            None => Err("Kein erlaubtes Arbeiter-Modell im Pool (Einstellungen → Modelle & Automatik, Team-Richtlinie).".into()),
         };
     };
     let reason = format!(
@@ -1045,7 +1045,7 @@ fn available_text(caller: &str) -> String {
         format!("Laufbudget: ohne Grenze ({spent:.2} € bisher).")
     }];
     if pool.is_empty() {
-        out.push("Kein Arbeiter-Modell erlaubt (Einstellungen → Master-Session, Team-Richtlinie).".into());
+        out.push("Kein Arbeiter-Modell erlaubt (Einstellungen → Modelle & Automatik, Team-Richtlinie).".into());
     }
     for w in &pool {
         let price = match crate::usage::price_detail(&w.model) {
@@ -1203,7 +1203,7 @@ fn check_in_pool(backend: &str, model: &str, master: &str) -> CmdResult<()> {
         return Ok(());
     }
     Err(format!(
-        "POOL: {backend}/{model} ist nicht im erlaubten Arbeiter-Pool. Erlaubt: {} (siehe available_models; erweitern unter Einstellungen → Master-Session).",
+        "POOL: {backend}/{model} ist nicht im erlaubten Arbeiter-Pool. Erlaubt: {} (siehe available_models; erweitern unter Einstellungen → Modelle & Automatik).",
         pool.iter().map(|w| format!("{}/{}", w.backend, w.model)).collect::<Vec<_>>().join(", ")
     ))
 }

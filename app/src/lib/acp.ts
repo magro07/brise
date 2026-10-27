@@ -151,7 +151,7 @@ export const api = {
   startupCheck: () => invoke<{ changed: boolean; newModels: CatalogModel[] }>("startup_check"),
   listSkills: (cwd?: string) => invoke<SkillInfo[]>("list_skills", { cwd: cwd ?? null }),
   npxAvailable: () => invoke<boolean>("npx_available"),
-  /** `provider`: "mistral" (Task-Modell) oder "cortecs" (Decision-Modelle mit ZDR). */
+  /** `model`: „anbieter/modell“ oder leer (Backend wählt laut Einstellungen); `provider` nur „cortecs“ ohne Modell (ZDR). */
   classifyTask: (text: string, history: string | undefined, model: string, provider?: string) =>
     invoke<Decision<"simple" | "standard" | "complex">>("classify_task", { text, history: history ?? null, model, provider: provider ?? null }),
   projectSuggestions: (cwd: string, recent: string[], model: string, refresh = false, provider?: string) =>

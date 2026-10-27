@@ -50,8 +50,8 @@ export function CollabSettings() {
           <Row title="Dein Name" description="So sehen dich Host und Gäste." control={<input value={prefs.name} onChange={(e) => setPrefs({ name: e.target.value })} placeholder="z. B. Max" className={clsx(input, "w-[220px]")} />} />
           <Row
             title="Dein Abo"
-            description="So erscheint es im Team und bei Gästen, z. B. „Mistral Vibe Pro“."
-            control={<input value={prefs.plan} onChange={(e) => setPrefs({ plan: e.target.value })} placeholder="Mistral-Plan" className={clsx(input, "w-[220px]")} />}
+            description="So erscheint es im Team und bei Gästen, z. B. „Vibe Pro“ oder „Claude Max“."
+            control={<input value={prefs.plan} onChange={(e) => setPrefs({ plan: e.target.value })} placeholder="eigenes Abo" className={clsx(input, "w-[220px]")} />}
           />
           <Row
             title="Standard beim Teilen"

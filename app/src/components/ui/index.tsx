@@ -131,9 +131,10 @@ export function MenuLabel({ children }: { children: ReactNode }) {
 
 export const MenuSeparator = () => <RMenu.Separator className="my-1 h-px bg-line" />;
 
-export function Switch({ checked, onChange, disabled }: { checked: boolean; onChange: (v: boolean) => void; disabled?: boolean }) {
+export function Switch({ checked, onChange, disabled, "data-testid": testId }: { checked: boolean; onChange: (v: boolean) => void; disabled?: boolean; "data-testid"?: string }) {
   return (
     <RSwitch.Root
+      data-testid={testId}
       checked={checked}
       onCheckedChange={onChange}
       disabled={disabled}

@@ -1,23 +1,28 @@
 import { useEffect, useState } from "react";
 import { Plus, RotateCcw, Scale, X } from "lucide-react";
-import { api } from "../../lib/acp";
 import { COUNCIL_DEFAULTS, useStore, type CouncilPrefs } from "../../lib/store";
 import { CouncilCard } from "../chat/Council";
 import { councilApi, euro, reviewDiff, type CouncilRun } from "../../lib/council";
-import { Button, Spinner } from "../ui";
+import { Button, Spinner, clsx } from "../ui";
+import { refLabel, refUsable, useProviders } from "../../lib/providers";
+import { ModelSelect } from "./ModelSelect";
 import { Card, Row } from "./Settings";
 
 const SELECT = "h-8 min-w-[200px] rounded-lg border border-line bg-elev px-2 text-[0.92em] outline-none focus:border-accent";
 
-/** Modelle einer Rolle als Chips, Reihenfolge = Reihenfolge der Meinungen. */
-function ModelList({ value, catalog, onChange }: { value: string[]; catalog: string[]; onChange: (v: string[]) => void }) {
+/** Modelle einer Rolle als Chips, Reihenfolge = Reihenfolge der Meinungen. Jeder Anbieter mit Schlüssel. */
+function ModelList({ value, onChange, testId }: { value: string[]; onChange: (v: string[]) => void; testId?: string }) {
   const [adding, setAdding] = useState(false);
-  const [custom, setCustom] = useState("");
+  const list = useProviders((s) => s.list);
   return (
-    <div className="flex max-w-[360px] flex-wrap items-center justify-end gap-1">
+    <div className="flex max-w-[380px] flex-wrap items-center justify-end gap-1" data-testid={testId}>
       {value.map((m, n) => (
-        <span key={`${m}-${n}`} className="inline-flex items-center gap-1 rounded-md border border-line bg-panel px-1.5 py-0.5 font-mono text-[0.8em]">
-          {m}
+        <span
+          key={`${m}-${n}`}
+          className={clsx("inline-flex items-center gap-1 rounded-md border border-line bg-panel px-1.5 py-0.5 font-mono text-[0.8em]", !refUsable(m, list) && list.length > 0 && "text-muted line-through")}
+          title={refUsable(m, list) || !list.length ? undefined : "Kein Schlüssel für diesen Anbieter – wird übersprungen"}
+        >
+          {refLabel(m, list)}
           {value.length > 1 && (
             <button className="text-muted hover:text-bad" onClick={() => onChange(value.filter((_, i) => i !== n))} aria-label={`${m} entfernen`}>
               <X className="h-3 w-3" />
@@ -26,19 +31,15 @@ function ModelList({ value, catalog, onChange }: { value: string[]; catalog: str
         </span>
       ))}
       {adding ? (
-        <input
-          autoFocus
-          list="council-models"
-          value={custom}
-          placeholder="Modell-ID"
-          onChange={(e) => setCustom(e.target.value)}
-          onBlur={() => {
-            if (custom.trim()) onChange([...value, custom.trim()]);
-            setCustom("");
+        <ModelSelect
+          value=""
+          emptyLabel="Modell wählen …"
+          onChange={(m) => {
+            if (m) onChange([...value, m]);
             setAdding(false);
           }}
-          onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
-          className="h-6 w-[170px] rounded-md border border-line bg-elev px-1.5 font-mono text-[0.8em] outline-none focus:border-accent"
+          className="h-7 min-w-[200px] text-[0.85em]"
+          testId={testId && `${testId}-add`}
         />
       ) : (
         value.length < 5 && (
@@ -47,11 +48,6 @@ function ModelList({ value, catalog, onChange }: { value: string[]; catalog: str
           </button>
         )
       )}
-      <datalist id="council-models">
-        {catalog.map((c) => (
-          <option key={c} value={c} />
-        ))}
-      </datalist>
     </div>
   );
 }
@@ -59,16 +55,11 @@ function ModelList({ value, catalog, onChange }: { value: string[]; catalog: str
 export function CouncilSettings() {
   const council = useStore((s) => s.prefs.council);
   const setPrefs = useStore((s) => s.setPrefs);
-  const [catalog, setCatalog] = useState<string[]>([]);
   const [today, setToday] = useState<{ spentEur: number; limitEur: number } | null>(null);
   const [limit, setLimit] = useState(String(council.dailyLimitEur));
   const set = (p: Partial<CouncilPrefs>) => setPrefs({ council: { ...council, ...p } });
 
   useEffect(() => {
-    api
-      .modelCatalog()
-      .then((m) => setCatalog(m.flatMap((x) => [x.id, ...x.aliases.filter((a) => a.endsWith("-latest"))])))
-      .catch(() => {});
     councilApi.today().then(setToday).catch(() => {});
   }, []);
   useEffect(() => setLimit(String(council.dailyLimitEur)), [council.dailyLimitEur]);
@@ -112,7 +103,7 @@ export function CouncilSettings() {
           title="Tageslimit"
           description={
             <>
-              Darüber lehnt das Council ab (0 = ohne Limit). Heute verbraucht: {today ? euro(today.spentEur) : "…"}. Geschätzt aus Mistrals Preisliste.
+              Darüber lehnt das Council ab (0 = ohne Limit). Heute verbraucht: {today ? euro(today.spentEur) : "…"}. Geschätzt nach Preistabelle bzw. den Preisen des Anbieters.
             </>
           }
           control={
@@ -137,27 +128,20 @@ export function CouncilSettings() {
         />
       </Card>
 
-      <Card title="Modelle je Rolle" description="Meinung 1 bekommt das erste Modell, Meinung 2 das zweite usw. Mistral-Modell-IDs, z. B. mistral-large-4, zai-glm-5-3, codestral-latest, magistral-medium-latest.">
-        <Row title="Review" description="council_review: Befunde mit Schweregrad und Datei:Zeile" control={<ModelList value={council.review} catalog={catalog} onChange={(review) => set({ review })} />} />
-        <Row title="Fehlersuche" description="council_debug: priorisierte Hypothesen" control={<ModelList value={council.debug} catalog={catalog} onChange={(debug) => set({ debug })} />} />
-        <Row title="Schlussprüfung" description="council_verify: bestätigt, Einwände oder unklar" control={<ModelList value={council.verify} catalog={catalog} onChange={(verify) => set({ verify })} />} />
+      <Card title="Modelle je Rolle" description="Meinung 1 bekommt das erste Modell, Meinung 2 das zweite usw. Modelle verschiedener Anbieter mischen sich gut – unterschiedliche Modellfamilien übersehen unterschiedliche Fehler. Durchgestrichen: kein Schlüssel für den Anbieter.">
+        <Row title="Review" description="council_review: Befunde mit Schweregrad und Datei:Zeile" control={<ModelList testId="council-review" value={council.review} onChange={(review) => set({ review })} />} />
+        <Row title="Fehlersuche" description="council_debug: priorisierte Hypothesen" control={<ModelList testId="council-debug" value={council.debug} onChange={(debug) => set({ debug })} />} />
+        <Row title="Schlussprüfung" description="council_verify: bestätigt, Einwände oder unklar" control={<ModelList testId="council-verify" value={council.verify} onChange={(verify) => set({ verify })} />} />
         <Row
           title="Vorsitz"
           description="Führt die Urteile zusammen und prüft jeden Befund am Code. Ohne Vorsitz gruppiert Brise selbst (günstiger, ungenauer)."
           control={
-            <select value={council.chair} onChange={(e) => set({ chair: e.target.value })} className={SELECT}>
-              <option value="">Ohne – Brise gruppiert</option>
-              {[...new Set([council.chair, "mistral-large-4", "mistral-medium-3.5", "zai-glm-5-3", ...catalog])].filter(Boolean).map((m) => (
-                <option key={m} value={m}>
-                  {m}
-                </option>
-              ))}
-            </select>
+            <ModelSelect value={council.chair} emptyLabel="Ohne – Brise gruppiert" onChange={(chair) => set({ chair })} testId="council-chair" />
           }
         />
         <Row
           title="Denkaufwand"
-          description="Wie lange Denk-Modelle (GLM-5.3, Magistral) nachdenken. Hoch ist gründlicher, aber deutlich langsamer."
+          description="Wie lange Denk-Modelle nachdenken (wo der Anbieter das unterstützt). Hoch ist gründlicher, aber deutlich langsamer."
           control={
             <select value={council.effort} onChange={(e) => set({ effort: e.target.value as CouncilPrefs["effort"] })} className={SELECT}>
               <option value="low">Niedrig (schnell)</option>
