@@ -403,8 +403,11 @@ export function ProjectGroups<T extends { id: string; project?: string }>({ item
 
 /** Designs und Modelle eines Projekts in der Seitenleiste des Code-Modus. */
 export function ProjectWork({ project }: { project: string }) {
-  const designs = useDesign((s) => s.designs.filter((d) => d.project === project));
-  const models = useModel((s) => s.models.filter((m) => m.project === project));
+  // Ganze Listen wählen und erst danach filtern: ein gefiltertes Array im Selektor wäre bei jedem Aufruf neu (Endlosschleife).
+  const allDesigns = useDesign((s) => s.designs);
+  const allModels = useModel((s) => s.models);
+  const designs = useMemo(() => allDesigns.filter((d) => d.project === project), [allDesigns, project]);
+  const models = useMemo(() => allModels.filter((m) => m.project === project), [allModels, project]);
   useEffect(() => {
     useDesign.getState().init().catch(() => {});
     useModel.getState().init().catch(() => {});
