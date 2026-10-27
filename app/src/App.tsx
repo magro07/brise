@@ -17,6 +17,8 @@ import { SettingsView } from "./components/settings/Settings";
 import { DraftHero, NoProject, StartScreen } from "./components/screens/Screens";
 import { NewProjectDialog } from "./components/screens/NewProject";
 import { TextPrompt, Tour } from "./components/screens/Tour";
+import { ProfileDialog } from "./components/profile/ProfileDialog";
+import { useProfile } from "./lib/profile";
 import { initCollab } from "./lib/collab";
 import { initPolicy } from "./lib/policy";
 import { ShareDialog } from "./components/collab/ShareDialog";
@@ -33,6 +35,7 @@ import { OrchStrip } from "./components/orchestra/Orchestra";
 /** Backend-Events abonnieren und einmal mit Vibe verbinden. */
 function useBackend() {
   useEffect(() => {
+    useProfile.getState().load();
     const s = useStore.getState;
     let disposed = false;
     const unlisten: (() => void)[] = [];
@@ -151,14 +154,15 @@ function Workspace() {
     if (project && !session && phase === "ready") prepare(project);
   }, [project, session, phase, prepare]);
 
-  // Beim ersten Mal durch die App führen.
+  // Beim ersten Mal durch die App führen – erst nach dem Konto-Dialog.
+  const profileDialog = useProfile((s) => s.dialog);
   useEffect(() => {
     const st = useStore.getState();
-    if (project && phase === "ready" && !st.prefs.tourDone && st.tourStep == null) {
+    if (project && phase === "ready" && !profileDialog && !st.prefs.tourDone && st.tourStep == null) {
       const t = setTimeout(() => useStore.setState({ tourStep: 0 }), 900);
       return () => clearTimeout(t);
     }
-  }, [project, phase]);
+  }, [project, phase, profileDialog]);
 
   if (!project) return <NoProject />;
   return (
@@ -249,6 +253,7 @@ export default function App() {
       <JoinDialog />
       <TeamDialog />
       <Tour />
+      <ProfileDialog />
     </TooltipProvider>
   );
 }

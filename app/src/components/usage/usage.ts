@@ -1,10 +1,12 @@
-// Nutzungsanzeige: Aufrufe von src-tauri/src/usage.rs, Erfassung der Vibe-Turns
-// und Auswertung des Journals. Alle Beträge sind Schätzungen nach Preistabelle.
+// Nutzungsanzeige: Aufrufe von src-tauri/src/usage.rs, Erfassung der Turns aller
+// Agenten und Auswertung des Journals über alle Anbieter. Alle Beträge sind
+// Schätzungen nach Preistabelle; Abos sind gekennzeichnet (Kosten unbekannt).
 
 import { invoke } from "@tauri-apps/api/core";
 import { create } from "zustand";
 import { useStore, type Session, type ToolItem } from "../../lib/store";
 import { subOf } from "../../lib/orchestra";
+import { useProviders } from "../../lib/providers";
 
 export interface UsageRecord {
   ts: number;
@@ -31,8 +33,12 @@ export interface UsageRecord {
   account?: string;
   /** vibe, brise (direkt an die API), später weitere. */
   backend?: string;
-  /** Anbieter, falls nicht Mistral (z. B. `cortecs`). */
+  /** Anbieter, falls nicht Mistral (z. B. `cortecs`, `anthropic`, eigener OpenAI-kompatibler). */
   provider?: string;
+  /** Über ein Abo: Kosten unbekannt, zählen nicht ins Budget. */
+  subscription?: boolean;
+  /** Bei Abos: Listenpreis zum Vergleich. */
+  list?: number;
   /** Leistung: Gesamtdauer, Zeit bis zum ersten Token (nur gestreamt), Output-Tokens je Sekunde. */
   durationMs?: number;
   ttftMs?: number;
@@ -66,6 +72,8 @@ export interface Price {
   perCall: number;
   currency?: string;
   hinweis?: string;
+  /** Nur für Aufrufe bei diesem Anbieter. */
+  provider?: string;
 }
 
 export interface PriceTable {
@@ -313,6 +321,7 @@ export async function reportTurn(sid: string, res?: { inputTokens?: number; outp
       toolCalls: tools.length,
       webSearches: tools.filter(isWebSearch).length,
       backend: s.backend,
+      subscription: isSubscription(s.backend ?? "vibe"),
       ttftMs: timing?.ttftMs,
       durationMs: timing?.durationMs,
       // Subagents erzeugen Tokens, deren Chunks hier nicht ankommen – t/s wäre zu hoch.
@@ -386,10 +395,46 @@ export async function syncVibeHistory() {
   await refreshUsage();
 }
 
+// ---------- Anbieter, Agenten, Abos ----------
+
+export const PROVIDER_LABEL: Record<string, string> = { mistral: "Mistral", anthropic: "Anthropic", openai: "OpenAI", gemini: "Google Gemini", cortecs: "Cortecs (ZDR)" };
+export const AGENT_LABEL: Record<string, string> = { vibe: "Vibe", claude: "Claude Code", codex: "Codex", gemini: "Gemini CLI", brise: "Brise selbst" };
+
+/** Anbieter eines Eintrags (wie im Journal; ältere Einträge ohne Feld: nach Agent). */
+export function providerOf(r: UsageRecord): string {
+  if (r.provider) return r.provider;
+  if (r.model.startsWith("cortecs/")) return "cortecs";
+  return { claude: "anthropic", codex: "openai", gemini: "gemini" }[r.backend ?? ""] ?? "mistral";
+}
+
+export function providerLabel(id: string): string {
+  return PROVIDER_LABEL[id] ?? useProviders.getState().list.find((p) => p.id === id)?.name ?? id;
+}
+
+/** Wer den Aufruf gemacht hat: ein Agent oder Brise selbst (Einstufung, Council …). */
+export function agentOf(r: UsageRecord): string {
+  return r.backend || "vibe";
+}
+
+/**
+ * Läuft der Agent über ein Abo (Claude Max/Pro, ChatGPT, Google-Konto)? Dann
+ * kennt Brise die echten Kosten nicht. API-Schlüssel aus der Umgebung sind kein Abo.
+ */
+export function isSubscription(backend: string): boolean {
+  const a = useStore.getState().agents[backend]?.auth;
+  if (!a?.authenticated || backend === "vibe") return false;
+  const label = a.label ?? "";
+  if (/schlüssel vorhanden|api-key|api_key/i.test(label)) return false;
+  if (backend === "claude") return /^Claude /.test(label) || /claude-konto|oauth/i.test(label);
+  return true;
+}
+
 /** Funktion für die Aufschlüsselung, gröber als `feature`. */
 export function category(r: UsageRecord): string {
   if (r.kind === "chat") return r.subagents || /Subagent/.test(r.feature) ? "Chat mit Subagents" : "Chat";
-  if (r.kind === "assist") return "Task-Modell";
+  if (r.kind === "assist") return "Brises Entscheidungen";
+  if (r.kind === "council") return "Council";
+  if (r.kind === "bench") return "Benchmarks";
   if (r.kind === "embed") return "Semantische Suche";
   if (r.kind === "search") return "Websuche";
   if (r.kind === "ocr") return "OCR";

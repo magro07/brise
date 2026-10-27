@@ -25,6 +25,7 @@ mod skills;
 mod terminal;
 mod usage;
 mod policy;
+mod profile;
 mod providers;
 mod installer;
 mod rpc;
@@ -150,6 +151,9 @@ pub fn run() {
             backends::backend_login_command,
             backends::install_backend,
             decision::decision_providers,
+            profile::profile_get,
+            profile::profile_save,
+            profile::profile_skip,
             providers::providers_list,
             providers::provider_save,
             providers::provider_delete,

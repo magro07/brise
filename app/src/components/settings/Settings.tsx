@@ -34,6 +34,7 @@ import { Button, Spinner, Switch, clsx } from "../ui";
 import { MODE_INFO } from "../composer/Pickers";
 import { confirmAction } from "../../lib/dialogs";
 import { UsagePage } from "../usage/UsagePage";
+import { AllTime } from "../usage/AllTime";
 import { BenchPage } from "../bench/BenchPage";
 import { CortecsVibe, PrivacyView } from "./CortecsSettings";
 import { CollabSettings } from "../collab/CollabSettings";
@@ -65,6 +66,7 @@ const SUBS: Record<string, [string, string][]> = {
   ],
   usage: [
     ["", "Nutzung"],
+    ["stats", "Seit Beginn"],
     ["bench", "Benchmarks"],
   ],
 };
@@ -112,7 +114,9 @@ const SEARCH: { section: string; title: string; keywords?: string }[] = [
   { section: "privacy", title: "Cortecs", keywords: "eu § 203 berufsgeheimnis sovereign" },
   { section: "privacy", title: "Secrets", keywords: "geheimnisse passwörter tokens" },
   { section: "usage", title: "Nutzung", keywords: "kosten budget monat tokens statistik" },
+  { section: "usage", title: "Anbieter und Agenten", keywords: "kosten je anbieter agent abo claude codex gemini" },
   { section: "usage", title: "Preistabelle", keywords: "preise" },
+  { section: "usage/stats", title: "Seit Beginn", keywords: "all-time statistik heatmap kalender serie streak meilensteine lieblingsmodelle" },
   { section: "usage/bench", title: "Benchmarks", keywords: "vergleich test richter" },
   { section: "tools", title: "Semantische Suche", keywords: "embeddings index codesuche" },
   { section: "tools", title: "Sprache", keywords: "spracheingabe vorlesen mikrofon stt tts voxtral" },
@@ -654,6 +658,7 @@ export function SettingsView() {
           )}
 
           {section === "usage" && sub === "" && <UsagePage />}
+          {section === "usage" && sub === "stats" && <AllTime />}
           {section === "usage" && sub === "bench" && <BenchPage />}
 
           {section === "tools" && (

@@ -114,6 +114,10 @@ pub struct Record {
     /// Anbieter, falls nicht Mistral (z. B. `cortecs`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub provider: Option<String>,
+    /// Über ein Abo (Claude Max, ChatGPT, Google-Konto …): tatsächliche Kosten
+    /// unbekannt, zählen nicht ins Budget; der Listenpreis dient nur zum Vergleich.
+    #[serde(skip_serializing_if = "is_false")]
+    pub subscription: bool,
     /// Vom Anbieter gemeldete Kosten in € – haben Vorrang vor der Preistabelle.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cost_eur: Option<f64>,
@@ -301,6 +305,8 @@ struct VibeModel {
     name: String,
     provider: Option<String>,
     prices: Option<(f64, f64)>,
+    /// Läuft über Brises Proxy (`brise-<id>`), der den Verbrauch selbst bucht.
+    via_brise: bool,
 }
 
 fn alias_names() -> HashMap<String, VibeModel> {
@@ -312,9 +318,11 @@ fn alias_names() -> HashMap<String, VibeModel> {
         .into_iter()
         .flatten()
         .filter_map(|m| {
-            let provider = m.get("provider").and_then(|v| v.as_str()).map(|p| p.strip_prefix("brise-").unwrap_or(p).to_string());
+            let raw = m.get("provider").and_then(|v| v.as_str());
+            let provider = raw.map(|p| p.strip_prefix("brise-").unwrap_or(p).to_string());
             let prices = num(m, "input_price").zip(num(m, "output_price"));
-            Some((m.get("alias")?.as_str()?.to_lowercase(), VibeModel { name: m.get("name")?.as_str()?.to_lowercase(), provider, prices }))
+            let via_brise = raw.is_some_and(|p| p.starts_with("brise-"));
+            Some((m.get("alias")?.as_str()?.to_lowercase(), VibeModel { name: m.get("name")?.as_str()?.to_lowercase(), provider, prices, via_brise }))
         })
         .collect()
 }
@@ -381,6 +389,14 @@ impl Pricer {
 
     /// (Kosten in €, Cache-Ersparnis in €, Preis bekannt)
     fn cost(&self, r: &Record) -> (f64, f64, bool) {
+        if r.subscription {
+            return (0.0, 0.0, true);
+        }
+        self.list_cost(r)
+    }
+
+    /// Kosten ohne Rücksicht auf ein Abo – bei Abos der Listenpreis zum Vergleich.
+    fn list_cost(&self, r: &Record) -> (f64, f64, bool) {
         if let Some(eur) = r.cost_eur {
             return (eur, 0.0, true);
         }
@@ -441,6 +457,8 @@ fn save_totals(map: &HashMap<String, Totals>) -> CmdResult<()> {
 #[serde(rename_all = "camelCase")]
 pub struct TurnReport {
     session: String,
+    /// Agent läuft über ein Abo (laut Anmeldestatus der Oberfläche).
+    subscription: Option<bool>,
     project: Option<String>,
     title: Option<String>,
     /// Master-Session, falls das eine Untersession ist.
@@ -496,7 +514,9 @@ pub fn usage_turn(report: TurnReport) -> CmdResult<Value> {
     };
     let output_tps = report.generation_ms.and_then(|g| tokens_per_second(delta.output, Duration::from_millis(g)));
     // Turns über Cortecs-Modelle erfasst cortecs.rs selbst (mit exakten Kosten und Messwerten je Aufruf).
-    if report.model.starts_with("cortecs") {
+    // Ebenso Modelle weiterer Anbieter, die Brise in Vibe einträgt (Proxy in providers.rs).
+    let proxied = alias_names().get(&report.model.to_lowercase()).is_some_and(|m| m.via_brise);
+    if report.model.starts_with("cortecs") || proxied {
         return Ok(json!({ "input": delta.input, "cached": delta.cached, "output": delta.output, "costEur": 0.0, "viaCortecs": true, "outputTps": output_tps }));
     }
     let subagents = report.subagents.unwrap_or(0);
@@ -519,6 +539,17 @@ pub fn usage_turn(report: TurnReport) -> CmdResult<Value> {
     rec.cached = delta.cached.min(delta.input);
     rec.output = delta.output;
     rec.subagents = subagents;
+    // Andere Agenten: Anbieter des Modells, eigener Zugang (nicht der Mistral-Schlüssel), ggf. Abo.
+    if let Some(provider) = match backend {
+        "claude" => Some("anthropic"),
+        "codex" => Some("openai"),
+        "gemini" => Some("gemini"),
+        _ => None,
+    } {
+        rec.provider = Some(provider.into());
+        rec.account = None;
+    }
+    rec.subscription = report.subscription.unwrap_or(false);
     let pricer = Pricer::new();
     let cost = pricer.cost(&rec).0;
     record(rec);
@@ -739,6 +770,9 @@ pub struct Priced {
     saving: f64,
     priced: bool,
     label: String,
+    /// Bei Abos: was es zum Listenpreis gekostet hätte (nur zum Vergleich).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    list: Option<f64>,
 }
 
 /// Alle Einträge im Zeitraum mit Kosten nach aktueller Preistabelle.
@@ -751,7 +785,8 @@ pub fn usage_overview(from: u64, to: u64) -> Value {
         .map(|rec| {
             let (cost, saving, priced) = pricer.cost(&rec);
             let label = pricer.find_for(&rec.model, rec.provider.as_deref()).map(|p| p.label.clone()).unwrap_or_else(|| rec.model.clone());
-            Priced { rec, cost, saving, priced, label }
+            let list = rec.subscription.then(|| pricer.list_cost(&rec)).filter(|l| l.2).map(|l| l.0);
+            Priced { rec, cost, saving, priced, label, list }
         })
         .collect();
     json!({
@@ -960,6 +995,20 @@ mod tests {
         assert_eq!(year_month(1_709_164_800_000), (2024, 2)); // 29.02.2024
         assert_eq!(parse_iso("2026-11-01T00:00:00+00:00"), Some(1_793_491_200_000));
         assert_eq!(parse_iso("2026-11-01T01:30:00.123+01:30"), Some(1_793_491_200_000));
+    }
+
+    #[test]
+    fn abo_zaehlt_nicht_ins_budget() {
+        let pricer = Pricer { table: default_prices(), aliases: HashMap::new() };
+        let mut r = Record::new("chat", "Chat", "claude-sonnet-4-5");
+        r.provider = Some("anthropic".into());
+        r.input = 1_000_000;
+        r.output = 100_000;
+        let (list, _, priced) = pricer.cost(&r);
+        assert!(priced && list > 3.0);
+        r.subscription = true;
+        assert_eq!(pricer.cost(&r).0, 0.0);
+        assert_eq!(pricer.list_cost(&r).0, list);
     }
 
     #[test]

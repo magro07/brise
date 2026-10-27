@@ -12,6 +12,7 @@ import type { PermissionRequest } from "./acp";
 import { load, save } from "./persist";
 import type { TeamState } from "./policy";
 import { basename, useStore, type Item, type Session } from "./store";
+import { useProfile } from "./profile";
 
 export type CollabRole = "viewer" | "collaborator" | "approver";
 
@@ -280,7 +281,7 @@ function snapshot(s: Session) {
 }
 
 function hostName() {
-  return useCollab.getState().prefs.name.trim() || "Host";
+  return useProfile.getState().profile?.name || useCollab.getState().prefs.name.trim() || "Host";
 }
 
 /** Gast-Prompt aus der Warteschlange ausführen – mit den Rechten des Hosts. */
@@ -407,12 +408,15 @@ export async function joinTeamSession(entry: TeamSession) {
 }
 
 let lastProfile = "";
-/** Name und Abos an die Teams melden (nur bei Änderung). */
+/** Name (Brise-Konto) und verbundene Agenten samt Abo an die Teams melden (nur bei Änderung). */
 function pushProfile(force = false) {
   const { prefs } = useCollab.getState();
-  const auth = useStore.getState().auth;
-  const backends = [{ id: "vibe", label: BACKEND_LABEL.vibe, plan: auth?.authenticated ? planLabel() : null, active: !!auth?.authenticated }];
-  const profile = JSON.stringify({ name: prefs.name.trim() || "Ohne Namen", backends });
+  const st = useStore.getState();
+  const backends = Object.entries(st.agents).map(([id, a]) => {
+    const active = id === "vibe" ? !!st.auth?.authenticated : !!a.auth?.authenticated;
+    return { id, label: BACKEND_LABEL[id] ?? a.title, plan: active ? (id === "vibe" ? planLabel() : a.auth?.label ?? null) : null, active };
+  });
+  const profile = JSON.stringify({ name: useProfile.getState().profile?.name || prefs.name.trim() || "Ohne Namen", backends });
   if (profile === lastProfile && !force) return;
   lastProfile = profile;
   invoke("collab_team_profile", JSON.parse(profile)).catch(() => {});
@@ -421,7 +425,7 @@ function pushProfile(force = false) {
 // ---------- Gast ----------
 
 export async function join(link: string) {
-  const name = useCollab.getState().prefs.name.trim() || "Gast";
+  const name = useProfile.getState().profile?.name || useCollab.getState().prefs.name.trim() || "Gast";
   const view = await invoke<Omit<GuestState, "participants" | "queue" | "myRole">>("collab_join", { link: link.trim(), name });
   useCollab.setState((s) => ({
     guests: { ...s.guests, [view.room]: { participants: [], queue: [], myRole: null, ...(s.guests[view.room] as GuestState | undefined), ...view } },
@@ -665,13 +669,19 @@ export function initCollab(): () => void {
       if (old.running && !cur.running) maybeRun(sessionId);
       if (cur.title !== old.title) invoke("collab_session_meta", { sessionId, title: cur.title ?? null }).catch(() => {});
     }
-    if (st.auth !== prev.auth) pushProfile();
+    if (st.auth !== prev.auth || st.agents !== prev.agents) pushProfile();
     // Zurück im eigenen Projekt, sobald keine Gast-Session mehr aktiv ist.
     if (st.activeSessionId !== prev.activeSessionId && prev.activeSessionId && prev.sessions[prev.activeSessionId]?.guest) restoreProject();
   });
 
   const unsubscribePrefs = useCollab.subscribe((st, prev) => {
     if (st.prefs.name !== prev.prefs.name || st.prefs.plan !== prev.prefs.plan) pushProfile();
+  });
+  // Das Brise-Konto ist die Identität in Teams und geteilten Sessions.
+  const syncName = (name: string | undefined) => name && name !== useCollab.getState().prefs.name && useCollab.getState().setPrefs({ name });
+  syncName(useProfile.getState().profile?.name);
+  const unsubscribeProfile = useProfile.subscribe((st, prev) => {
+    if (st.profile?.name !== prev.profile?.name) syncName(st.profile?.name);
   });
   pushProfile(true);
   invoke<TeamView[]>("collab_teams")
@@ -686,6 +696,7 @@ export function initCollab(): () => void {
   return () => {
     unsubscribe();
     unsubscribePrefs();
+    unsubscribeProfile();
     unlisten.forEach((p) => p.then((f) => f()));
   };
 }

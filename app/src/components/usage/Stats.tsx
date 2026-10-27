@@ -3,7 +3,7 @@ import { basename, useStore } from "../../lib/store";
 import { tokens } from "../../lib/format";
 import { clsx } from "../ui";
 import { Performance } from "./Performance";
-import { category, eur, useUsage, usageApi, type UsageRecord } from "./usage";
+import { AGENT_LABEL, agentOf, category, eur, providerLabel, providerOf, useUsage, usageApi, type UsageRecord } from "./usage";
 import "./usage.css";
 
 type Period = "today" | "week" | "month" | "year" | "all";
@@ -16,8 +16,10 @@ const PERIODS: { id: Period; label: string }[] = [
 ];
 
 type Metric = "cost" | "tokens";
-type Group = "model" | "project" | "session" | "category" | "feature" | "account";
+type Group = "provider" | "agent" | "model" | "project" | "session" | "category" | "feature" | "account";
 const GROUPS: { id: Group; label: string }[] = [
+  { id: "provider", label: "Anbieter" },
+  { id: "agent", label: "Agent" },
   { id: "model", label: "Modell" },
   { id: "project", label: "Projekt" },
   { id: "session", label: "Session" },
@@ -89,9 +91,14 @@ interface Bucket {
   output: number;
   count: number;
   estimated: boolean;
+  /** Abo-Anteil zum Listenpreis (nur Vergleich). */
+  list: number;
+  subscription: boolean;
 }
 
 function groupKey(r: UsageRecord, by: Group): string {
+  if (by === "provider") return providerOf(r);
+  if (by === "agent") return agentOf(r);
   if (by === "model") return r.label;
   if (by === "project") return r.project ?? "";
   if (by === "session") return r.session ?? "";
@@ -108,7 +115,20 @@ function groupBy(records: UsageRecord[], by: Group, metric: Metric): Bucket[] {
     if (by === "session" && !key) continue;
     const b = map.get(key) ?? {
       key,
-      label: by === "project" ? (key ? basename(key) : "ohne Projekt") : by === "session" ? (titles?.get(key) ?? "Session ohne Titel") : key,
+      label:
+        by === "project"
+          ? key
+            ? basename(key)
+            : "ohne Projekt"
+          : by === "session"
+            ? (titles?.get(key) ?? "Session ohne Titel")
+            : by === "provider"
+              ? providerLabel(key)
+              : by === "agent"
+                ? (AGENT_LABEL[key] ?? key)
+                : key,
+      list: 0,
+      subscription: false,
       value: 0,
       cost: 0,
       input: 0,
@@ -124,6 +144,8 @@ function groupBy(records: UsageRecord[], by: Group, metric: Metric): Bucket[] {
     b.output += r.output ?? 0;
     b.count += r.turns || 1;
     b.estimated ||= !!r.estimated || !r.priced;
+    b.list += r.list ?? 0;
+    b.subscription ||= !!r.subscription;
     if (by === "session") {
       // Der Titel kommt oft erst nach dem ersten Turn.
       if (r.title) b.label = r.title;
@@ -138,7 +160,7 @@ function groupBy(records: UsageRecord[], by: Group, metric: Metric): Bucket[] {
 export function Stats() {
   const [period, setPeriod] = useState<Period>("month");
   const [metric, setMetric] = useState<Metric>("cost");
-  const [group, setGroup] = useState<Group>("model");
+  const [group, setGroup] = useState<Group>("provider");
   const [records, setRecords] = useState<UsageRecord[] | null>(null);
   const [modelOrder, setModelOrder] = useState<string[]>([]);
   const [hover, setHover] = useState<number | null>(null);
@@ -363,7 +385,8 @@ export function Stats() {
           {view.imported > 0 && (
             <p className="mt-2 text-[0.8em] text-muted">
               Enthält Verlauf aus Vibes Session-Logs (vor Brises Journal oder außerhalb von Brise). Dort speichert Vibe nur Summen je Session ohne Modell und
-              Uhrzeit der einzelnen Aufrufe: gebucht zum letzten Stand der Session mit ihrem zuletzt aktiven Modell.
+              Uhrzeit der einzelnen Aufrufe: gebucht zum letzten Stand der Session mit ihrem zuletzt aktiven Modell. Abos (Claude, Codex, Gemini) zählen mit
+              0 € – ihre echten Kosten kennt Brise nicht.
             </p>
           )}
         </>
@@ -409,9 +432,15 @@ function BucketList({ buckets, total, metric }: { buckets: Bucket[]; total: numb
               {b.input + b.output > 0 ? `${tokens(b.input)} ein · ${tokens(b.cached)} Cache · ${tokens(b.output)} aus` : `${b.count}×`}
             </span>
             <span className="w-14 text-right text-[0.8em] tabular-nums text-muted">{pct(b.value, total)}</span>
-            <span className="w-20 text-right tabular-nums">
-              {metric === "cost" && b.estimated ? "≈" : ""}
-              {fmt(b.value, metric)}
+            <span className="w-20 text-right tabular-nums" title={b.subscription ? `Abo – echte Kosten unbekannt${b.list ? `, zum Listenpreis ≈ ${eur(b.list)}` : ""}` : undefined}>
+              {metric === "cost" && b.subscription && b.value === 0 ? (
+                <span className="rounded bg-hover px-1.5 py-px text-[0.85em] text-fg-2">Abo</span>
+              ) : (
+                <>
+                  {metric === "cost" && b.estimated ? "≈" : ""}
+                  {fmt(b.value, metric)}
+                </>
+              )}
             </span>
           </div>
           <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-active">

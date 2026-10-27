@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { latency } from "../../lib/format";
 import { clsx } from "../ui";
-import type { UsageRecord } from "./usage";
+import { providerLabel, providerOf, type UsageRecord } from "./usage";
 
 // Leistung je Modell und Anbieter aus den Messwerten im Journal (`ttftMs`,
 // `outputTps`, `durationMs`). Vibe-Turns und einzelne API-Aufrufe getrennt:
@@ -10,11 +10,8 @@ import type { UsageRecord } from "./usage";
 type Measure = "ttft" | "tps";
 const LINES = 6;
 
-const PROVIDER: Record<string, string> = { mistral: "Mistral", cortecs: "Cortecs (ZDR)", claude: "Anthropic", codex: "OpenAI", gemini: "Google" };
-
 function provider(r: UsageRecord): string {
-  const p = r.provider ?? (r.backend && r.backend !== "vibe" && r.backend !== "brise" ? r.backend : "mistral");
-  return PROVIDER[p] ?? p;
+  return providerLabel(providerOf(r));
 }
 
 /** Nächster Rang auf der sortierten Liste. */

@@ -155,6 +155,8 @@ pub fn git_run(cwd: String, action: String, paths: Option<Vec<String>>, arg: Opt
         "fetch" => vec!["fetch".into()],
         other => return Err(format!("Unbekannte Git-Aktion {other}")),
     };
+    // Brise-Konto als Autor, wenn so eingestellt (profile.rs).
+    let args: Vec<String> = if action == "commit" { crate::profile::commit_identity().into_iter().chain(args).collect() } else { args };
     let refs: Vec<&str> = args.iter().map(String::as_str).collect();
     git_output(&root, &refs)
 }

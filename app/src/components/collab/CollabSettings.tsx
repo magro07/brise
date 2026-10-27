@@ -1,10 +1,11 @@
 import { Users } from "lucide-react";
 import { useCollab } from "../../lib/collab";
+import { useProfile } from "../../lib/profile";
 import { Button, Switch, clsx } from "../ui";
 import { RolePicker } from "./ShareDialog";
 import { TeamAdmin } from "./TeamAdmin";
 
-function Row({ title, description, control }: { title: string; description?: string; control: React.ReactNode }) {
+function Row({ title, description, control }: { title: string; description?: React.ReactNode; control: React.ReactNode }) {
   return (
     <div className="flex items-center gap-4 px-4 py-3">
       <div className="min-w-0 flex-1">
@@ -23,6 +24,7 @@ export function CollabSettings() {
   const prefs = useCollab((s) => s.prefs);
   const setPrefs = useCollab((s) => s.setPrefs);
   const teams = Object.values(useCollab((s) => s.teams));
+  const profile = useProfile((s) => s.profile);
   return (
     <>
       <section className="mb-6">
@@ -47,7 +49,19 @@ export function CollabSettings() {
           <span className="font-mono"> relay/README.md</span>). Das Relay sieht nur verschlüsselte Daten.
         </p>
         <div className="divide-y divide-line overflow-hidden rounded-xl border border-line bg-elev">
-          <Row title="Dein Name" description="So sehen dich Host und Gäste." control={<input value={prefs.name} onChange={(e) => setPrefs({ name: e.target.value })} placeholder="z. B. Max" className={clsx(input, "w-[220px]")} />} />
+          <Row
+            title="Dein Name"
+            description={profile ? "Aus deinem Brise-Konto – so sehen dich Team, Host und Gäste." : "So sehen dich Host und Gäste. Mit einem Brise-Konto gilt der Name überall."}
+            control={
+              profile ? (
+                <Button size="sm" onClick={() => useProfile.setState({ dialog: "edit" })}>
+                  {profile.name} · Konto bearbeiten
+                </Button>
+              ) : (
+                <input value={prefs.name} onChange={(e) => setPrefs({ name: e.target.value })} placeholder="z. B. Max" className={clsx(input, "w-[220px]")} />
+              )
+            }
+          />
           <Row
             title="Dein Abo"
             description="So erscheint es im Team und bei Gästen, z. B. „Vibe Pro“ oder „Claude Max“."

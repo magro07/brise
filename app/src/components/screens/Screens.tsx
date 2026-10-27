@@ -60,9 +60,9 @@ function InstallStep() {
   }, [install.lines.length]);
   return (
     <>
-      <h1 className="text-[1.6em] font-semibold tracking-tight">Willkommen bei Brise</h1>
+      <h1 className="text-[1.6em] font-semibold tracking-tight">Agenten verbinden</h1>
       <p className="mt-2 text-fg-2">
-        Brise arbeitet mit einem Coding-Agenten deiner Wahl: Mistral Vibe, Claude Code, Codex oder Gemini CLI. Wähle, womit du anfangen willst. Brise installiert den Agenten in einen eigenen Ordner, ein Terminal brauchst du dafür nicht.
+        Brise arbeitet mit Coding-Agenten deiner Wahl: Claude Code, Codex, Gemini CLI oder Mistral Vibe – auch mehreren nebeneinander. Wähle, womit du anfangen willst. Brise installiert den Agenten in einen eigenen Ordner, ein Terminal brauchst du dafür nicht.
       </p>
       {!install.running && install.lines.length === 0 && (
         <>
@@ -96,7 +96,7 @@ function InstallStep() {
   );
 }
 
-/** Anmeldung: Browser (Mistral-Konto) oder eingefügter Vibe-/API-Key. */
+/** Vibe verbinden: Browser (Mistral-Konto) oder eingefügter Vibe-/API-Key – oder einen anderen Agenten wählen. */
 function LoginStep() {
   const login = useStore((s) => s.login);
   const { doLogin, saveKey } = useStore.getState();
@@ -119,8 +119,10 @@ function LoginStep() {
 
   return (
     <>
-      <h1 className="text-[1.6em] font-semibold tracking-tight">Mit Mistral verbinden</h1>
-      <p className="mt-2 text-fg-2">Für Mistral Vibe nutzt Brise deinen Vibe-Plan (Free, Pro oder Team) oder einen API-Key.</p>
+      <h1 className="text-[1.6em] font-semibold tracking-tight">Agenten verbinden</h1>
+      <p className="mt-2 text-fg-2">
+        Vibe ist als Standard eingestellt und braucht dafür deinen Mistral-Zugang (Vibe-Plan oder API-Key). Lieber Claude Code, Codex oder Gemini? Unten einen anderen Agenten wählen – API-Schlüssel weiterer Anbieter trägst du später unter Einstellungen → Anbieter & Schlüssel ein.
+      </p>
       <div className="mx-auto mt-6 flex w-fit rounded-xl border border-line bg-panel p-1">
         {(
           [
@@ -153,7 +155,7 @@ function LoginStep() {
             </div>
           ) : (
             <Button variant="primary" size="lg" onClick={doLogin}>
-              <LogIn className="h-4 w-4" /> Mit Mistral-Konto anmelden
+              <LogIn className="h-4 w-4" /> Vibe mit Mistral-Konto verbinden
             </Button>
           )}
           <p className="mt-3 text-[0.82em] text-muted">Empfohlen: Vibe nutzt dann das Kontingent deines Plans.</p>

@@ -6,7 +6,8 @@ import { useStore } from "../../lib/store";
 import { Button, Switch, clsx } from "../ui";
 import { barTone } from "./HeaderMeter";
 import { Stats } from "./Stats";
-import { eur, monthEnd, monthStart, refreshUsage, saveUsageSettings, useUsage, usageApi, type PriceTable, type UsageRecord } from "./usage";
+import { AGENT_LABEL, agentOf, eur, monthEnd, monthStart, providerLabel, providerOf, refreshUsage, saveUsageSettings, useUsage, usageApi, type PriceTable, type UsageRecord } from "./usage";
+import { tokens } from "../../lib/format";
 
 function Card({ title, description, children }: { title: string; description?: ReactNode; children: ReactNode }) {
   return (
@@ -101,6 +102,8 @@ export function UsagePage() {
         )}
       </div>
 
+      <ProviderCard records={records} />
+
       <Stats />
 
       <MasterCard records={records} />
@@ -112,10 +115,12 @@ export function UsagePage() {
         <Info className="mt-0.5 h-4 w-4 shrink-0 text-muted" />
         <div className="space-y-1">
           <p>
-            Mistral liefert Verbrauch und Limit weder über Vibe noch über die API{plan ? ` (Plan laut Vibe: ${plan})` : ""}. Brise protokolliert deshalb jeden
-            Vorgang selbst und rechnet mit der Preistabelle (Stand {pricesStand}). Spracheingabe (Dauer), Vorlesen (Zeichen) und Websuche (pro Aufruf) sind
-            als Menge geschätzt{stats.estimated > 0 ? ` (diesen Monat ${eur(stats.estimated, 2)})` : ""}.
-            {stats.imported > 0 && ` Aus Vibes Session-Logs übernommen: ${eur(stats.imported, 2)}, gebucht zum letzten Stand jeder Session mit ihrem zuletzt aktiven Modell.`} Subagents laufen im Turn ihrer Session mit. Jeder Eintrag trägt den Zugang (Fingerabdruck des Schlüssels, nie der Schlüssel) und das Backend.
+            Kein Anbieter liefert Brise verlässlich Verbrauch und Limit (Mistral weder über Vibe noch über die API{plan ? `; Plan laut Vibe: ${plan}` : ""}). Brise
+            protokolliert deshalb jeden Vorgang selbst – Turns aller Agenten, eigene Aufrufe (Einstufung, Council, Benchmarks …) und Modelle weiterer Anbieter in
+            Vibe über den lokalen Proxy – und rechnet mit der Preistabelle (Stand {pricesStand}) bzw. den Preisen des Anbieters; Cortecs meldet echte Kosten.
+            Abos (Claude Max, ChatGPT, Google-Konto) zählen mit 0 €, weil ihre Kosten unbekannt sind. Spracheingabe (Dauer), Vorlesen (Zeichen) und
+            Websuche (pro Aufruf) sind als Menge geschätzt{stats.estimated > 0 ? ` (diesen Monat ${eur(stats.estimated, 2)})` : ""}.
+            {stats.imported > 0 && ` Aus Vibes Session-Logs übernommen: ${eur(stats.imported, 2)}, gebucht zum letzten Stand jeder Session mit ihrem zuletzt aktiven Modell.`} Subagents laufen im Turn ihrer Session mit. Jeder Eintrag trägt Anbieter, Agent und Zugang (Fingerabdruck des Schlüssels, nie der Schlüssel).
           </p>
           {stats.unpriced.length > 0 && <p className="text-warn">Ohne Preis (mit 0 € gezählt): {stats.unpriced.join(", ")}</p>}
           <p className="flex items-center gap-2">
@@ -128,6 +133,80 @@ export function UsagePage() {
         </div>
       </div>
     </>
+  );
+}
+
+interface Share {
+  key: string;
+  label: string;
+  cost: number;
+  list: number;
+  tokens: number;
+  calls: number;
+  subscription: boolean;
+  onlySubscription: boolean;
+}
+
+function shares(records: UsageRecord[], keyOf: (r: UsageRecord) => string, labelOf: (k: string) => string): Share[] {
+  const map = new Map<string, Share>();
+  for (const r of records) {
+    const key = keyOf(r);
+    const s = map.get(key) ?? { key, label: labelOf(key), cost: 0, list: 0, tokens: 0, calls: 0, subscription: false, onlySubscription: true };
+    s.cost += r.cost;
+    s.list += r.list ?? 0;
+    s.tokens += (r.input ?? 0) + (r.output ?? 0);
+    s.calls += r.turns || r.calls || 1;
+    s.subscription ||= !!r.subscription;
+    s.onlySubscription &&= !!r.subscription;
+    map.set(key, s);
+  }
+  return [...map.values()].sort((a, b) => b.cost - a.cost || b.tokens - a.tokens);
+}
+
+/** Diesen Monat je Anbieter und je Agent – Abos ehrlich gekennzeichnet. */
+function ProviderCard({ records }: { records: UsageRecord[] }) {
+  const byProvider = useMemo(() => shares(records, providerOf, providerLabel), [records]);
+  const byAgent = useMemo(() => shares(records, agentOf, (k) => AGENT_LABEL[k] ?? k), [records]);
+  if (!records.length) return null;
+  const total = byProvider.reduce((a, s) => a + s.cost, 0);
+  const List = ({ title, rows }: { title: string; rows: Share[] }) => (
+    <div className="overflow-hidden rounded-xl border border-line bg-elev">
+      <div className="border-b border-line px-4 py-2 text-[0.84em] font-medium">{title}</div>
+      {rows.map((s) => (
+        <div key={s.key} className="px-4 py-2.5" data-testid={`usage-share-${s.key}`}>
+          <div className="flex items-center gap-2">
+            <span className="min-w-0 flex-1 truncate">{s.label}</span>
+            {s.onlySubscription ? (
+              <span className="rounded bg-hover px-1.5 py-px text-[0.8em] text-fg-2" title="Über ein Abo – echte Kosten unbekannt">
+                Abo · Kosten unbekannt
+              </span>
+            ) : (
+              <span className="tabular-nums">{eur(s.cost, 2)}</span>
+            )}
+          </div>
+          <div className="mt-0.5 flex gap-3 text-[0.78em] text-muted">
+            <span>{tokens(s.tokens)} Tokens</span>
+            <span>{s.calls.toLocaleString("de-DE")} Aufrufe</span>
+            {s.subscription && s.list > 0 && <span title="Nur zum Vergleich">zum Listenpreis ≈ {eur(s.list, 2)}</span>}
+          </div>
+          {total > 0 && !s.onlySubscription && (
+            <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-active">
+              <div className="h-full rounded-full bg-accent/70" style={{ width: `${(s.cost / total) * 100}%` }} />
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+  return (
+    <section className="mb-6" id="card-anbieter-und-agenten">
+      <h3 className="mb-1 text-[0.95em] font-semibold">Anbieter und Agenten</h3>
+      <p className="mb-2 text-[0.88em] text-muted">Diesen Monat. Das Budget gilt über alle Anbieter; Abos zählen mit 0 €.</p>
+      <div className="grid grid-cols-2 gap-3">
+        <List title="Je Anbieter" rows={byProvider} />
+        <List title="Je Agent" rows={byAgent} />
+      </div>
+    </section>
   );
 }
 
@@ -195,7 +274,7 @@ function BudgetCard() {
   useEffect(() => setLevels(settings.warnAt.join(", ")), [settings.warnAt]);
   return (
     <Card title="Budget und Warnungen">
-      <Row title="Monatsbudget" description="Dein Limit bei Mistral (Standard 255 €)." control={<span className="flex items-center gap-1.5"><NumberInput value={settings.budgetEur} onCommit={(v) => saveUsageSettings({ budgetEur: v })} /> €</span>} />
+      <Row title="Monatsbudget" description="Über alle Anbieter zusammen (Standard 255 €). Abos (Claude, Codex, Gemini) zählen nicht mit – ihre Kosten kennt Brise nicht." control={<span className="flex items-center gap-1.5"><NumberInput value={settings.budgetEur} onCommit={(v) => saveUsageSettings({ budgetEur: v })} /> €</span>} />
       <Row
         title="Warnungen bei"
         description="Prozent des Budgets, je einmal pro Monat."
@@ -228,7 +307,7 @@ function ConsoleCard() {
   const [amount, setAmount] = useState("");
   return (
     <Card
-      title="Abgleich mit der Mistral-Console"
+      title="Abgleich mit der Mistral-Console (Vibe)"
       description={
         <>
           Den echten Stand zeigt die Console unter{" "}
@@ -304,11 +383,9 @@ function PricesCard() {
       title="Preistabelle"
       description={
         <>
-          Preise in {table.currency} (Standard-Inferenz) {data.custom ? `– eigene Tabelle, Stand ${table.stand}` : `– mitgeliefert, Stand ${table.stand}`}. Mistral hat keine Preis-API; Quelle:{" "}
-          <a className="text-accent hover:underline" href="https://docs.mistral.ai/inference/pricing" target="_blank" rel="noreferrer">
-            docs.mistral.ai/inference/pricing
-          </a>
-          .
+          Preise in {table.currency} (Standard-Inferenz) {data.custom ? `– eigene Tabelle, Stand ${table.stand}` : `– mitgeliefert, Stand ${table.stand}`}. Die Anbieter
+          haben keine einheitliche Preis-API; Quellen: {table.quelle}. Einträge mit Anbieter gelten nur für dessen Aufrufe. Eigene Preise je Anbieter (z. B.
+          für OpenAI-kompatible) unter Anbieter &amp; Schlüssel.
         </>
       }
     >
@@ -355,7 +432,10 @@ function PricesCard() {
           return (
             <div key={m.id} className="flex items-center gap-3 px-4 py-2">
               <div className="min-w-0 flex-1">
-                <div className="truncate">{m.label}</div>
+                <div className="truncate">
+                  {m.label}
+                  {m.provider && <span className="ml-1.5 text-[0.8em] text-muted">{providerLabel(m.provider)}{m.currency ? ` · ${m.currency}` : ""}</span>}
+                </div>
                 <div className="truncate text-[0.78em] text-muted" title={m.hinweis}>
                   {m.hinweis ?? m.match.join(", ")}
                 </div>

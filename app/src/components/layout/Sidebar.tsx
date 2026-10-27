@@ -18,6 +18,11 @@ import {
   SquarePen,
   Trash2,
   Crown,
+  Bot,
+  ChartColumn,
+  KeyRound,
+  LogOut,
+  UserRound,
 } from "lucide-react";
 import { basename, useStore, type Session } from "../../lib/store";
 import { BackendBadge } from "../agents/BackendPicker";
@@ -30,6 +35,9 @@ import { DesignList, ModeSwitch } from "../design/Sidebar";
 import { ModelList } from "../model3d/Sidebar";
 import { startCurator, useOrchestra } from "../../lib/orchestra";
 import { SubRows } from "../orchestra/Orchestra";
+import { useProfile } from "../../lib/profile";
+import { useProviders } from "../../lib/providers";
+import { Avatar } from "../profile/ProfileDialog";
 
 const SHOWN_PER_PROJECT = 6;
 
@@ -45,11 +53,6 @@ export function Sidebar() {
   const activeProject = useStore((s) => s.activeProject);
   const activeSessionId = useStore((s) => s.activeSessionId);
   const view = useStore((s) => s.view);
-  const auth = useStore((s) => s.auth);
-  const defaultBackend = useStore((s) => s.prefs.defaultBackend);
-  const info = useStore((s) => s.agents[s.prefs.defaultBackend] ?? s.connectInfo);
-  const backendTitle = useStore((s) => s.backends.find((b) => b.id === s.prefs.defaultBackend)?.title) ?? info?.title ?? defaultBackend;
-  const authed = defaultBackend === "vibe" ? !!auth?.authenticated : !!info?.auth?.authenticated;
   const { newDraft, selectSession, removeProject, deleteSession, setView, set } = useStore.getState();
   const [query, setQuery] = useState("");
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
@@ -255,25 +258,75 @@ export function Sidebar() {
         >
           Einstellungen
         </SideButton>
-        <div className="mt-1 flex items-center gap-2.5 rounded-lg px-2.5 py-2">
-          <div className="relative flex h-7 w-7 items-center justify-center rounded-full bg-accent-soft text-[0.8em] font-semibold text-accent">
-            {backendTitle.charAt(0).toUpperCase()}
-            <span
-              className={clsx(
-                "absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border-2 border-sidebar",
-                authed ? "bg-ok" : "bg-muted",
-              )}
-            />
-          </div>
-          <div className="min-w-0 flex-1 leading-tight">
-            <div className="truncate text-[0.9em]">{authed ? (defaultBackend === "vibe" ? "Vibe-Plan" : info?.auth?.label ?? "Angemeldet") : "Nicht angemeldet"}</div>
-            <div className="truncate text-[0.78em] text-muted">
-              {info?.init.agentInfo?.title ?? backendTitle} {info?.init.agentInfo?.version}
-            </div>
-          </div>
-        </div>
+        <AccountFooter />
       </div>
     </aside>
+  );
+}
+
+/** Kurzname eines verbundenen Agenten samt Abo, z. B. „Claude Max“. */
+function agentLabel(id: string, title: string, label?: string | null) {
+  if (id === "claude" && label && /max|pro|team/i.test(label)) return label.replace(/^Claude\s*/i, "Claude ");
+  return { vibe: "Vibe", claude: "Claude Code", codex: "Codex", gemini: "Gemini" }[id] ?? title;
+}
+
+/** Unten links: Brise-Konto, verbundene Agenten und Anbieter, Menü. */
+function AccountFooter() {
+  const profile = useProfile((s) => s.profile);
+  const agents = useStore((s) => s.agents);
+  const auth = useStore((s) => s.auth);
+  const providers = useProviders((s) => s.list);
+  const { setView, signOut } = useStore.getState();
+  const connected = Object.entries(agents)
+    .filter(([id, a]) => (id === "vibe" ? auth?.authenticated : a.auth?.authenticated))
+    .map(([id, a]) => agentLabel(id, a.title, a.auth?.label));
+  const keys = providers.filter((p) => p.hasKey && p.id !== "mistral").length;
+  const summary = connected.length === 0 ? "Kein Agent verbunden" : connected.length <= 3 ? connected.join(" · ") : `${connected.length} Agenten verbunden`;
+  return (
+    <Menu>
+      <MenuTrigger asChild>
+        <button className="mt-1 flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left hover:bg-hover" data-testid="account-footer">
+          <span className="relative">
+            <Avatar name={profile?.name ?? "?"} color={profile?.color} avatar={profile?.avatar} size={28} className={profile ? "" : "!bg-hover !text-muted"} />
+            <span className={clsx("absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border-2 border-sidebar", connected.length ? "bg-ok" : "bg-muted")} />
+          </span>
+          <span className="min-w-0 flex-1 leading-tight">
+            <span className="block truncate text-[0.9em]">{profile?.name ?? "Konto anlegen"}</span>
+            <span className="block truncate text-[0.78em] text-muted">
+              {summary}
+              {keys ? ` · ${keys} ${keys === 1 ? "Schlüssel" : "Schlüssel"}` : ""}
+            </span>
+          </span>
+        </button>
+      </MenuTrigger>
+      <MenuContent side="top" className="w-72">
+        <MenuItem icon={<UserRound />} onSelect={() => useProfile.setState({ dialog: profile ? "edit" : "create" })}>
+          {profile ? "Konto bearbeiten" : "Konto anlegen"}
+        </MenuItem>
+        <MenuItem icon={<KeyRound />} onSelect={() => setView("settings", "providers")}>
+          Anbieter & Schlüssel
+        </MenuItem>
+        <MenuItem icon={<Bot />} onSelect={() => setView("settings", "agents")} description={connected.length ? connected.join(", ") : undefined}>
+          Agenten
+        </MenuItem>
+        <MenuItem icon={<ChartColumn />} onSelect={() => setView("settings", "usage")}>
+          Nutzung
+        </MenuItem>
+        <MenuSeparator />
+        {auth?.authenticated && auth.signOutAvailable && (
+          <MenuItem icon={<LogOut />} danger onSelect={async () => (await confirmAction("Von Vibe abmelden? Der gespeicherte Mistral-Schlüssel wird entfernt.", true)) && signOut()}>
+            Von Vibe abmelden
+          </MenuItem>
+        )}
+        {Object.entries(agents)
+          .filter(([id, a]) => id !== "vibe" && a.auth?.authenticated)
+          .map(([id, a]) => (
+            <MenuItem key={id} icon={<LogOut />} onSelect={() => setView("settings", "agents")} description="Abmelden bzw. anders anmelden unter Agenten">
+              {a.title}: Anmeldung verwalten
+            </MenuItem>
+          ))}
+      </MenuContent>
+    </Menu>
   );
 }
 
