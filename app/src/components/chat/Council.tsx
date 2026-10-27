@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Check, ChevronRight, Scale, Send, X } from "lucide-react";
 import { useStore, type Item, type ToolItem } from "../../lib/store";
+import { splitRef } from "../../lib/providers";
 import { TOOL_LABEL, councilRunId, councilToolName, euro, runAsPrompt, sendTo, useCouncilRun, type CouncilOpinion, type CouncilRun, type CouncilTool } from "../../lib/council";
 import { duration, short, tokens } from "../../lib/format";
 import { Spinner, clsx } from "../ui";
@@ -25,7 +26,14 @@ const VERDICT_STYLE: Record<string, string> = {
 };
 
 /** Kurzname für die Modell-Chips. */
-const modelName = (m: string) =>
+/** Kurzname eines Council-Modells; bei anderen Anbietern als Mistral mit Anbieter. */
+const modelName = (ref: string) => {
+  const { provider, model } = splitRef(ref);
+  const name = shortName(model);
+  return provider && provider.id !== "mistral" ? `${name} · ${provider.name}` : name;
+};
+
+const shortName = (m: string) =>
   m
     .replace(/^zai-/, "")
     .replace(/-latest$/, "")
@@ -127,7 +135,7 @@ function Opinion({ o, tool }: { o: CouncilOpinion; tool: CouncilTool }) {
     <div className="rounded-lg border border-line">
       <button className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-[0.86em] hover:bg-hover" onClick={() => setOpen(!open)}>
         <ChevronRight className={clsx("h-3.5 w-3.5 text-muted transition-transform", open && "rotate-90")} />
-        <span className="font-medium">#{o.index || "V"} {o.model}</span>
+        <span className="font-medium">#{o.index || "V"} {modelName(o.model)}</span>
         <span className="text-muted">{o.role}</span>
         <span className="flex-1" />
         {o.status === "fehler" ? (

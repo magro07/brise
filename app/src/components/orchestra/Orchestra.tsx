@@ -373,6 +373,7 @@ export function OrchestraSettings() {
   return (
     <>
       <Card
+        title="Master-Session"
         description={
           <>
             Eine Session kann Teilaufgaben als eigene Sessions starten (z. B. Code mit Vibe, Review mit Claude Code), ihnen Nachrichten schicken und

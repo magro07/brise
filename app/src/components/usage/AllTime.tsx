@@ -13,6 +13,7 @@ const MONTHS = ["Jan", "Feb", "Mär", "Apr", "Mai", "Jun", "Jul", "Aug", "Sep", 
 const tok = (r: UsageRecord) => (r.input ?? 0) + (r.output ?? 0);
 const dateLabel = (ts: number) => new Date(ts).toLocaleDateString("de-DE", { day: "numeric", month: "long", year: "numeric" });
 const short = (ts: number) => new Date(ts).toLocaleDateString("de-DE", { day: "numeric", month: "short" });
+const wait = (ms: number) => (ms < 1000 ? `${Math.round(ms)} ms` : `${(ms / 1000).toFixed(1).replace(".", ",")} s`);
 
 interface Group {
   key: string;
@@ -162,8 +163,8 @@ export function AllTime() {
       turns,
       total,
       activeDays: byDay.size,
-      models: models.sort((a, b) => b.turns - a.turns || b.tokens - a.tokens).slice(0, 5),
-      agents: agents.sort((a, b) => b.turns - a.turns || b.tokens - a.tokens),
+      models: models.sort((a, b) => b.tokens - a.tokens).slice(0, 5),
+      agents: agents.sort((a, b) => b.tokens - a.tokens),
       providers,
       projects: projects.slice(0, 5),
       topSessions: topSessions.slice(0, 5),
@@ -210,8 +211,8 @@ export function AllTime() {
             <span className="text-fg-2">Tokens insgesamt</span>
           </div>
           <div className="mt-4 grid grid-cols-5 gap-2">
-            <Hero icon={<Coins />} label="Kosten" value={`≈ ${eur(v.total.cost, 2)}`} hint={v.total.list > 0 ? `+ Abos (Listenpreis ≈ ${eur(v.total.list, 0)})` : "geschätzt"} />
-            <Hero icon={<Sparkles />} label="Prompts" value={v.turns.toLocaleString("de-DE")} hint={v.sessions ? `Ø ${(v.turns / Math.max(1, v.sessions)).toFixed(1).replace(".", ",")} je Session` : undefined} />
+            <Hero icon={<Coins />} label="Kosten" value={`≈ ${eur(v.total.cost, 2)}`} hint={v.total.list > 0 ? `+ Abos ≈ ${eur(v.total.list, 2)}` : "geschätzt"} />
+            <Hero icon={<Sparkles />} label="Prompts" value={v.turns.toLocaleString("de-DE")} hint={v.imported ? "seit Brise mitzählt" : v.sessions ? `Ø ${(v.turns / Math.max(1, v.sessions)).toFixed(1).replace(".", ",")} je Session` : undefined} />
             <Hero icon={<Rocket />} label="Sessions" value={v.sessions.toLocaleString("de-DE")} />
             <Hero icon={<CalendarDays />} label="Aktive Tage" value={v.activeDays.toLocaleString("de-DE")} />
             <Hero icon={<Flame />} label="Serie" value={`${v.streak.current} ${v.streak.current === 1 ? "Tag" : "Tage"}`} hint={`Rekord ${v.streak.longest.len}`} />
@@ -235,11 +236,11 @@ export function AllTime() {
       </Panel>
 
       <div className="grid grid-cols-3 gap-3">
-        <Panel title="Lieblingsmodelle" icon={<Award />}>
-          <Ranked rows={v.models.map((m) => ({ key: m.key, label: m.label, sub: m.sub, value: m.turns || m.tokens, text: m.turns ? `${m.turns} Prompts` : `${tokens(m.tokens)} Tokens` }))} />
+        <Panel title="Lieblingsmodelle" icon={<Award />} right="nach Tokens">
+          <Ranked rows={v.models.map((m) => ({ key: m.key, label: m.label, sub: m.sub, value: m.tokens, text: `${tokens(m.tokens)}${m.turns ? ` · ${m.turns} Prompts` : ""}` }))} />
         </Panel>
-        <Panel title="Lieblingsagenten" icon={<Trophy />}>
-          <Ranked rows={v.agents.map((m) => ({ key: m.key, label: m.label, value: m.turns || m.tokens, text: m.turns ? `${m.turns} Prompts` : `${tokens(m.tokens)} Tokens` }))} />
+        <Panel title="Lieblingsagenten" icon={<Trophy />} right="nach Tokens">
+          <Ranked rows={v.agents.map((m) => ({ key: m.key, label: m.label, value: m.tokens, text: `${tokens(m.tokens)}${m.turns ? ` · ${m.turns} Prompts` : ""}` }))} />
         </Panel>
         <Panel title="Anteil je Anbieter" icon={<PiggyBank />} right="nach Tokens">
           <Share rows={v.providers} total={v.total.tokens} />
@@ -258,9 +259,9 @@ export function AllTime() {
             <div className="space-y-2 text-[0.88em]">
               {v.speed[0] && <Fact icon={<Rocket />} label="Schnellstes Modell" value={`${v.speed[0].label} · ${v.speed[0].value.toFixed(0)} t/s`} sub={v.speed[0].provider} />}
               {v.speed.length > 1 && <Fact icon={<Timer />} label="Langsamstes Modell" value={`${v.speed[v.speed.length - 1].label} · ${v.speed[v.speed.length - 1].value.toFixed(0)} t/s`} sub={v.speed[v.speed.length - 1].provider} />}
-              {v.latency[0] && <Fact icon={<Gauge />} label="Kürzeste Wartezeit" value={`${v.latency[0].label} · ${(v.latency[0].value / 1000).toFixed(1).replace(".", ",")} s`} sub="bis zum ersten Token" />}
+              {v.latency[0] && <Fact icon={<Gauge />} label="Kürzeste Wartezeit" value={`${v.latency[0].label} · ${wait(v.latency[0].value)}`} sub="bis zum ersten Token" />}
               {v.latency.length > 1 && (
-                <Fact icon={<Timer />} label="Längste Wartezeit" value={`${v.latency[v.latency.length - 1].label} · ${(v.latency[v.latency.length - 1].value / 1000).toFixed(1).replace(".", ",")} s`} sub="bis zum ersten Token" />
+                <Fact icon={<Timer />} label="Längste Wartezeit" value={`${v.latency[v.latency.length - 1].label} · ${wait(v.latency[v.latency.length - 1].value)}`} sub="bis zum ersten Token" />
               )}
             </div>
           )}
@@ -324,7 +325,7 @@ function Hero({ icon, label, value, hint }: { icon: ReactNode; label: string; va
 
 function Panel({ title, icon, right, children }: { title: string; icon: ReactNode; right?: string; children: ReactNode }) {
   return (
-    <div className="rounded-xl border border-line bg-elev p-4">
+    <div className="scroll-mt-4 rounded-xl border border-line bg-elev p-4" data-panel={title}>
       <div className="mb-3 flex items-center gap-2 text-[0.86em]">
         <span className="text-muted [&>svg]:h-4 [&>svg]:w-4">{icon}</span>
         <span className="font-medium">{title}</span>
@@ -417,7 +418,7 @@ function Share({ rows, total }: { rows: Group[]; total: number }) {
           <div key={r.key} className="flex items-center gap-2">
             <span className="h-2.5 w-2.5 rounded-[3px]" style={{ background: SERIES[i % SERIES.length] }} />
             <span className="min-w-0 flex-1 truncate">{r.label}</span>
-            <span className="tabular-nums text-muted">{Math.max(r.tokens / total >= 0.005 ? 1 : 0, Math.round((r.tokens / total) * 100))} %</span>
+            <span className="tabular-nums text-muted">{r.tokens / total < 0.005 ? "<1" : Math.round((r.tokens / total) * 100)} %</span>
           </div>
         ))}
       </div>

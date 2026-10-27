@@ -294,7 +294,7 @@ function AccountFooter() {
             <span className="block truncate text-[0.9em]">{profile?.name ?? "Konto anlegen"}</span>
             <span className="block truncate text-[0.78em] text-muted">
               {summary}
-              {keys ? ` · ${keys} ${keys === 1 ? "Schlüssel" : "Schlüssel"}` : ""}
+              {keys ? ` · ${keys} Schlüssel` : ""}
             </span>
           </span>
         </button>
