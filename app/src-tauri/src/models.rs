@@ -29,10 +29,13 @@ pub struct CatalogModel {
 }
 
 /// Modelle, die Brise immer anbietet – Name bei Mistral, Alias in Vibe, Anzeigename.
+/// Brises Standardmodell (Vibe-Alias), passend zu DEFAULT_MODEL im Frontend.
+const DEFAULT_MODEL: &str = "deepseek-v4-1-flash-1017";
+
 const DEFAULTS: &[(&str, &str, &str)] = &[
     ("mistral-large-4", "mistral-large-4", "Mistral Large 4"),
     ("zai-glm-5-3", "glm-5-3", "GLM-5.3"),
-    ("deepseek-v4-1-flash-1017", "deepseek-v4-1-flash-1017", "DeepSeek V4.1 Flash"),
+    (DEFAULT_MODEL, DEFAULT_MODEL, "DeepSeek V4.1 Flash"),
 ];
 
 /// Multimodale Modelle, die Mistrals Katalog (noch) ohne `vision` meldet.
@@ -195,7 +198,18 @@ pub async fn ensure_default_models() -> CmdResult<bool> {
         .map(|(name, alias, display)| model_entry(name, alias, display, catalog.iter().find(|m| m.aliases.iter().any(|a| a == name))))
         .collect();
     let added = add_entries(entries)?;
-    Ok(fix_thinking_levels()? | fix_images()? || added)
+    Ok(fix_thinking_levels()? | fix_images()? | default_active()? || added)
+}
+
+/// Brises Standardmodell (DeepSeek V4.1 Flash), solange in Vibe noch keins gewählt ist.
+/// Danach merkt sich Vibe selbst das zuletzt gewählte Modell.
+fn default_active() -> CmdResult<bool> {
+    edit_config(|doc| {
+        if doc.get("active_model").and_then(|v| v.as_str()).is_none() {
+            doc.insert("active_model", toml_edit::value(DEFAULT_MODEL));
+        }
+        Ok(())
+    })
 }
 
 /// Schaltet Bilder für multimodale Modelle frei, die mit `supports_images = false`
