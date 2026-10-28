@@ -504,9 +504,10 @@ geteilten Session sehen Computer-Use-Karten nicht und können sie nicht beantwor
 
 **Während ein Agent steuert:** Oben steht eine Leiste mit Session, letzter Aktion
 und Stopp-Knopf. Not-Aus ist außerdem das globale Kürzel `Ctrl+Alt+Escape`
-(macOS: `Cmd+Shift+Escape`). Er nimmt alle Session-Freigaben zurück, lehnt offene
-Karten ab, bricht laufendes Tippen ab, lässt gedrückte Tasten los und bricht die
-Turns der steuernden Sessions ab. Ausschalten in den Einstellungen wirkt genauso.
+(macOS: `Cmd+Shift+Escape`), unter Wayland das Fernsteuerungs-Symbol des Systems
+(siehe unten). Er nimmt alle Session-Freigaben zurück, lehnt offene Karten ab,
+bricht laufendes Tippen ab, lässt gedrückte Tasten los und bricht die Turns der
+steuernden Sessions ab. Ausschalten in den Einstellungen wirkt genauso.
 
 **Schutz:**
 
@@ -540,26 +541,57 @@ mit Administratorrechten keine Eingaben von Brise an (UIPI).
 
 **Wayland (GNOME):**
 
-- Beim ersten Screenshot fragt das System, ob Brise Bildschirmfotos machen darf.
-  Das gilt danach dauerhaft und lässt sich in den GNOME-Einstellungen unter Apps
-  wieder entziehen.
-- Die erste Eingabe öffnet den Dialog zur Fernsteuerung. Dort Maus und Tastatur
-  erlauben und alle Bildschirme freigeben, denn Brise rechnet die Screenshot-Pixel
-  über das Layout der freigegebenen Bildschirme um. Brise speichert das
-  Wiederherstellungs-Token, damit der Dialog nicht bei jedem Start kommt.
-  „Freigabe einholen“ in den Einstellungen holt diesen Schritt vorab nach.
-- Solange die Fernsteuerung besteht, zeigt GNOME oben rechts ein Symbol, über das
-  man sie beendet. Das ist unter Wayland der Not-Aus, denn globale Kürzel gibt es
-  dort nicht. Der Stopp-Knopf in Brise wirkt weiterhin.
-- Fensterpositionen sind unter Wayland unbekannt. Brise minimiert sich deshalb vor
-  Eingaben und kommt für die nächste Karte bzw. nach sechs Sekunden Ruhe zurück.
+- Screenshots laufen über das Screenshot-Portal. Im Test (GNOME 50, Brise ohne
+  Sandbox) kam dafür kein Dialog. In einer Sandbox kann das System beim ersten
+  Mal fragen.
+- Die erste Eingabe öffnet den GNOME-Dialog „Entfernter Bildschirm“.
+  „Freigabe einholen“ in den Einstellungen holt diesen Schritt vorab nach. Im
+  Dialog den Schalter **„Fernzugriff zulassen“** einschalten. Er ist standardmäßig
+  aus, und ohne ihn gibt GNOME nur den Bildschirm frei, nicht Maus und Tastatur.
+  Dann meldet Brise das und merkt sich die Auswahl nicht. Außerdem „Diese Auswahl
+  merken“ anhaken: Brise speichert das Wiederherstellungs-Token, und nach einem
+  Neustart ist die Fernsteuerung ohne Dialog sofort wieder da.
+- GNOME meldet die Bildschirme in logischen Punkten, Mutter erwartet
+  Mauspositionen aber in Bildschirmpixeln (bei 125 % also das 1,25-Fache). Brise
+  rechnet das unter GNOME ein (`XDG_CURRENT_DESKTOP`), unter KWin logisch.
+- Fensterpositionen sind unter Wayland unbekannt, und eine Fensterliste gibt es
+  nicht. `computer_list_windows`, `computer_focus_window` und Screenshots einzelner
+  Fenster melden das. Der Agent arbeitet nur mit dem Bildschirm-Screenshot.
+- Brise minimiert sich deshalb für Screenshots und Eingaben. So steht es nicht im
+  Bild, und kein Klick landet darauf. Unter Wayland kann sich ein Programm nicht
+  selbst wieder nach vorn holen. Bei der nächsten Freigabekarte meldet GNOME
+  deshalb „„Brise“ ist bereit“, ein Klick darauf zeigt die Karte. Für längere
+  Abläufe lohnt *Bedienen in dieser Session immer erlauben*.
+- Solange die Fernsteuerung besteht, zeigt GNOME oben rechts ein Symbol. „Beenden“
+  dort ist unter Wayland der Not-Aus. Brise behandelt das wie das Not-Aus-Kürzel
+  und baut die Sitzung nicht still wieder auf, sondern fragt erneut. Das globale
+  Kürzel läuft unter Wayland über XWayland und greift nur, solange ein X11-Fenster
+  den Fokus hat. Brise zeigt es dort deshalb nicht an.
 - `BRISE_CU_BACKEND=x11` bzw. `portal` erzwingt einen Weg.
 
-**Stand der Tests:** Unter X11 ein echter Durchlauf in Xvfb mit Vibe und Mistral
-Medium 3.5: Der Agent fand einen zenity-Dialog, holte ihn nach vorn, tippte den
-Namen und bestätigte. Unter Wayland findet der Selbsttest auf Fedora 44 mit GNOME 50
-beide Portale. Ein Durchlauf mit Systemfreigabe steht noch aus. macOS und Windows:
-Der Plattformcode kompiliert für beide Ziele, auf echten Geräten ist er nicht getestet.
+**Vibe sieht keine Screenshots:** Vibe 3.0 ruft MCP-Werkzeuge in seinem Code-Modus
+auf (`run_typescript`). Bilder aus deren Ergebnissen kommen dort nicht beim Modell
+an, auch wenn das Modell Bilder kann (`supports_images = true`). Unter X11, macOS
+und Windows kommt ein Vibe-Agent über `computer_list_windows` und
+`computer_focus_window` trotzdem ans Ziel. Unter Wayland, ohne Fensterliste, klickt
+er blind. Backends, die Bilder aus MCP-Ergebnissen weitergeben, betrifft das nicht.
+
+**Stand der Tests:**
+
+- **X11:** echter Durchlauf in Xvfb mit Vibe und Mistral Medium 3.5. Der Agent fand
+  einen zenity-Dialog, holte ihn nach vorn, tippte den Namen und bestätigte.
+- **Wayland:** echter Durchlauf auf Fedora 44 mit GNOME 50 und 125 % Skalierung.
+  Die Werkzeuge liefen direkt über `brise --mcp-app`, weil Vibe die Bilder nicht
+  weitergibt (siehe oben). Geprüft:
+  - Portal-Screenshot ohne Brise im Bild;
+  - Klick ins Eingabefeld eines zenity-Dialogs, Tippen, Enter: zenity gab den Namen
+    aus;
+  - Freigabe ohne Dialog nach einem Neustart (Token);
+  - „„Brise“ ist bereit“ bei einer neuen Karte;
+  - Not-Aus über das GNOME-Symbol;
+  - „Ablehnen“.
+- **macOS und Windows:** Der Plattformcode kompiliert für beide Ziele, auf echten
+  Geräten ist er nicht getestet.
 
 ## Cortecs und Zero Data Retention
 

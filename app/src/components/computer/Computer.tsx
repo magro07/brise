@@ -133,8 +133,9 @@ export function ComputerSettings() {
       description={
         <>
           Agenten sehen den Bildschirm und bedienen Maus und Tastatur – für Programme ohne Schnittstelle. Jede Aktion erscheint als Freigabekarte mit
-          Vorschau; Passwortfelder füllt Brise nicht aus, Brises eigenes Fenster bleibt verborgen. Not-Aus: <Kbd>{status.shortcut}</Kbd> oder der Stopp-Knopf
-          in der Leiste oben.
+          Vorschau; Passwortfelder füllt Brise nicht aus, Brises eigenes Fenster bleibt verborgen. Not-Aus:{" "}
+          {status.shortcut ? <Kbd>{status.shortcut}</Kbd> : "das Fernsteuerungs-Symbol des Systems (GNOME: oben rechts)"} oder der Stopp-Knopf in der
+          Leiste oben.
         </>
       }
     >
