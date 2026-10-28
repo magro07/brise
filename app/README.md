@@ -623,13 +623,14 @@ Live-Tests mit Schlüssel: `cargo test --lib cortecs::tests -- --ignored --test-
 ## Modelle, Skills, Werkzeuge
 
 - **Modelle:** Vibe selbst bietet nur Mistral Medium 3.5 an. Bei jedem Start trägt Brise
-  Mistral Large 4 und GLM-5.3 in Vibes `config.toml` ein (`[[models]]`), falls sie fehlen.
+  Mistral Large 4, GLM-5.3 und DeepSeek V4.1 Flash in Vibes `config.toml` ein (`[[models]]`), falls sie fehlen.
   Außerdem gleicht Brise mit Mistrals Modellkatalog ab und meldet neue Modelle per Banner.
   Unter Einstellungen → Agenten → Vibe lassen sich Katalogmodelle und eigene Modell-IDs
   hinzufügen oder entfernen; Modelle anderer Anbieter kommen über „In Vibe nutzen“ dazu.
 - **Auto-Modellwahl:** „Auto“ in der Modellwahl. Das Modell für Einstufung (Modelle &
   Automatik, bei jedem Anbieter) stuft jede Aufgabe als einfach, normal oder komplex ein. Ohne Netz greift eine Heuristik. Brise setzt dann das
-  zugeordnete Modell (Standard: GLM-5.3 Flash, Medium 3.5, Large 4). Bei Bildern nimmt
+  zugeordnete Modell (Standard: GLM-5.3 Flash, Medium 3.5, Large 4). Mit „festes Modell,
+  Denkstufe automatisch“ arbeitet standardmäßig DeepSeek V4.1 Flash. Bei Bildern nimmt
   Brise ein Modell, das Bilder versteht. Unter jeder Nachricht steht die Wahl.
 - **Skills:** Brise liefert reverse-engineer-anything (rea), sechs ponytail-Skills,
   gauntlet-loop, frontend-design, webapp-testing, mcp-builder, skill-creator, design-mode und 3d-mode mit.

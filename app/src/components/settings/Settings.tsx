@@ -1098,7 +1098,7 @@ function AutoModelCard() {
   return (
     <Card
       title="Auto"
-      description="Das Task-Modell stuft jede Anfrage ein. Standard: GLM-5.3 arbeitet, und die Denkstufe wird pro Anfrage gesetzt und während der Arbeit nachgesteuert (z. B. höher bei wiederholten Fehlern, niedriger bei reinem Lesen). Unter jeder Nachricht und per Klick auf die Denkstufe siehst du, was gewählt wurde."
+      description="Das Task-Modell stuft jede Anfrage ein. Standard: DeepSeek V4.1 Flash arbeitet, und die Denkstufe wird pro Anfrage gesetzt und während der Arbeit nachgesteuert (z. B. höher bei wiederholten Fehlern, niedriger bei reinem Lesen). Unter jeder Nachricht und per Klick auf die Denkstufe siehst du, was gewählt wurde."
     >
       <Row
         title={

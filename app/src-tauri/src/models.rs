@@ -32,7 +32,13 @@ pub struct CatalogModel {
 const DEFAULTS: &[(&str, &str, &str)] = &[
     ("mistral-large-4", "mistral-large-4", "Mistral Large 4"),
     ("zai-glm-5-3", "glm-5-3", "GLM-5.3"),
+    ("deepseek-v4-1-flash-1017", "deepseek-v4-1-flash-1017", "DeepSeek V4.1 Flash"),
 ];
+
+/// Multimodale Modelle, die Mistrals Katalog (noch) ohne `vision` meldet.
+fn multimodal(id: &str) -> bool {
+    id.starts_with("deepseek-v4")
+}
 
 /// Was kein Chat-Modell für Vibe ist.
 fn skip(id: &str) -> bool {
@@ -90,7 +96,7 @@ pub async fn model_catalog() -> CmdResult<Vec<CatalogModel>> {
             id: canonical(&members),
             description: m["description"].as_str().unwrap_or_default().to_string(),
             context: m["max_context_length"].as_u64().unwrap_or(0),
-            vision: caps["vision"] == true,
+            vision: caps["vision"] == true || members.iter().any(|g| multimodal(g)),
             tools: caps["function_calling"] == true,
             reasoning: caps["reasoning"] == true,
             aliases: members,
@@ -189,7 +195,23 @@ pub async fn ensure_default_models() -> CmdResult<bool> {
         .map(|(name, alias, display)| model_entry(name, alias, display, catalog.iter().find(|m| m.aliases.iter().any(|a| a == name))))
         .collect();
     let added = add_entries(entries)?;
-    Ok(fix_thinking_levels()? || added)
+    Ok(fix_thinking_levels()? | fix_images()? || added)
+}
+
+/// Schaltet Bilder für multimodale Modelle frei, die mit `supports_images = false`
+/// eingetragen wurden – sonst schickt Vibe ihnen keine Bilder.
+fn fix_images() -> CmdResult<bool> {
+    edit_config(|doc| {
+        let Some(arr) = doc.get_mut("models").and_then(Item::as_array_of_tables_mut) else { return Ok(()) };
+        for t in arr.iter_mut() {
+            let name = t.get("name").and_then(|v| v.as_str()).unwrap_or("");
+            let provider = t.get("provider").and_then(|v| v.as_str()).unwrap_or("mistral");
+            if provider == "mistral" && multimodal(name) && t.get("supports_images").and_then(|v| v.as_bool()) != Some(true) {
+                t.insert("supports_images", toml_edit::value(true));
+            }
+        }
+        Ok(())
+    })
 }
 
 /// Korrigiert Denkstufen bestehender GLM-/Large-4-Einträge (auch von Hand

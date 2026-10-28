@@ -637,6 +637,12 @@ export function helperProvider(cwd: string): HelperModel | null {
 
 // ---------- Store ----------
 
+/** Standardmodell von Brise (über Mistral Vibe). */
+export const DEFAULT_MODEL = "deepseek-v4-1-flash-1017";
+
+/** Modelle, die keine Bilder verstehen. */
+const noVision = (m: string) => /glm-5-3(?!-flash)|codestral/.test(m);
+
 const initialPrefs: Prefs = {
   theme: "system",
   fontSize: 14,
@@ -651,7 +657,7 @@ const initialPrefs: Prefs = {
   accent: null,
   assistModel: "mistral-small-latest",
   autoStrategy: "reasoning",
-  autoBaseModel: "glm-5-3",
+  autoBaseModel: DEFAULT_MODEL,
   fim: true,
   tourDone: false,
   council: COUNCIL_DEFAULTS,
@@ -670,6 +676,11 @@ const initialPrefs: Prefs = {
 if (!load<Partial<Prefs>>("prefs", {}).taskModels) {
   const legacy = initialPrefs.decisionProvider !== "cortecs" && initialPrefs.assistModel && initialPrefs.assistModel !== "mistral-small-latest" ? `mistral/${initialPrefs.assistModel}` : "";
   initialPrefs.taskModels = { decide: legacy, helper: legacy, sensitivity: "", judge: "" };
+}
+// Migration auf 0.3: Wer noch den alten Standard GLM-5.3 hatte, bekommt einmalig den neuen.
+if (!load<boolean>("defaultModelV3", false)) {
+  if (initialPrefs.autoBaseModel === "glm-5-3") initialPrefs.autoBaseModel = DEFAULT_MODEL;
+  save("defaultModelV3", true);
 }
 initialPrefs.council = { ...COUNCIL_DEFAULTS, ...initialPrefs.council };
 initialPrefs.orchestra = { ...ORCHESTRA_DEFAULTS, ...initialPrefs.orchestra };
@@ -705,7 +716,7 @@ function pickModel(level: Routed["level"], routing: Prefs["routing"], available:
     standard: ["standard", "complex", "simple"],
     complex: ["complex", "standard", "simple"],
   };
-  const visionOk = (m: string) => !needsVision || !/glm-5-3(?!-flash)|codestral/.test(m);
+  const visionOk = (m: string) => !needsVision || !noVision(m);
   for (const k of order[level]) {
     const m = routing[k];
     if (available.includes(m) && visionOk(m)) return m;
@@ -1406,7 +1417,7 @@ export const useStore = create<State & Actions>((set, get) => {
         items: [...s.items, { type: "user", id: userItemId, text, attachments, zdr: zdr || undefined, author: opts?.author }],
       }));
 
-      // Auto: Aufgabe einstufen. Standard: GLM-5.3 fest, Denkstufe passend setzen.
+      // Auto: Aufgabe einstufen. Standard: festes Modell (DEFAULT_MODEL), Denkstufe passend setzen.
       const current = get().sessions[sid];
       const modelOption = current?.config.find((o) => o.id === "model");
       const thinkingOption = () => get().sessions[sid]?.config.find((o) => o.id === "thinking");
@@ -1429,7 +1440,7 @@ export const useStore = create<State & Actions>((set, get) => {
         const needsVision = attachments.some((a) => a.kind === "image");
         const base = zdr ? prefs.zdrModel : prefs.autoBaseModel;
         const budget = await budgetModel(
-          prefs.autoStrategy === "reasoning" && available.includes(base) && !(needsVision && /glm-5-3$/.test(base))
+          prefs.autoStrategy === "reasoning" && available.includes(base) && !(needsVision && noVision(base))
             ? base
             : pickModel(verdict.level, prefs.routing, available, needsVision),
           available,
