@@ -213,6 +213,8 @@ export interface Prefs {
   tourDone: boolean;
   /** Version, deren Neuerungen zuletzt gezeigt wurden. */
   seenVersion: string;
+  /** Eigene Session-Namen, auch für Backends ohne Umbenennen. */
+  sessionTitles: Record<string, string>;
   /** Model Council (liest auch der MCP-Server brise-council, siehe council.rs). */
   council: CouncilPrefs;
   /** Alt (bis 0.2): Entscheidungen über Mistral oder Cortecs – nur noch für die Migration. */
@@ -431,6 +433,7 @@ interface Actions {
   selectSession(id: string): Promise<void>;
   openChildSession(childId: string, cwd: string): Promise<void>;
   deleteSession(id: string): Promise<void>;
+  renameSession(id: string, title: string): Promise<void>;
   /** Neue Session anlegen, ohne sie zu öffnen (Untersessions einer Master-Session). */
   createSession(cwd: string, backend: string, opts?: { parent?: string; model?: string; title?: string; thinking?: string }): Promise<string>;
   /** Vorhandene Session im Hintergrund laden, ohne sie zu öffnen. */
@@ -515,6 +518,11 @@ function appendText(items: Item[], type: "assistant" | "thought" | "user", text:
 
 /** Wendet ein `session/update` von Vibe auf eine Session an. */
 /** Der Umgebungshinweis gehört nicht in Titel und geladene Verläufe. */
+/** Name aus den ersten Worten des Prompts. */
+const firstWords = (text: string, max = 48) => {
+  const line = text.trim().split("\n")[0];
+  return line.length <= max ? line : `${line.slice(0, max).replace(/\s+\S*$/, "")} …`;
+};
 const withoutBrief = (text: string) => text.split(/\[Umgebung|\[Ultra-Modus/)[0].trimEnd();
 
 /** Sagt dem Agenten einmal je Session, wo er läuft und was hier anders ist als in seinem Terminal. */
@@ -754,6 +762,7 @@ const initialPrefs: Prefs = {
   fim: true,
   tourDone: false,
   seenVersion: "",
+  sessionTitles: {},
   council: COUNCIL_DEFAULTS,
   decisionProvider: "mistral",
   sensitivityCheck: true,
@@ -1311,7 +1320,7 @@ export const useStore = create<State & Actions>((set, get) => {
       try {
         const r = await api.listSessions();
         // Sessions des Design- und 3D-Modus gehören zu keinem Projekt.
-        const index = (r.sessions ?? []).filter((s) => !isDesignPath(s.cwd) && !isModelPath(s.cwd) && !isBenchPath(s.cwd)).sort(byRecency).map((s) => ({ ...s, title: s.title ? withoutBrief(s.title) : s.title }));
+        const index = (r.sessions ?? []).filter((s) => !isDesignPath(s.cwd) && !isModelPath(s.cwd) && !isBenchPath(s.cwd)).sort(byRecency).map((s) => ({ ...s, title: get().prefs.sessionTitles?.[s.sessionId] ?? (s.title ? withoutBrief(s.title) : s.title) }));
         const { projects, hiddenProjects } = get();
         const known = new Set(projects);
         // Worktrees von Untersessions sind keine eigenen Projekte.
@@ -1387,6 +1396,16 @@ export const useStore = create<State & Actions>((set, get) => {
         patchSession(childId, (s) => ({ ...s, replaying: false }));
         pushItem(childId, { type: "notice", id: uid(), text: `Verlauf des Subagenten nicht verfügbar: ${e}`, tone: "warn" });
       }
+    },
+
+    async renameSession(id, title) {
+      const { prefs, setPrefs } = get();
+      setPrefs({ sessionTitles: { ...prefs.sessionTitles, [id]: title } });
+      set((s) => ({
+        sessions: s.sessions[id] ? { ...s.sessions, [id]: { ...s.sessions[id], title } } : s.sessions,
+        index: s.index.map((x) => (x.sessionId === id ? { ...x, title } : x)),
+      }));
+      await api.renameSession(id, title).catch(() => {});
     },
 
     async deleteSession(id) {
@@ -1552,6 +1571,8 @@ export const useStore = create<State & Actions>((set, get) => {
         turnStarted: started,
         items: [...s.items, { type: "user", id: userItemId, text, attachments, zdr: zdr || undefined, author: opts?.author }],
       }));
+      // Vibe vergibt Titel erst nach dem Turn; bei Ultra stünde so lange „Neue Session“ da.
+      if (!get().sessions[sid]?.title && text.trim()) void get().renameSession(sid, firstWords(text));
 
       // Auto: Aufgabe einstufen. Standard: festes Modell (DEFAULT_MODEL), Denkstufe passend setzen.
       const current = get().sessions[sid];

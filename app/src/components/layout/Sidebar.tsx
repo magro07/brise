@@ -22,11 +22,12 @@ import {
   UserRound,
   Palette,
   Box,
+  Pencil,
 } from "lucide-react";
 import { basename, byRecency, useStore, type Session } from "../../lib/store";
 import { BackendBadge } from "../agents/BackendPicker";
 import { IconButton, Kbd, Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger, Spinner, clsx } from "../ui";
-import { confirmAction } from "../../lib/dialogs";
+import { askText, confirmAction } from "../../lib/dialogs";
 import { useCollab } from "../../lib/collab";
 import { isDesignPath } from "../../lib/design";
 import { isModelPath } from "../../lib/model3d";
@@ -104,6 +105,10 @@ export function Sidebar() {
         live={sessions[s.id]}
         onClick={() => selectSession(s.id)}
         onSplit={() => useStore.getState().splitWith(s.id)}
+        onRename={async () => {
+          const name = await askText("Neuer Name", s.title);
+          if (name?.trim()) useStore.getState().renameSession(s.id, name.trim());
+        }}
         onDelete={async () => {
           if (await confirmAction(`Session „${s.title}“ endgültig löschen?`, true)) deleteSession(s.id);
         }}
@@ -320,6 +325,7 @@ function SessionRow({
   onClick,
   onDelete,
   onSplit,
+  onRename,
 }: {
   id: string;
   title: string;
@@ -329,6 +335,7 @@ function SessionRow({
   onClick: () => void;
   onDelete: () => void;
   onSplit: () => void;
+  onRename: () => void;
 }) {
   const waiting = (live?.pending.length ?? 0) > 0;
   return (
@@ -355,6 +362,9 @@ function SessionRow({
           </button>
         </MenuTrigger>
         <MenuContent align="end">
+          <MenuItem icon={<Pencil />} onSelect={onRename}>
+            Umbenennen
+          </MenuItem>
           <MenuItem icon={<Columns2 />} onSelect={onSplit}>
             Rechts daneben öffnen
           </MenuItem>

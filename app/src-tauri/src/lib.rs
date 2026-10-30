@@ -154,6 +154,7 @@ pub fn run() {
             agent::set_config_option,
             agent::config_schema,
             agent::delete_session,
+            agent::rename_session,
             agent::disconnect_backend,
             backends::backends_list,
             backends::backend_auth,

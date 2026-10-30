@@ -125,6 +125,7 @@ export const api = {
     invoke<SessionSetup>("load_session", { cwd, sessionId, search, rea, backend: backend ?? null }),
   listSessions: (cwd?: string, backend?: string) => invoke<{ sessions?: SessionSummary[] }>("list_sessions", { cwd: cwd ?? null, backend: backend ?? null }),
   deleteSession: (sessionId: string) => invoke("delete_session", { sessionId }),
+  renameSession: (sessionId: string, title: string) => invoke("rename_session", { sessionId, title }),
   prompt: (sessionId: string, prompt: ContentBlock[]) => invoke<PromptResult>("prompt", { sessionId, prompt }),
   cancel: (sessionId: string) => invoke<void>("cancel", { sessionId }),
   setMode: (sessionId: string, modeId: string) => invoke("set_mode", { sessionId, modeId }),

@@ -722,6 +722,17 @@ pub async fn delete_session(app: AppHandle, state: State<'_, AgentState>, sessio
     Ok(r)
 }
 
+/// Namen dauerhaft ändern. Backends ohne Vibe-Erweiterung behalten ihn nur in Brise.
+#[tauri::command]
+pub async fn rename_session(app: AppHandle, state: State<'_, AgentState>, session_id: String, title: String) -> CmdResult<Value> {
+    let backend = session_backend(&state, &session_id);
+    let vibe = state.agents.lock().await.get(&backend).is_some_and(|a| a.info.caps.vibe_extensions);
+    if !vibe {
+        return Ok(Value::Null);
+    }
+    session_call(&app, &state, &session_id, "_session/set_title", json!({ "sessionId": session_id, "title": title })).await
+}
+
 #[tauri::command]
 pub async fn cancel(app: AppHandle, state: State<'_, AgentState>, session_id: String) -> CmdResult<()> {
     let conn = session_connection(&app, &state, &session_id).await?;
