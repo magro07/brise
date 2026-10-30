@@ -16,6 +16,9 @@ mod customize;
 mod embeddings;
 mod files;
 mod meter;
+mod roblox;
+mod stt;
+mod youtube;
 mod mistral;
 mod mistral_proxy;
 mod thinking;
@@ -108,6 +111,7 @@ pub fn run() {
         .manage(agent::AgentState::default())
         .manage(terminal::Terminals::default())
         .manage(meter::Meter::default())
+        .manage(stt::Recorder::default())
         .manage(collab::CollabState::default())
         .setup(|app| {
             customize::watch(app.handle().clone());
@@ -167,6 +171,8 @@ pub fn run() {
             providers::provider_test_model,
             providers::provider_function_model,
             config::read_config,
+            config::config_stamp,
+            models::set_model_compact,
             config::write_config_value,
             config::list_project_files,
             config::read_image,
@@ -223,6 +229,13 @@ pub fn run() {
             files::create_path,
             files::default_projects_dir,
             meter::meter_start,
+            youtube::youtube_context,
+            stt::stt_start,
+            stt::stt_stop,
+            stt::stt_cancel,
+            stt::stt_check,
+            roblox::roblox_status,
+            roblox::roblox_set_enabled,
             meter::meter_stop,
             customize::read_customization,
             customize::sync_prefs,

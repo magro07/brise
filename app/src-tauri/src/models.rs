@@ -198,7 +198,7 @@ pub async fn ensure_default_models() -> CmdResult<bool> {
         .map(|(name, alias, display)| model_entry(name, alias, display, catalog.iter().find(|m| m.aliases.iter().any(|a| a == name))))
         .collect();
     let added = add_entries(entries)?;
-    Ok(fix_thinking_levels()? | fix_images()? | default_active()? || added)
+    Ok(fix_thinking_levels()? | fix_images()? | default_compact()? | default_active()? | default_web_search()? || added)
 }
 
 /// Brises Standardmodell (DeepSeek V4.1 Flash), solange in Vibe noch keins gewählt ist.
@@ -207,6 +207,52 @@ fn default_active() -> CmdResult<bool> {
     edit_config(|doc| {
         if doc.get("active_model").and_then(|v| v.as_str()).is_none() {
             doc.insert("active_model", toml_edit::value(DEFAULT_MODEL));
+        }
+        Ok(())
+    })
+}
+
+/// DeepSeek V4 komprimiert erst ab 500k; eine eigene Einstellung bleibt.
+fn default_compact() -> CmdResult<bool> {
+    edit_config(|doc| {
+        let Some(arr) = doc.get_mut("models").and_then(Item::as_array_of_tables_mut) else { return Ok(()) };
+        for t in arr.iter_mut() {
+            let name = t.get("name").and_then(|v| v.as_str()).unwrap_or("");
+            if name.starts_with("deepseek-v4") && !t.contains_key("auto_compact_threshold") {
+                t.insert("auto_compact_threshold", toml_edit::value(500_000_i64));
+            }
+        }
+        Ok(())
+    })
+}
+
+/// Auto-Compact für ein einzelnes Modell; `tokens = None` nimmt Vibes Standard.
+#[tauri::command]
+pub fn set_model_compact(alias: String, tokens: Option<i64>) -> CmdResult<()> {
+    edit_config(|doc| {
+        let Some(arr) = doc.get_mut("models").and_then(Item::as_array_of_tables_mut) else { return Ok(()) };
+        for t in arr.iter_mut().filter(|t| t.get("alias").and_then(|v| v.as_str()) == Some(alias.as_str())) {
+            match tokens {
+                Some(n) => t.insert("auto_compact_threshold", toml_edit::value(n)),
+                None => t.remove("auto_compact_threshold"),
+            };
+        }
+        Ok(())
+    })?;
+    Ok(())
+}
+
+/// Websuche läuft ohne Rückfrage, solange niemand etwas anderes eingestellt hat.
+/// Sie liest nur; `web_fetch` fragt weiter nach.
+fn default_web_search() -> CmdResult<bool> {
+    edit_config(|doc| {
+        if doc.get("tools").and_then(|t| t.get("web_search")).and_then(|t| t.get("permission")).is_none() {
+            let tools = doc.entry("tools").or_insert_with(|| { let mut t = toml_edit::Table::new(); t.set_implicit(true); Item::Table(t) });
+            let Some(tools) = tools.as_table_mut() else { return Ok(()) };
+            let search = tools.entry("web_search").or_insert_with(|| Item::Table(toml_edit::Table::new()));
+            if let Some(search) = search.as_table_mut() {
+                search.insert("permission", toml_edit::value("always"));
+            }
         }
         Ok(())
     })

@@ -20,7 +20,7 @@ export const Button = forwardRef<
       size === "sm" && "h-7 px-2.5 text-[0.86em]",
       size === "md" && "h-8 px-3 text-[0.93em]",
       size === "lg" && "h-10 px-5 text-[1em]",
-      variant === "primary" && "bg-accent text-accent-fg hover:brightness-110 shadow-soft",
+      variant === "primary" && "bg-fg text-bg hover:opacity-85",
       variant === "secondary" && "border border-line bg-elev text-fg hover:bg-hover",
       variant === "ghost" && "text-fg-2 hover:bg-hover hover:text-fg",
       variant === "subtle" && "bg-hover text-fg hover:bg-active",

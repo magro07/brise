@@ -1,5 +1,6 @@
+import { invoke } from "@tauri-apps/api/core";
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
-import { shortcut } from "../../lib/platform";
+import { AutomationsCard } from "./AutomationsCard";
 import {
   Plus,
   Wand2,
@@ -30,6 +31,8 @@ import { AgentsSettings } from "../agents/AgentsSettings";
 
 import { looksSecret, maskSecrets } from "../../lib/format";
 import { AccountsCard } from "./Accounts";
+import { ShortcutsCard } from "./ShortcutsCard";
+import { LocalSttCard, RobloxCard } from "./LocalToolsCards";
 import { ComputerSettings } from "../computer/Computer";
 import { Button, Spinner, Switch, clsx } from "../ui";
 import { MODE_INFO } from "../composer/Pickers";
@@ -317,7 +320,7 @@ export function SettingsView() {
   const vibe = useStore((s) => !!s.agents.vibe);
   const effective = usePolicy((s) => s.effective);
   const [section, sub = ""] = (LEGACY[rawSection] ?? rawSection).split("/");
-  const sections = SECTIONS.filter((s) => sectionAccess(s.id, effective) !== "hidden");
+  const sections = SECTIONS.filter((s) => sectionAccess(s.id, effective) !== "hidden" && (!prefs.simpleMode || ["general", "providers", "tools"].includes(s.id)));
   const access = sectionAccess(section, effective);
 
   const reload = useCallback(async () => {
@@ -555,6 +558,13 @@ export function SettingsView() {
                   }
                 />
               </Card>
+              <Card title="Einfacher Modus">
+                <Row
+                  title="Einfacher Modus"
+                  description="Zeigt nur den Chat. Modelle und Profi-Einstellungen wählt Brise selbst."
+                  control={<Switch checked={!!prefs.simpleMode} onChange={(v) => setPrefs({ simpleMode: v })} />}
+                />
+              </Card>
               <Card title="Benachrichtigungen">
                 <Row
                   title="Melden, wenn eine Session fertig ist"
@@ -573,19 +583,7 @@ export function SettingsView() {
                   }
                 />
               </Card>
-              <Card title="Tastenkürzel">
-                {[
-                  ["Neue Session", shortcut("N")],
-                  ["Suchen und Befehle", shortcut("K")],
-                  ["Einstellungen", shortcut(",")],
-                  ["Seitenleiste ein/aus", shortcut("B")],
-                  ["Detailpanel ein/aus", shortcut("J")],
-                  ["Laufenden Turn abbrechen", "Esc"],
-                  ["Terminal ein/aus", shortcut("ö")],
-                ].map(([l, k]) => (
-                  <Row key={l} title={<span className="font-normal">{l}</span>} control={<kbd className="rounded border border-line bg-panel px-2 py-0.5 text-[0.82em]">{k}</kbd>} />
-                ))}
-              </Card>
+              <ShortcutsCard />
             </>
           )}
 
@@ -666,6 +664,9 @@ export function SettingsView() {
             <>
               <SearchCard />
               <VoiceCard field={field} vibe={vibe} />
+              <LocalSttCard />
+              <AutomationsCard />
+              <RobloxCard />
               <ComputerSettings />
               {vibe ? <SkillsView values={values} write={write} /> : null}
               {vibe && <WebCard values={values} write={write} />}
@@ -1405,6 +1406,23 @@ function EfficiencyCard({ values, write }: { values: Record<string, unknown>; wr
           </select>
         }
       />
+      {((values.models ?? []) as { alias: string; auto_compact_threshold?: number }[]).map((m) => (
+        <Row
+          key={m.alias}
+          title={m.alias}
+          description="Eigene Grenze für dieses Modell, in Tausend Tokens. Leer heißt Vibes Standard."
+          control={
+            <input
+              type="number"
+              min={1}
+              defaultValue={m.auto_compact_threshold ? m.auto_compact_threshold / 1000 : ""}
+              placeholder="Standard"
+              onBlur={(e) => void invoke("set_model_compact", { alias: m.alias, tokens: e.target.value ? Number(e.target.value) * 1000 : null })}
+              className="h-8 w-28 rounded-lg border border-line bg-elev px-2 text-right text-[0.92em] outline-none focus:border-accent"
+            />
+          }
+        />
+      ))}
       <Row
         title="Knapper Arbeitsstil (ponytail)"
         description="Der Skill ponytail hält Änderungen und Antworten minimal. Vibe nutzt ihn bei passenden Aufgaben selbst – oder du schreibst /ponytail."
@@ -1428,7 +1446,7 @@ function WebCard({ values, write }: { values: Record<string, unknown>; write: (k
         <Row
           title="Websuche ohne Rückfrage"
           description="Sonst fragt Vibe vor jeder Suche in der Hauptsession."
-          control={<Switch checked={searchAlways} onChange={(v) => write(["tools", "web_search", "permission"], v ? "always" : null)} />}
+          control={<Switch checked={searchAlways} onChange={(v) => write(["tools", "web_search", "permission"], v ? "always" : "ask")} />}
         />
         <Row
           title="Webseiten lesen ohne Rückfrage"

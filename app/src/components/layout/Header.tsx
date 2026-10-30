@@ -11,6 +11,7 @@ import { CollabBadge } from "../collab/CollabBadge";
 
 export function Header({ session }: { session?: Session }) {
   const project = useStore((s) => s.activeProject);
+  const simple = useStore((s) => s.prefs.simpleMode);
   const sidebarOpen = useStore((s) => s.sidebarOpen);
   const terminalOpen = useStore((s) => s.terminalOpen);
   const panel = useStore((s) => s.panel);
@@ -20,7 +21,7 @@ export function Header({ session }: { session?: Session }) {
   const badge: Record<string, number> = { changes, agents, tasks: session?.plan.length ?? 0 };
 
   return (
-    <header data-brise="header" className="flex h-12 shrink-0 items-center gap-2 border-b border-line px-3" data-tauri-drag-region>
+    <header data-brise="header" className="flex h-[46px] shrink-0 items-center gap-2 px-3" data-tauri-drag-region>
       {!sidebarOpen && (
         <IconButton label={`Seitenleiste einblenden (${shortcut("B")})`} onClick={() => set({ sidebarOpen: true })}>
           <PanelLeftOpen className="h-4 w-4" />
@@ -41,8 +42,8 @@ export function Header({ session }: { session?: Session }) {
 
       <div className="flex items-center gap-0.5">
         {!session?.guest && <CollabBadge session={session} />}
-        <HeaderMeter />
-        {!panel && PANEL_TABS.map((t) => (
+        {!simple && <HeaderMeter />}
+        {!panel && PANEL_TABS.filter((t) => badge[t.id] > 0).map((t) => (
           <Tip key={t.id} label={t.label}>
             <button
               onClick={() => togglePanel(t.id)}

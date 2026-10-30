@@ -1,3 +1,4 @@
+import { ACTIONS, keysOf, showCombo } from "../../lib/shortcuts";
 import { Command } from "cmdk";
 import { shortcut } from "../../lib/platform";
 import * as Dialog from "@radix-ui/react-dialog";
@@ -29,6 +30,7 @@ export function CommandPalette() {
   const prefs = useStore((s) => s.prefs);
   const { set, newDraft, selectSession, setView, togglePanel, setPrefs, openProject } = useStore.getState();
   const close = () => set({ paletteOpen: false });
+  const custom = useStore((s) => s.prefs.shortcuts) ?? {};
   const run = (fn: () => void) => () => {
     close();
     fn();
@@ -48,6 +50,13 @@ export function CommandPalette() {
             />
             <Command.List className="max-h-[420px] overflow-y-auto p-1.5">
               <Command.Empty className="px-4 py-8 text-center text-muted">Nichts gefunden.</Command.Empty>
+              <Command.Group heading="Alle Aktionen">
+                {ACTIONS.map((a) => (
+                  <Item key={a.id} value={`aktion ${a.label}`} icon={<SquarePen />} hint={showCombo(keysOf(a, custom)[0])} onSelect={run(a.run)}>
+                    {a.label}
+                  </Item>
+                ))}
+              </Command.Group>
               <Command.Group heading="Aktionen" className="[&_[cmdk-group-heading]]:px-2.5 [&_[cmdk-group-heading]]:py-1.5 [&_[cmdk-group-heading]]:text-[0.75em] [&_[cmdk-group-heading]]:uppercase [&_[cmdk-group-heading]]:text-muted">
                 <Item icon={<SquarePen />} hint={shortcut("N")} onSelect={run(() => newDraft())}>
                   Neue Session

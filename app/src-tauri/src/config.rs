@@ -17,7 +17,7 @@ pub fn vibe_home() -> Option<PathBuf> {
     }
 }
 
-fn config_path() -> CmdResult<PathBuf> {
+pub fn config_path() -> CmdResult<PathBuf> {
     vibe_home().map(|h| h.join("config.toml")).ok_or_else(|| "Kein Home-Verzeichnis gefunden".into())
 }
 
@@ -43,6 +43,16 @@ pub fn read_config() -> CmdResult<ConfigFile> {
         exists: path.exists(),
         values: serde_json::to_value(values).map_err(|e| e.to_string())?,
     })
+}
+
+/// Änderungszeit von Vibes Konfiguration; so merkt Brise, wann ein /reload fällig ist.
+#[tauri::command]
+pub fn config_stamp() -> u64 {
+    config_path()
+        .ok()
+        .and_then(|p| std::fs::metadata(p).ok()?.modified().ok())
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map_or(0, |d| d.as_millis() as u64)
 }
 
 /// Setzt `key` auf oberster Ebene oder als Pfad (`tools.bash.allowlist`).

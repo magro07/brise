@@ -1,3 +1,5 @@
+import { invoke } from "@tauri-apps/api/core";
+import { runGoal } from "../../lib/goals";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
@@ -104,6 +106,8 @@ export function Composer({ session, project, focused = true, onSend, onCancel, o
   const stop = onCancel ?? cancel;
   const commands: SlashCommand[] = session?.commands.length ? session.commands : (templateCommands ?? []);
   const recording = useStore((s) => s.recording);
+  const simple = useStore((s) => s.prefs.simpleMode);
+  const localStt = useStore((s) => s.prefs.sttEngine === "local");
   const composerInsert = useStore((s) => s.composerInsert);
   const { startRecording, stopRecording, cancelRecording, set: setStore } = useStore.getState();
   const [voiceBusy, setVoiceBusy] = useState(false);
@@ -221,7 +225,7 @@ export function Composer({ session, project, focused = true, onSend, onCancel, o
     }
     if (slash) {
       const q = slash[1].toLowerCase();
-      return commands
+      return [{ name: "goal", description: "Ziel setzen: Der Agent arbeitet weiter, bis es erreicht ist" }, ...commands]
         .filter((c) => c.name.toLowerCase().includes(q))
         .slice(0, 8)
         .map((c) => ({ kind: "command", value: c.name, label: `/${c.name}`, detail: c.description ?? "" }));
@@ -277,8 +281,13 @@ export function Composer({ session, project, focused = true, onSend, onCancel, o
     // Referenzen als Kontext vor die Nachricht, ihre Vorschaubilder als Anhänge.
     const resolved = picked.length ? await resolveReferences(picked).catch(() => null) : null;
     const all = resolved ? [...list, ...resolved.images.filter((i) => !list.some((a) => a.path === i.path))] : list;
-    const prefix = resolved?.context || undefined;
-    if (onSend) onSend(t, all, { ...opts, prefix });
+    // YouTube-Links: Titel und Transkript gehen als Kontext mit, bei jedem Agenten.
+    const youtube = /https?:\/\/(?:www\.|m\.)?(?:youtube\.com|youtu\.be)\/\S+/.exec(t)?.[0];
+    const video = youtube ? await invoke<string>("youtube_context", { url: youtube }).catch(() => "") : "";
+    const prefix = [resolved?.context, video].filter(Boolean).join("\n\n") || undefined;
+    const goal = /^\/goal\s+([\s\S]+)/.exec(t)?.[1];
+    if (goal && !onSend) void runGoal(goal, (text, rule, sessionId) => send(text, all, { ...opts, prefix: [prefix, rule].filter(Boolean).join("\n\n"), sessionId }));
+    else if (onSend) onSend(t, all, { ...opts, prefix });
     else send(t, all, { ...opts, prefix });
   };
 
@@ -415,8 +424,8 @@ export function Composer({ session, project, focused = true, onSend, onCancel, o
 
       <div
         className={clsx(
-          "rounded-2xl border bg-elev shadow-soft transition-colors",
-          dragging ? "border-accent bg-accent-soft" : "border-line-strong focus-within:border-accent/60",
+          "rounded-3xl border bg-elev shadow-soft transition-colors",
+          dragging ? "border-accent bg-accent-soft" : "border-line-strong",
         )}
       >
         {(attachments.length > 0 || refs.length > 0 || chips) && (
@@ -504,14 +513,18 @@ export function Composer({ session, project, focused = true, onSend, onCancel, o
           <IconButton label="Dateien oder Bilder anhängen" onClick={attach} disabled={disabled}>
             <Paperclip className="h-4 w-4" />
           </IconButton>
-          <IconButton label="Secret anlegen (Passwort, API-Key, Token) – der Agent sieht nur den Platzhalter" onClick={() => setSecretPanel(secretPanel ? null : {})} disabled={disabled}>
+          {!simple && <IconButton label="Secret anlegen (Passwort, API-Key, Token) – der Agent sieht nur den Platzhalter" onClick={() => setSecretPanel(secretPanel ? null : {})} disabled={disabled}>
             <KeyRound className="h-4 w-4" />
-          </IconButton>
+          </IconButton>}
           {tools}
-          <BackendPicker session={session} />
-          <ModePicker session={session} />
-          <OptionPicker session={session} id="model" />
-          <ThinkingPicker session={session} />
+          {!simple && (
+            <>
+              <BackendPicker session={session} />
+              <ModePicker session={session} />
+              <OptionPicker session={session} id="model" />
+              <ThinkingPicker session={session} />
+            </>
+          )}
           {zdrActive && (
             <Tip label="Nur Cortecs-Modelle ohne Datenspeicherung (Zero Data Retention)" side="top">
               <span data-brise="zdr-badge" className="ml-1 inline-flex h-6 items-center gap-1 rounded-md bg-ok-soft px-1.5 text-[0.78em] font-medium text-ok">
@@ -520,8 +533,8 @@ export function Composer({ session, project, focused = true, onSend, onCancel, o
             </Tip>
           )}
           <div className="flex-1" />
-          <ContextMeter session={session} />
-          {voice && <Tip label={recording ? "Aufnahme beenden und übernehmen" : "Spracheingabe (Voxtral)"}>
+          {!simple && <ContextMeter session={session} />}
+          {(voice || localStt) && <Tip label={recording ? "Aufnahme beenden und übernehmen" : localStt ? "Spracheingabe (lokal)" : "Spracheingabe (Voxtral)"}>
             <button
               onClick={toggleVoice}
               disabled={disabled || voiceBusy}
@@ -547,7 +560,7 @@ export function Composer({ session, project, focused = true, onSend, onCancel, o
             <button
               onClick={() => submit()}
               disabled={!text.trim() || disabled || checking}
-              className="ml-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-accent text-accent-fg transition hover:brightness-110 disabled:bg-line-strong disabled:text-muted"
+              className="ml-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-fg text-bg transition hover:opacity-85 disabled:bg-line-strong disabled:text-muted"
               aria-label="Senden (Enter)"
               title={checking ? "Prüfe auf sensible Daten …" : "Senden (Enter)"}
             >

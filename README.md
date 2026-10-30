@@ -117,6 +117,17 @@ webapp-testing, mcp-builder und skill-creator ([anthropics/skills](https://githu
 dazu `brise-anpassen`, `council`, `deep-research`, `design-mode` und `3d-mode`. Lizenzen und Quellen:
 [NOTICE.md](app/src-tauri/resources/skills/NOTICE.md).
 
+## Neu in 0.4
+
+- **Einfacher Modus:** Einstellungen → Allgemein blendet alles aus, was man zum Loslegen nicht braucht.
+- **Tastenkürzel:** Alle Aktionen sind frei belegbar, mit Tastenfolgen, Konfliktanzeige, Import und Export. Denkstufe rauf und runter, Tabs per `Strg+Alt+1…5`, Spracheingabe zum Halten.
+- **YouTube-Links:** Ein Link im Prompt bringt Titel, Beschreibung und Transkript automatisch mit, bei jedem Agenten.
+- **Goals:** `/goal <Ziel>` lässt den Agenten bis zu zehn Runden weiterarbeiten, bis das Ziel erreicht ist.
+- **Automationen:** Tägliche Aufträge unter Einstellungen → Werkzeuge. Brise muss dafür geöffnet sein.
+- **Roblox Studio:** Brise bindet den MCP-Server automatisch ein. In Studio muss „Enable Studio as MCP server“ an sein.
+- **Lokale Transkription:** Brise schickt die Aufnahme an einen eigenen OpenAI-kompatiblen Server, voreingestellt `parakeet-tdt-0.6-v3`. Einen eingebauten Modell-Download gibt es noch nicht.
+- **Websuche** mit Vibe läuft ohne Rückfrage.
+
 ## Bilder
 
 | Startseite mit persönlichen Vorschlägen | Freigabe, Diff und Aufgabenliste |
@@ -139,6 +150,12 @@ Fertige Installer gibt es unter [Releases](https://github.com/magro07/brise/rele
 
 Die Builds sind nicht signiert. Windows SmartScreen und macOS Gatekeeper warnen
 deshalb beim ersten Start. Unter macOS öffnest du Brise dann per Rechtsklick → „Öffnen“.
+
+Update unter Windows mit einem Befehl in PowerShell:
+
+```powershell
+irm https://raw.githubusercontent.com/magro07/brise/main/scripts/update.ps1 | iex
+```
 
 Schon installierte Agenten findet Brise von selbst. Für Claude Code, Codex und
 Gemini braucht es Node.js 22 oder neuer.

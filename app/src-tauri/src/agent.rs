@@ -474,6 +474,7 @@ pub fn child_env() -> Vec<Value> {
 fn mcp_servers(cwd: &str, tag: &str, search: bool, rea: bool, parent: Option<&str>) -> Value {
     let mut list: Vec<Value> = crate::customize::mcp_entry(cwd, tag, parent).into_iter().collect();
     list.extend(crate::council::mcp_entry(cwd));
+    list.extend(crate::roblox::mcp_entry());
     if search {
         list.extend(crate::embeddings::mcp_entry(cwd));
     }

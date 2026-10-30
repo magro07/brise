@@ -196,6 +196,38 @@ export function ContextMeter({ session }: { session?: Session }) {
   );
 }
 
+/** Regler mit gleitendem Griff; das Eingabefeld darunter übernimmt Ziehen und Pfeiltasten. */
+function ThinkingSlider({ levels, current, dimmed, onChange }: { levels: { value: string; label: string }[]; current?: string; dimmed: boolean; onChange: (value: string) => void }) {
+  const index = Math.max(0, levels.findIndex((l) => l.value === current));
+  const max = levels.length - 1;
+  const pos = max > 0 ? (index / max) * 100 : 0;
+  return (
+    <div className={clsx("px-3 pb-2 pt-1 transition-opacity", dimmed && "opacity-50")}>
+      <div className="relative h-6">
+        <div className="absolute inset-x-0 top-1/2 h-1 -translate-y-1/2 rounded-full bg-active" />
+        <div className="absolute left-0 top-1/2 h-1 -translate-y-1/2 rounded-full bg-fg transition-[width] duration-300 ease-out" style={{ width: `${pos}%` }} />
+        <div className="absolute top-1/2 h-4 w-4 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-fg bg-elev shadow-soft transition-[left] duration-300 ease-out" style={{ left: `${pos}%` }} />
+        <input
+          type="range"
+          aria-label="Denkstufe einstellen"
+          min={0}
+          max={max}
+          step={1}
+          value={index}
+          onChange={(e) => onChange(levels[Number(e.target.value)].value)}
+          onKeyDown={(e) => e.stopPropagation()}
+          className="absolute inset-0 w-full cursor-pointer opacity-0"
+        />
+      </div>
+      <div className="mt-1 flex justify-between text-[0.8em]">
+        {levels.map((l, n) => (
+          <span key={l.value} className={clsx("transition-colors duration-300", n === index ? "font-medium text-fg" : "text-muted")}>{l.label}</span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 /** Denkstufe: „Auto“ lässt das Task-Modell steuern; Klick zeigt den Verlauf. */
 export function ThinkingPicker({ session }: { session?: Session }) {
   const { config, value } = useOptions(session);
@@ -226,18 +258,15 @@ export function ThinkingPicker({ session }: { session?: Session }) {
           </MenuItem>
         )}
         {steering && <MenuSeparator />}
-        {option.options.map((o) => (
-          <MenuItem
-            key={o.value}
-            checked={!auto && o.value === current}
-            onSelect={() => {
-              setAuto(false);
-              setOption("thinking", o.value, session?.id).catch(() => {});
-            }}
-          >
-            {THINKING_LABEL[o.value] ?? o.name}
-          </MenuItem>
-        ))}
+        <ThinkingSlider
+          levels={option.options.map((o) => ({ value: o.value, label: THINKING_LABEL[o.value] ?? o.name }))}
+          current={current}
+          dimmed={auto}
+          onChange={(v) => {
+            setAuto(false);
+            setOption("thinking", v, session?.id).catch(() => {});
+          }}
+        />
         {log.length > 0 && (
           <>
             <MenuSeparator />

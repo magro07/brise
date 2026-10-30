@@ -1,3 +1,4 @@
+import { handleShortcut } from "./lib/shortcuts";
 import { Suspense, lazy, useEffect, useState } from "react";
 import { Sparkles } from "lucide-react";
 import { listen } from "@tauri-apps/api/event";
@@ -25,17 +26,15 @@ import { ShareDialog } from "./components/collab/ShareDialog";
 import { JoinDialog } from "./components/collab/JoinDialog";
 import { TeamDialog } from "./components/collab/TeamDialog";
 import { GuestPane } from "./components/collab/GuestComposer";
-import { DesignView, newDesign } from "./components/design/DesignView";
+import { DesignView } from "./components/design/DesignView";
 import { NewWorkDialog } from "./components/workbench/parts";
-import { useDesign } from "./components/design/designStore";
-import { useModel } from "./components/model3d/modelStore";
-import { newModel } from "./components/model3d/Sidebar";
 const ModelView = lazy(() => import("./components/model3d/ModelView").then((m) => ({ default: m.ModelView })));
 import { SecretPrompt } from "./components/secrets/SecretPrompt";
 import { initSecrets, useSecretRequest } from "./lib/secrets";
 import { initOrchestra } from "./lib/orchestra";
 import { OrchStrip } from "./components/orchestra/Orchestra";
 import { initComputer } from "./lib/computer";
+import { initAutomations } from "./lib/automations";
 import { ComputerBanner } from "./components/computer/Computer";
 
 /** Backend-Events abonnieren und einmal mit Vibe verbinden. */
@@ -70,6 +69,7 @@ function useBackend() {
     const stopPolicy = initPolicy();
     const stopOrchestra = initOrchestra();
     const stopComputer = initComputer();
+    const stopAutomations = initAutomations();
     api.readCustomization().then((c) => s().applyCustomization({ ...c, settings: { ...c.settings, overrides: undefined } }));
     api.startupProject().then((p) => {
       if (p) s().openProject(p);
@@ -82,50 +82,15 @@ function useBackend() {
       stopPolicy();
       stopOrchestra();
       stopComputer();
+      stopAutomations();
     };
   }, []);
 }
 
 function useShortcuts() {
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      const mod = e.ctrlKey || e.metaKey;
-      const st = useStore.getState();
-      if (!mod) return;
-      const key = e.key.toLowerCase();
-      // Design und 3D: Tabs sind dort geöffnete Designs bzw. Modelle.
-      const work = st.view === "design" ? useDesign : st.view === "3d" ? useModel : null;
-      if (work && (key === "n" || key === "w" || key === "tab")) {
-        const w = work.getState();
-        if (key === "n") void (st.view === "design" ? newDesign() : newModel());
-        else if (key === "w" && w.activeId) w.closeTab(w.activeId);
-        else if (key === "tab" && w.tabs.length > 1) {
-          const i = w.activeId ? w.tabs.indexOf(w.activeId) : -1;
-          void w.open(w.tabs[(i + (e.shiftKey ? -1 : 1) + w.tabs.length) % w.tabs.length]);
-        }
-        e.preventDefault();
-        return;
-      }
-      if (key === "k") st.set({ paletteOpen: !st.paletteOpen });
-      else if (key === "n") st.newDraft();
-      else if (key === ",") st.setView(st.view === "settings" ? "chat" : "settings");
-      else if (key === "b") st.set({ sidebarOpen: !st.sidebarOpen });
-      else if (key === "j") st.togglePanel();
-      else if (key === "`" || key === "ö" || key === "dead") st.set({ terminalOpen: !st.terminalOpen });
-      else if (key === "w" && st.activeSessionId) st.closeTab(st.focusedPane, st.activeSessionId);
-      else if (key === "\\") st.splitWith(st.activeSessionId);
-      else if (key === "tab") {
-        const pane = st.panes[st.focusedPane];
-        if (!pane?.tabs.length) return;
-        const i = pane.active ? pane.tabs.indexOf(pane.active) : -1;
-        const next = pane.tabs[(i + (e.shiftKey ? -1 : 1) + pane.tabs.length) % pane.tabs.length];
-        st.openTab(next, st.focusedPane);
-      }
-      else return;
-      e.preventDefault();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    window.addEventListener("keydown", handleShortcut);
+    return () => window.removeEventListener("keydown", handleShortcut);
   }, []);
 }
 

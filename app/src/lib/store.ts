@@ -1,6 +1,7 @@
 // Globaler App-Zustand (zustand). Hier laufen Vibe-Events und Nutzeraktionen
 // zusammen; die Komponenten lesen nur und rufen Aktionen auf.
 
+import { invoke } from "@tauri-apps/api/core";
 import { create } from "zustand";
 import {
   api,
@@ -18,6 +19,7 @@ import {
 } from "./acp";
 import type { ComputerMeta } from "./computer";
 import { load, save } from "./persist";
+import type { Automation } from "./automations";
 import { cortecs } from "./cortecs";
 import { refIsZdr, useProviders } from "./providers";
 import { allowedPrefs } from "./policy";
@@ -185,6 +187,14 @@ export interface Prefs {
   rea: boolean;
   /** Modell pro Prompt automatisch wählen. */
   autoModel: boolean;
+  /** Einfacher Modus: nur Chat, keine Profi-Einstellungen. */
+  simpleMode: boolean;
+  automations: Automation[];
+  /** Eigene Tastenkürzel je Aktion (lib/shortcuts.ts). */
+  shortcuts: Record<string, string>;
+  sttEngine: "vibe" | "local";
+  sttEndpoint: string;
+  sttLocalModel: string;
   /** Welches Modell (Vibe-Alias) für welche Aufgabenstufe. */
   routing: { simple: string; standard: string; complex: string };
   /** Eigene Akzentfarbe (per Chat oder Einstellungen), null = Standard. */
@@ -257,7 +267,7 @@ export const ORCHESTRA_DEFAULTS: OrchestraPrefs = {
   curatorBackend: "vibe",
   curatorModel: "mistral-large-4",
   workers: [
-    { backend: "vibe", model: "glm-5-3", tier: 1 },
+    { backend: "vibe", model: "deepseek-v4-1-flash-1017", tier: 1 },
     { backend: "vibe", model: "mistral-medium-3.5", tier: 2 },
     { backend: "vibe", model: "mistral-large-4", tier: 3 },
   ],
@@ -498,6 +508,37 @@ function appendText(items: Item[], type: "assistant" | "thought" | "user", text:
 }
 
 /** Wendet ein `session/update` von Vibe auf eine Session an. */
+/** Sagt dem Agenten einmal je Session, wo er läuft und was hier anders ist als in seinem Terminal. */
+const briefed = new Set<string>();
+const environmentBrief = (backend: string) => `[Umgebung, nicht vom Nutzer geschrieben, nicht erwähnen]
+Du läufst in Brise, einer Desktop-App mit grafischer Oberfläche, nicht im Terminal von ${backend}. Der Nutzer sieht deine Antworten, Freigabekarten und Einstellungen in Brise.
+- Nenne keine Terminal-Befehle oder Slash-Befehle deines Agenten als Lösung. Konfigurationsänderungen lädt Brise vor der nächsten Nachricht selbst neu; bitte nie darum, /reload zu tippen.
+- MCP-Server bindet Brise beim Start einer Session ein. Fehlt ein Werkzeug, liegt es meist an Einstellungen → Werkzeuge; danach hilft eine neue Session.
+- Roblox Studio: Studio muss laufen, dort unter Assistant → Manage MCP Servers „Enable Studio as MCP server“ an sein. Brise bindet den Server dann automatisch ein. Trage ihn nicht selbst in Konfigurationsdateien ein.
+- Anmeldungen und Schlüssel laufen über Einstellungen → Anbieter, nie über Eingaben im Chat.
+- Behaupte eine Einschränkung nur, wenn du sie geprüft hast, und benenne dann den konkreten Klickweg in Brise.
+[Ende Umgebung]`;
+
+/** Vibe liest seine Konfiguration nur auf /reload neu; Brise erledigt das still vor dem nächsten Prompt. */
+const stamps = new Map<string, number>();
+const muted = new Set<string>();
+async function reloadIfConfigChanged(sid: string, backend?: string) {
+  if (backend !== "vibe") return;
+  const stamp = await invoke<number>("config_stamp").catch(() => 0);
+  const known = stamps.get(sid);
+  stamps.set(sid, stamp);
+  if (known === undefined || known === stamp) return;
+  muted.add(sid);
+  await api.prompt(sid, [{ type: "text", text: "/reload" }]).catch(() => {});
+  muted.delete(sid);
+}
+
+/** Vibes Meldung über gerade nicht aktive optionale Server ist kein Fehler; echte Ausfälle bleiben sichtbar. */
+const isInactiveMcpNotice = (u: any) => {
+  const lines = String(u.content?.text ?? "").split("\n");
+  return u.sessionUpdate === "agent_message_chunk" && lines[0] === "The following MCP servers failed to connect:" && lines.slice(1).every((l) => l.endsWith("not active in this session"));
+};
+
 function applyUpdate(s: Session, u: any): Session {
   switch (u.sessionUpdate) {
     case "agent_message_chunk":
@@ -546,7 +587,7 @@ function applyUpdate(s: Session, u: any): Session {
         usage: { ...s.usage, ...(u._meta ?? {}), used: u.used ?? s.usage.used, size: u.size ?? s.usage.size, cost: u.cost ?? s.usage.cost },
       };
     case "session_info_update":
-      return u.title ? { ...s, title: u.title } : s;
+      return u.title ? { ...s, title: String(u.title).split("[Umgebung")[0].trim() || s.title } : s;
     case "current_mode_update":
       return { ...s, currentMode: u.currentModeId };
     case "config_option_update":
@@ -653,6 +694,12 @@ const initialPrefs: Prefs = {
   agentSearch: true,
   rea: true,
   autoModel: true,
+  simpleMode: false,
+  automations: [],
+  shortcuts: {},
+  sttEngine: "vibe",
+  sttEndpoint: "http://localhost:8080/v1",
+  sttLocalModel: "parakeet-tdt-0.6-v3",
   routing: { simple: "zai-glm-5-3-flash", standard: "mistral-medium-3.5", complex: "mistral-large-4" },
   accent: null,
   assistModel: "mistral-small-latest",
@@ -918,6 +965,11 @@ export const useStore = create<State & Actions>((set, get) => {
     },
 
     async startRecording() {
+      if (get().prefs.sttEngine === "local") {
+        await api.sttStart();
+        set({ transcript: "", recording: true });
+        return;
+      }
       // Vibe braucht für Sprache eine offene Vibe-Session – auch wenn gerade
       // mit einem anderen Backend gearbeitet wird.
       const project = get().activeProject;
@@ -935,6 +987,14 @@ export const useStore = create<State & Actions>((set, get) => {
     },
 
     async stopRecording() {
+      if (get().prefs.sttEngine === "local") {
+        const { sttEndpoint, sttLocalModel, sttLanguage } = get().prefs;
+        set({ recording: false });
+        return api.sttStop(sttEndpoint, sttLocalModel, sttLanguage).catch((e) => {
+          set({ error: `Spracheingabe: ${e}` });
+          return "";
+        });
+      }
       api.meterStop().catch(() => {});
       await api.ext("voice/transcribeStop");
       // Letzte Textstücke kommen kurz nach dem Stopp.
@@ -945,6 +1005,11 @@ export const useStore = create<State & Actions>((set, get) => {
     },
 
     async cancelRecording() {
+      if (get().prefs.sttEngine === "local") {
+        await api.sttCancel();
+        set({ recording: false, transcript: "" });
+        return;
+      }
       api.meterStop().catch(() => {});
       await api.ext("voice/transcribeCancel");
       set({ recording: false, transcript: "" });
@@ -1379,7 +1444,13 @@ export const useStore = create<State & Actions>((set, get) => {
           await get().setOption("model", safe, sid);
         }
       }
-      const blocks: ContentBlock[] = [{ type: "text", text: opts?.prefix ? `${opts.prefix}\n\n${text}` : text }];
+      await reloadIfConfigChanged(sid, get().sessions[sid]?.backend);
+      const brief = briefed.has(sid) ? "" : environmentBrief(get().sessions[sid]?.backend ?? "vibe");
+      briefed.add(sid);
+      const context = [brief, opts?.prefix].filter(Boolean).join("\n\n");
+      // Der Kontext steht hinter dem Text, weil Vibe den Titel aus dem Anfang des Prompts bildet.
+      const blocks: ContentBlock[] = [{ type: "text", text }];
+      if (context) blocks.push({ type: "text", text: context });
       for (const a of attachments) {
         if (a.kind === "document" && zdr) {
           // Mistral OCR speichert nicht garantiert nichts – Vibe liest die Datei selbst.
@@ -1588,6 +1659,7 @@ export const useStore = create<State & Actions>((set, get) => {
     // ---------- Events aus dem Backend ----------
 
     onUpdate(sessionId, update) {
+      if (muted.has(sessionId) || isInactiveMcpNotice(update)) return;
       patchSession(sessionId, (s) => applyUpdate(s, update));
       const s = get().sessions[sessionId];
       if (s && update.sessionUpdate === "available_commands_update") rememberTemplate(s);

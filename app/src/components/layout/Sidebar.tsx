@@ -52,6 +52,7 @@ export async function pickProject() {
 
 export function Sidebar() {
   const projects = useStore((s) => s.projects);
+  const simple = useStore((s) => s.prefs.simpleMode);
   const index = useStore((s) => s.index);
   const sessions = useStore((s) => s.sessions);
   const activeProject = useStore((s) => s.activeProject);
@@ -92,7 +93,7 @@ export function Sidebar() {
   const q = query.trim().toLowerCase();
 
   return (
-    <aside data-brise="sidebar" className="flex h-full w-[272px] shrink-0 flex-col border-r border-line bg-sidebar">
+    <aside data-brise="sidebar" className="flex h-full w-[272px] shrink-0 flex-col bg-sidebar">
       <div className="flex h-12 items-center gap-2 px-3" data-tauri-drag-region>
         <Logo size={22} />
         <span className="font-semibold tracking-tight">Brise</span>
@@ -111,7 +112,7 @@ export function Sidebar() {
         </SideButton>
       </div>
 
-      <ModeSwitch />
+      {!simple && <ModeSwitch />}
 
       {view === "design" ? <DesignList /> : view === "3d" ? <ModelList /> : <>
       <TeamPanel />
@@ -142,13 +143,13 @@ export function Sidebar() {
         </Menu>
       </div>
 
-      {projects.length > 4 && (
+      {projects.length > 12 && (
         <div className="px-3 pb-1">
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Sessions filtern …"
-            className="h-7 w-full rounded-md border border-line bg-bg px-2 text-[0.86em] outline-none placeholder:text-muted focus:border-accent"
+            className="h-7 w-full rounded-md bg-transparent px-2 text-[0.86em] outline-none placeholder:text-muted"
           />
         </div>
       )}
@@ -250,7 +251,6 @@ export function Sidebar() {
                       {expanded[project] ? "Weniger anzeigen" : `${list.length - SHOWN_PER_PROJECT} weitere anzeigen`}
                     </button>
                   )}
-                  {list.length === 0 && !q && <div className="px-2 py-1 text-[0.84em] text-muted">Noch keine Sessions</div>}
                   {!q && <ProjectWork project={project} />}
                 </div>
               )}
