@@ -15,6 +15,7 @@ import { PermissionPrompt, TaskStrip } from "./components/composer/Pinned";
 import { SidePanel } from "./components/panels/SidePanel";
 import { TerminalPanel } from "./components/tools/Terminal";
 import { SettingsView } from "./components/settings/Settings";
+import { Rail } from "./components/layout/Rail";
 import { DraftHero, NoProject, StartScreen } from "./components/screens/Screens";
 import { NewProjectDialog } from "./components/screens/NewProject";
 import { TextPrompt, Tour } from "./components/screens/Tour";
@@ -187,7 +188,7 @@ function PaneView({ index, project, last }: { index: number; project: string; la
     <div className={clsx("flex min-w-0 flex-1 flex-col", !last && "border-r border-line")} onMouseDownCapture={() => focusPane(index)} onFocusCapture={() => focusPane(index)}>
       {showTabs && <TabBar index={index} />}
       {session ? <Conversation session={session} /> : <DraftHero project={project} />}
-      <div className="mx-auto w-full max-w-[820px] px-6 pb-5">
+      <div className="mx-auto w-full max-w-[768px] px-4 pb-4">
         {index === 0 && <NewModelsBanner />}
         {session && <TaskStrip session={session} />}
         {session && <OrchStrip session={session} />}
@@ -217,10 +218,12 @@ export default function App() {
       {phase !== "ready" ? (
         <StartScreen />
       ) : (
-        <div className="flex h-full flex-col">
+        <div className="flex h-full flex-col bg-[var(--shell)]">
           <ComputerBanner />
-          <div className="flex min-h-0 flex-1">
+          <div className="flex min-h-0 flex-1 gap-1.5 py-1.5 pr-1.5">
+          <Rail />
           {sidebarOpen && <Sidebar />}
+          <main className="flex min-w-0 flex-1 overflow-hidden rounded-xl bg-bg shadow-soft">
           {view === "settings" ? (
             <SettingsView />
           ) : view === "design" ? (
@@ -232,6 +235,7 @@ export default function App() {
           ) : (
             <Workspace />
           )}
+          </main>
           </div>
         </div>
       )}

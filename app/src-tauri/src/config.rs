@@ -45,6 +45,41 @@ pub fn read_config() -> CmdResult<ConfigFile> {
     })
 }
 
+/// Bericht für die Fernhilfe: Version, System, Agenten und Log-Ende, ohne Schlüssel.
+#[tauri::command]
+pub fn diagnostics_report(version: String) -> String {
+    let log = vibe_home().and_then(|h| std::fs::read_to_string(h.join("logs/vibe.log")).ok()).unwrap_or_default();
+    let tail: Vec<&str> = log.lines().rev().take(60).collect();
+    let tail: String = tail.into_iter().rev().map(|l| l.chars().take(400).collect::<String>()).collect::<Vec<_>>().join("\n");
+    let report = format!(
+        "Brise {version}\nSystem: {} {}\nKonfiguration vorhanden: {}\nRoblox: {}\n\nLetzte Log-Zeilen:\n{tail}\n",
+        std::env::consts::OS,
+        std::env::consts::ARCH,
+        config_path().is_ok_and(|p| p.exists()),
+        crate::roblox::roblox_status(),
+    );
+    scrub(&report)
+}
+
+/// Entfernt alles, was wie ein Schlüssel aussieht, und den Benutzerpfad.
+fn scrub(text: &str) -> String {
+    let tokens = regex::Regex::new(r"[A-Za-z0-9_\-]{24,}").expect("gültiges Muster");
+    let clean = tokens.replace_all(text, "[entfernt]").into_owned();
+    match dirs::home_dir() {
+        Some(home) => clean.replace(&home.display().to_string(), "~"),
+        None => clean,
+    }
+}
+
+#[cfg(test)]
+mod diagnostics_tests {
+    #[test]
+    fn scrub_entfernt_schluessel() {
+        let clean = super::scrub("key=abcdefghijklmnopqrstuvwxyz012345 ok");
+        assert_eq!(clean, "key=[entfernt] ok");
+    }
+}
+
 /// Änderungszeit von Vibes Konfiguration; so merkt Brise, wann ein /reload fällig ist.
 #[tauri::command]
 pub fn config_stamp() -> u64 {

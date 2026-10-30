@@ -172,6 +172,7 @@ pub fn run() {
             providers::provider_function_model,
             config::read_config,
             config::config_stamp,
+            config::diagnostics_report,
             models::set_model_compact,
             config::write_config_value,
             config::list_project_files,

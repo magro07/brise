@@ -1,8 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { AlertTriangle, ArrowLeft, BookOpen, Bug, CheckCircle2, FileSearch, FolderOpen, FolderPlus, Gauge, GitBranch, Globe, KeyRound, LogIn, RefreshCw, Rocket, ShieldCheck, Sparkles, TestTube2, Wand2 } from "lucide-react";
-import { api, type Suggestion } from "../../lib/acp";
-import { basename, helperProvider, useStore } from "../../lib/store";
+import { AlertTriangle, ArrowLeft, CheckCircle2, FolderOpen, FolderPlus, Globe, KeyRound, LogIn, RefreshCw } from "lucide-react";
+import { basename, useStore } from "../../lib/store";
 import { Button, Logo, Spinner, clsx } from "../ui";
 import { pickProject } from "../layout/Sidebar";
 import { BackendChoice } from "../agents/BackendChoice";
@@ -195,91 +194,24 @@ function LoginStep() {
   );
 }
 
-const FALLBACK: Suggestion[] = [
-  { icon: "explain", title: "Projekt erklären", description: "Struktur und Architektur im Überblick", prompt: "Erkläre mir die Struktur und Architektur dieses Projekts." },
-  { icon: "bug", title: "Fehler finden", description: "Bugs und riskante Stellen aufspüren", prompt: "Suche nach Bugs und riskanten Stellen im Code und schlage Korrekturen vor." },
-  { icon: "test", title: "Tests schreiben", description: "Wichtige Funktionen absichern", prompt: "Schreibe sinnvolle Tests für die wichtigsten Funktionen und führe sie aus." },
-  { icon: "refactor", title: "Aufräumen", description: "Code vereinfachen", prompt: "Finde Code, der sich vereinfachen lässt, und räume ihn auf." },
-];
-
-const ICONS: Record<string, typeof Bug> = {
-  bug: Bug,
-  test: TestTube2,
-  docs: BookOpen,
-  refactor: Wand2,
-  feature: Rocket,
-  explain: FileSearch,
-  git: GitBranch,
-  perf: Gauge,
-  security: ShieldCheck,
-};
-
 export function DraftHero({ project }: { project: string }) {
   const send = useStore((s) => s.send);
-  const index = useStore((s) => s.index);
   const quickActions = useStore((s) => s.quickActions);
-  const [suggestions, setSuggestions] = useState<Suggestion[] | null>(null);
-  const [personal, setPersonal] = useState(false);
-  const [loading, setLoading] = useState(false);
-
-  const load = async (refresh = false) => {
-    setLoading(true);
-    const recent = index.filter((x) => x.cwd === project).slice(0, 8).map((x) => x.title ?? "").filter(Boolean);
-    try {
-      const helper = helperProvider(project);
-      if (!helper) throw new Error("ZDR-Projekt ohne passenden Anbieter");
-      const list = await api.projectSuggestions(project, recent, helper.model, refresh, helper.provider);
-      setSuggestions(list.slice(0, 4));
-      setPersonal(true);
-    } catch {
-      setSuggestions((cur) => cur ?? FALLBACK);
-      setPersonal(false);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    setSuggestions(null);
-    load();
-  }, [project]);
-
   return (
     <div className="flex flex-1 flex-col items-center justify-center overflow-y-auto px-6 pb-6">
-      <h1 className="text-[1.8em] font-semibold tracking-tight">Was bauen wir in {basename(project)}?</h1>
-      <div className="mt-8 w-full max-w-[720px]">
-        <div className="mb-2 flex items-center gap-2 text-[0.78em] text-muted">
-          {personal ? <Sparkles className="h-3.5 w-3.5 text-accent" /> : null}
-          <span>{personal ? "Vorschläge für dieses Projekt" : loading ? "Analysiere das Projekt …" : "Vorschläge"}</span>
-          <div className="flex-1" />
-          <button className="flex items-center gap-1 hover:text-fg disabled:opacity-40" disabled={loading} onClick={() => load(true)}>
-            <RefreshCw className={clsx("h-3 w-3", loading && "animate-spin")} /> Neu
-          </button>
+      <Logo size={44} />
+      <h1 className="mt-5 text-center text-[2em] font-normal tracking-tight">
+        Was sollen wir in <span className="underline decoration-dotted decoration-muted underline-offset-4">{basename(project)}</span> bauen?
+      </h1>
+      {quickActions.length > 0 && (
+        <div className="mt-6 flex flex-wrap justify-center gap-1">
+          {quickActions.map((s, n) => (
+            <button key={n} onClick={() => send(s.prompt, [])} title={s.prompt} className="rounded-full px-3 py-1.5 text-fg-2 transition-colors hover:bg-hover hover:text-fg">
+              {s.title}
+            </button>
+          ))}
         </div>
-        <div className="grid grid-cols-2 gap-2.5">
-          {[...quickActions, ...(suggestions ?? [0, 1, 2, 3].map(() => null))].map((s, n) =>
-            s ? (
-              <button
-                key={n}
-                onClick={() => send(s.prompt, [])}
-                title={s.prompt}
-                className="flex items-start gap-3 rounded-2xl px-4 py-3 text-left transition-colors hover:bg-hover fade-in"
-              >
-                {(() => {
-                  const Icon = ICONS[s.icon] ?? Sparkles;
-                  return <Icon className="mt-0.5 h-4 w-4 shrink-0 text-muted" />;
-                })()}
-                <div className="min-w-0">
-                  <div className="font-medium">{s.title}</div>
-                  <div className="line-clamp-2 text-[0.86em] text-muted">{s.description}</div>
-                </div>
-              </button>
-            ) : (
-              <div key={n} className="h-[74px] animate-pulse rounded-xl border border-line bg-panel" />
-            ),
-          )}
-        </div>
-      </div>
+      )}
     </div>
   );
 }

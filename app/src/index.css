@@ -4,6 +4,7 @@
 
 /* Farbwerte als Variablen, damit Hell/Dunkel über data-theme umschaltet. */
 :root {
+  --shell: #f3f3f3;
   --bg: #ffffff;
   --sidebar: #f9f9f9;
   --panel: #fcfcfc;
@@ -32,6 +33,7 @@
 }
 
 :root[data-theme="dark"] {
+  --shell: #101010;
   --bg: #181818;
   --sidebar: #131313;
   --panel: #1c1c1c;
@@ -405,4 +407,49 @@ button {
   display: inline-block;
   white-space: pre;
   animation: word-in 0.35s ease-out both;
+}
+
+/* Denkstufen-Regler: Verlauf von Blau nach Violett, ganz oben mit funkelnden Punkten. */
+.effort-fill {
+  background-image: linear-gradient(90deg, #3a86f5, #6d62ee 60%, #a95ff7);
+}
+.effort-fill::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image:
+    radial-gradient(1px 1px at 12% 30%, #fff, transparent),
+    radial-gradient(1px 1px at 27% 70%, #fff, transparent),
+    radial-gradient(1.5px 1.5px at 41% 40%, #fff, transparent),
+    radial-gradient(1px 1px at 58% 75%, #fff, transparent),
+    radial-gradient(1.5px 1.5px at 72% 25%, #fff, transparent),
+    radial-gradient(1px 1px at 88% 60%, #fff, transparent);
+  background-size: 120px 100%;
+  animation: effort-stars 6s linear infinite;
+  opacity: 0.8;
+}
+.effort-top {
+  background-image: linear-gradient(90deg, #3d3fc9, #7a55ec 45%, #b06bfa 70%, #7a55ec);
+  background-size: 200% 100% !important;
+  animation: effort-flow 5s ease-in-out infinite alternate;
+}
+.effort-top::after {
+  opacity: 1;
+  animation-duration: 3s;
+}
+@keyframes effort-stars {
+  to {
+    background-position: 120px 0;
+  }
+}
+@keyframes effort-flow {
+  to {
+    background-position: 100% 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .effort-fill,
+  .effort-fill::after {
+    animation: none;
+  }
 }

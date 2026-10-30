@@ -11,11 +11,6 @@ export type ShortcutAction = { id: string; label: string; group: string; keys: s
 const st = () => useStore.getState();
 /** Aktionen, die es nur als Knopf gibt, lösen genau diesen Knopf aus. */
 const press = (selector: string) => document.querySelector<HTMLElement>(selector)?.click();
-/** Menüs öffnen beim Herunterdrücken, nicht beim Klick. */
-const openMenu = (selector: string) => {
-  const el = document.querySelector<HTMLElement>(selector);
-  el?.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, button: 0, ctrlKey: false }));
-};
 const pressText = (text: string) => [...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === text)?.click();
 const stepThinking = (dir: number) => {
   const s = st().activeSessionId ? st().sessions[st().activeSessionId!] : undefined;
@@ -63,8 +58,8 @@ export const ACTIONS: ShortcutAction[] = [
   { id: "next", label: "Nächster Tab", group: "Tabs", keys: ["mod+tab"], run: () => cycle(1) },
   { id: "prev", label: "Vorheriger Tab", group: "Tabs", keys: ["mod+shift+tab"], run: () => cycle(-1) },
   { id: "focus", label: "Ins Eingabefeld", group: "Eingabe", keys: ["mod+l"], run: () => document.querySelector<HTMLElement>("textarea")?.focus() },
-  { id: "model", label: "Modell wählen", group: "Eingabe", keys: ["mod+m"], run: () => openMenu('[aria-label="Modell"]') },
-  { id: "thinking", label: "Denkstufe wählen", group: "Eingabe", keys: ["mod+shift+t"], run: () => openMenu('[aria-label="Denkstufe"]') },
+  { id: "model", label: "Modell wählen", group: "Eingabe", keys: ["mod+m"], run: () => press('[aria-label="Modell"]') },
+  { id: "thinking", label: "Denkstufe wählen", group: "Eingabe", keys: ["mod+shift+t"], run: () => press('[aria-label="Modell"]') },
   { id: "thinkUp", label: "Denkstufe erhöhen", group: "Eingabe", keys: ["mod+alt+arrowup"], run: () => stepThinking(1) },
   { id: "thinkDown", label: "Denkstufe senken", group: "Eingabe", keys: ["mod+alt+arrowdown"], run: () => stepThinking(-1) },
   { id: "voice", label: "Spracheingabe", group: "Eingabe", keys: ["mod+shift+m"], run: () => press('[aria-label="Spracheingabe"]') },

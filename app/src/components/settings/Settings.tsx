@@ -1,3 +1,5 @@
+import { useCollab } from "../../lib/collab";
+import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { AutomationsCard } from "./AutomationsCard";
@@ -515,6 +517,7 @@ export function SettingsView() {
           <fieldset disabled={access !== "edit"} className="m-0 min-w-0 border-0 p-0">
           {section === "general" && (
             <>
+              <RemoteHelpCard />
               <Card title="Darstellung">
                 <Row
                   title="Farbschema"
@@ -1380,6 +1383,31 @@ const COMPACT_PRESETS = [
   ["150000", "Sparsam (150k)"],
   ["80000", "Sehr sparsam (80k)"],
 ];
+
+/** Fernhilfe: Bericht schicken und die laufende Session teilen; der Agent läuft dabei beim Hilfesuchenden. */
+function RemoteHelpCard() {
+  const sessionId = useStore((s) => s.activeSessionId);
+  const [copied, setCopied] = useState(false);
+  return (
+    <Card title="Fernhilfe" description="Der Bericht enthält Version, System und die letzten Log-Zeilen, ohne Schlüssel. Beim Teilen sieht die helfende Person die Session live und kann Prompts vorschlagen.">
+      <Row
+        title="Diagnosebericht"
+        description="Kopiert den Bericht, damit du ihn schicken kannst."
+        control={
+          <Button onClick={async () => {
+            await navigator.clipboard.writeText(await invoke<string>("diagnostics_report", { version: await getVersion() }));
+            setCopied(true);
+          }}>{copied ? "Kopiert" : "Bericht kopieren"}</Button>
+        }
+      />
+      <Row
+        title="Session teilen"
+        description={sessionId ? "Erzeugt einen Einladungslink für die offene Session." : "Öffne zuerst eine Session."}
+        control={<Button disabled={!sessionId} onClick={() => useCollab.setState({ shareFor: sessionId })}>Teilen</Button>}
+      />
+    </Card>
+  );
+}
 
 function EfficiencyCard({ values, write }: { values: Record<string, unknown>; write: (k: string[], v: unknown) => Promise<void> }) {
   const current = values.auto_compact_threshold == null ? "" : String(values.auto_compact_threshold);

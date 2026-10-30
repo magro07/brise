@@ -119,6 +119,8 @@ dazu `brise-anpassen`, `council`, `deep-research`, `design-mode` und `3d-mode`. 
 
 ## Neu in 0.4
 
+- **Neue Oberfläche:** Icon-Leiste, Karten, flache Listen und ein gemeinsamer Regler für Modell und Denkstufe.
+- **Fernhilfe:** Einstellungen → Allgemein. Diagnosebericht ohne Schlüssel kopieren und die Session teilen.
 - **Einfacher Modus:** Einstellungen → Allgemein blendet alles aus, was man zum Loslegen nicht braucht.
 - **Tastenkürzel:** Alle Aktionen sind frei belegbar, mit Tastenfolgen, Konfliktanzeige, Import und Export. Denkstufe rauf und runter, Tabs per `Strg+Alt+1…5`, Spracheingabe zum Halten.
 - **YouTube-Links:** Ein Link im Prompt bringt Titel, Beschreibung und Transkript automatisch mit, bei jedem Agenten.

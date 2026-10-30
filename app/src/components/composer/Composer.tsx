@@ -3,7 +3,7 @@ import { runGoal } from "../../lib/goals";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
-import { ArrowUp, AtSign, Box, FileText, Folder, Image, KeyRound, MessageSquare, Mic, Palette, Paperclip, ShieldCheck, Slash, Square, X, type LucideIcon } from "lucide-react";
+import { ArrowUp, AtSign, Box, FileText, Folder, Image, KeyRound, MessageSquare, Mic, Palette, Plus, ShieldCheck, Slash, Square, X, type LucideIcon } from "lucide-react";
 import { basename, isZdr, useStore, type Attachment, type Session, type SlashCommand } from "../../lib/store";
 import { cortecs, type SensitiveVerdict } from "../../lib/cortecs";
 import { SensitiveNotice } from "./SensitiveNotice";
@@ -11,9 +11,9 @@ import { SecretCreate } from "../secrets/SecretPrompt";
 import { secretsApi, type SecretFound } from "../../lib/secrets";
 import { IconButton, Tip, clsx } from "../ui";
 import { VoiceRecorder } from "./VoiceRecorder";
-import { ContextMeter, ModePicker, OptionPicker, ThinkingPicker } from "./Pickers";
+import { ContextMeter, ModelEffortPicker, ModePicker } from "./Pickers";
+import { useVoiceAvailable } from "../../lib/backends";
 import { BackendPicker } from "../agents/BackendPicker";
-import { BACKEND_SHORT, useSessionBackend, useVoiceAvailable } from "../../lib/backends";
 import { REF_LABEL, resolveReferences, useReferences, type ComposerRef, type RefKind } from "./references";
 
 const IMAGE_EXT = /\.(png|jpe?g|gif|webp)$/i;
@@ -111,7 +111,6 @@ export function Composer({ session, project, focused = true, onSend, onCancel, o
   const composerInsert = useStore((s) => s.composerInsert);
   const { startRecording, stopRecording, cancelRecording, set: setStore } = useStore.getState();
   const [voiceBusy, setVoiceBusy] = useState(false);
-  const backend = useSessionBackend(session);
   const voice = useVoiceAvailable();
   // Bei mehreren Bereichen gehören Drop, Einfügen und Sprache nur dem fokussierten.
   const focusedRef = useRef(focused);
@@ -422,9 +421,15 @@ export function Composer({ session, project, focused = true, onSend, onCancel, o
         </div>
       )}
 
+      {!session && !simple && (
+        <div className="mx-3 flex h-9 items-center gap-1.5 rounded-t-2xl bg-hover px-3 text-[0.92em] text-fg-2">
+          <Folder className="h-4 w-4 text-muted" />
+          <span className="truncate">{basename(project)}</span>
+        </div>
+      )}
       <div
         className={clsx(
-          "rounded-3xl border bg-elev shadow-soft transition-colors",
+          "relative rounded-3xl border bg-elev shadow-soft transition-colors",
           dragging ? "border-accent bg-accent-soft" : "border-line-strong",
         )}
       >
@@ -477,7 +482,7 @@ export function Composer({ session, project, focused = true, onSend, onCancel, o
               ? "Subagenten-Verläufe sind nur lesbar"
               : session
                 ? "Antworten, nachfragen oder nächste Aufgabe …"
-                : `Was soll ${BACKEND_SHORT[backend] ?? backend} in ${basename(project)} tun?  @ für Dateien, / für Befehle`)
+                : "Leg einfach los")
           }
           onChange={(e) => {
             setText(e.target.value);
@@ -511,7 +516,7 @@ export function Composer({ session, project, focused = true, onSend, onCancel, o
         />
         <div className="flex items-center gap-0.5 px-2 pb-2">
           <IconButton label="Dateien oder Bilder anhängen" onClick={attach} disabled={disabled}>
-            <Paperclip className="h-4 w-4" />
+            <Plus className="h-[18px] w-[18px]" />
           </IconButton>
           {!simple && <IconButton label="Secret anlegen (Passwort, API-Key, Token) – der Agent sieht nur den Platzhalter" onClick={() => setSecretPanel(secretPanel ? null : {})} disabled={disabled}>
             <KeyRound className="h-4 w-4" />
@@ -521,8 +526,6 @@ export function Composer({ session, project, focused = true, onSend, onCancel, o
             <>
               <BackendPicker session={session} />
               <ModePicker session={session} />
-              <OptionPicker session={session} id="model" />
-              <ThinkingPicker session={session} />
             </>
           )}
           {zdrActive && (
@@ -534,6 +537,9 @@ export function Composer({ session, project, focused = true, onSend, onCancel, o
           )}
           <div className="flex-1" />
           {!simple && <ContextMeter session={session} />}
+          {!simple && (
+            <ModelEffortPicker session={session} />
+          )}
           {(voice || localStt) && <Tip label={recording ? "Aufnahme beenden und übernehmen" : localStt ? "Spracheingabe (lokal)" : "Spracheingabe (Voxtral)"}>
             <button
               onClick={toggleVoice}

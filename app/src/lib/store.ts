@@ -508,6 +508,9 @@ function appendText(items: Item[], type: "assistant" | "thought" | "user", text:
 }
 
 /** Wendet ein `session/update` von Vibe auf eine Session an. */
+/** Der Umgebungshinweis gehört nicht in Titel und geladene Verläufe. */
+const withoutBrief = (text: string) => text.split("[Umgebung")[0].trimEnd();
+
 /** Sagt dem Agenten einmal je Session, wo er läuft und was hier anders ist als in seinem Terminal. */
 const briefed = new Set<string>();
 const environmentBrief = (backend: string) => `[Umgebung, nicht vom Nutzer geschrieben, nicht erwähnen]
@@ -547,7 +550,8 @@ function applyUpdate(s: Session, u: any): Session {
       return { ...s, items: appendText(s.items, "thought", contentText(u.content)) };
     case "user_message_chunk":
       // Eigene Nachrichten zeigen wir sofort selbst – nur beim Laden übernehmen.
-      return s.replaying ? { ...s, items: appendText(s.items, "user", contentText(u.content)) } : s;
+      if (!s.replaying) return s;
+      return withoutBrief(contentText(u.content)) ? { ...s, items: appendText(s.items, "user", withoutBrief(contentText(u.content))) } : s;
     case "tool_call":
     case "tool_call_update": {
       const idx = s.items.findIndex((i) => i.type === "tool" && i.toolCallId === u.toolCallId);
@@ -587,7 +591,7 @@ function applyUpdate(s: Session, u: any): Session {
         usage: { ...s.usage, ...(u._meta ?? {}), used: u.used ?? s.usage.used, size: u.size ?? s.usage.size, cost: u.cost ?? s.usage.cost },
       };
     case "session_info_update":
-      return u.title ? { ...s, title: String(u.title).split("[Umgebung")[0].trim() || s.title } : s;
+      return u.title ? { ...s, title: withoutBrief(String(u.title)) || s.title } : s;
     case "current_mode_update":
       return { ...s, currentMode: u.currentModeId };
     case "config_option_update":
@@ -1246,7 +1250,7 @@ export const useStore = create<State & Actions>((set, get) => {
       try {
         const r = await api.listSessions();
         // Sessions des Design- und 3D-Modus gehören zu keinem Projekt.
-        const index = (r.sessions ?? []).filter((s) => !isDesignPath(s.cwd) && !isModelPath(s.cwd) && !isBenchPath(s.cwd)).sort((a, b) => (b.updatedAt ?? "").localeCompare(a.updatedAt ?? ""));
+        const index = (r.sessions ?? []).filter((s) => !isDesignPath(s.cwd) && !isModelPath(s.cwd) && !isBenchPath(s.cwd)).sort((a, b) => (b.updatedAt ?? "").localeCompare(a.updatedAt ?? "")).map((s) => ({ ...s, title: s.title ? withoutBrief(s.title) : s.title }));
         const { projects, hiddenProjects } = get();
         const known = new Set(projects);
         // Worktrees von Untersessions sind keine eigenen Projekte.

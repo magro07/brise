@@ -3,7 +3,6 @@ import { shortcut } from "../../lib/platform";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import {
   Columns2,
-  ChevronRight,
   EyeOff,
   Folder,
   FolderOpen,
@@ -13,8 +12,6 @@ import {
   MoreHorizontal,
   PanelLeftClose,
   Plus,
-  Search,
-  Settings,
   SquarePen,
   Trash2,
   Crown,
@@ -28,12 +25,11 @@ import {
 } from "lucide-react";
 import { basename, useStore, type Session } from "../../lib/store";
 import { BackendBadge } from "../agents/BackendPicker";
-import { relativeTime } from "../../lib/format";
-import { IconButton, Kbd, Logo, Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger, Spinner, clsx } from "../ui";
+import { IconButton, Kbd, Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger, Spinner, clsx } from "../ui";
 import { confirmAction } from "../../lib/dialogs";
 import { useCollab } from "../../lib/collab";
 import { TeamPanel } from "../collab/TeamPanel";
-import { DesignList, ModeSwitch } from "../design/Sidebar";
+import { DesignList } from "../design/Sidebar";
 import { newDesign } from "../design/DesignView";
 import { ModelList, newModel } from "../model3d/Sidebar";
 import { ProjectWork } from "../workbench/parts";
@@ -43,7 +39,8 @@ import { useProfile } from "../../lib/profile";
 import { useProviders } from "../../lib/providers";
 import { Avatar } from "../profile/ProfileDialog";
 
-const SHOWN_PER_PROJECT = 6;
+const SHOWN_PROJECTS = 5;
+const SHOWN_RECENT = 30;
 
 export async function pickProject() {
   const picked = await openDialog({ directory: true, title: "Projektordner wählen" });
@@ -52,16 +49,13 @@ export async function pickProject() {
 
 export function Sidebar() {
   const projects = useStore((s) => s.projects);
-  const simple = useStore((s) => s.prefs.simpleMode);
   const index = useStore((s) => s.index);
   const sessions = useStore((s) => s.sessions);
   const activeProject = useStore((s) => s.activeProject);
   const activeSessionId = useStore((s) => s.activeSessionId);
   const view = useStore((s) => s.view);
-  const { newDraft, selectSession, removeProject, deleteSession, setView, set } = useStore.getState();
-  const [query, setQuery] = useState("");
-  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
-  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const { newDraft, selectSession, removeProject, deleteSession, set } = useStore.getState();
+  const [moreProjects, setMoreProjects] = useState(false);
   // Untersessions stehen unter ihrer Master-Session, nicht im Projekt.
   const subs = useOrchestra((s) => s.book.subs);
 
@@ -90,187 +84,120 @@ export function Sidebar() {
     return map;
   }, [index, sessions, subs]);
 
-  const q = query.trim().toLowerCase();
+  const recent = useMemo(() => [...byProject.values()].flat().sort((x, y) => (y.updatedAt ?? "").localeCompare(x.updatedAt ?? "")), [byProject]);
+  const shownProjects = moreProjects ? projects : projects.slice(0, SHOWN_PROJECTS);
 
   return (
-    <aside data-brise="sidebar" className="flex h-full w-[272px] shrink-0 flex-col bg-sidebar">
-      <div className="flex h-12 items-center gap-2 px-3" data-tauri-drag-region>
-        <Logo size={22} />
-        <span className="font-semibold tracking-tight">Brise</span>
-        <div className="flex-1" />
+    <aside data-brise="sidebar" className="flex h-full w-[288px] shrink-0 flex-col overflow-hidden rounded-xl bg-bg shadow-soft">
+      <div className="flex h-12 items-center gap-1 px-4" data-tauri-drag-region>
+        <span className="flex-1 text-[1.1em] font-semibold tracking-tight">Brise</span>
         <IconButton label={`Seitenleiste ausblenden (${shortcut("B")})`} onClick={() => set({ sidebarOpen: false })}>
           <PanelLeftClose className="h-4 w-4" />
         </IconButton>
       </div>
 
-      <div className="space-y-0.5 px-2">
+      <div className="px-2">
         <SideButton icon={<SquarePen className="h-4 w-4" />} onClick={() => newDraft()} hint={shortcut("N")}>
           Neue Session
         </SideButton>
-        <SideButton icon={<Search className="h-4 w-4" />} onClick={() => set({ paletteOpen: true })} hint={shortcut("K")}>
-          Suchen und Befehle
-        </SideButton>
       </div>
-
-      {!simple && <ModeSwitch />}
 
       {view === "design" ? <DesignList /> : view === "3d" ? <ModelList /> : <>
       <TeamPanel />
 
-      <div className="mt-3 flex items-center px-4 pb-1 text-[0.78em] font-medium uppercase tracking-wide text-muted">
-        <span className="flex-1">Projekte</span>
-        <Menu>
-          <MenuTrigger asChild>
-            <button className="flex h-6 w-6 items-center justify-center rounded-md text-muted hover:bg-hover hover:text-fg" aria-label="Projekt hinzufügen" data-tour="add-project">
-              <FolderPlus className="h-3.5 w-3.5" />
-            </button>
-          </MenuTrigger>
-          <MenuContent align="end">
-            <MenuItem icon={<FolderPlus />} onSelect={() => set({ newProjectOpen: true })}>
-              Neues Projekt anlegen …
-            </MenuItem>
-            <MenuItem icon={<FolderOpen />} onSelect={pickProject}>
-              Vorhandenen Ordner öffnen …
-            </MenuItem>
-            <MenuSeparator />
-            <MenuItem icon={<LogIn />} onSelect={() => useCollab.setState({ joinOpen: true })}>
-              Einer Session beitreten …
-            </MenuItem>
-            <MenuItem icon={<Users />} onSelect={() => useCollab.setState({ teamOpen: true })}>
-              Team anlegen oder beitreten …
-            </MenuItem>
-          </MenuContent>
-        </Menu>
-      </div>
-
-      {projects.length > 12 && (
-        <div className="px-3 pb-1">
-          <input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Sessions filtern …"
-            className="h-7 w-full rounded-md bg-transparent px-2 text-[0.86em] outline-none placeholder:text-muted"
-          />
+      <nav className="mt-2 flex-1 overflow-y-auto px-2 pb-2">
+        <div className="flex h-8 items-center pl-2.5 pr-1 text-muted">
+          <span className="flex-1">Projekte</span>
+          <Menu>
+            <MenuTrigger asChild>
+              <button className="flex h-6 w-6 items-center justify-center rounded-md hover:bg-hover hover:text-fg" aria-label="Projekt hinzufügen" data-tour="add-project">
+                <Plus className="h-3.5 w-3.5" />
+              </button>
+            </MenuTrigger>
+            <MenuContent align="end">
+              <MenuItem icon={<FolderPlus />} onSelect={() => set({ newProjectOpen: true })}>
+                Neues Projekt anlegen …
+              </MenuItem>
+              <MenuItem icon={<FolderOpen />} onSelect={pickProject}>
+                Vorhandenen Ordner öffnen …
+              </MenuItem>
+              <MenuSeparator />
+              <MenuItem icon={<LogIn />} onSelect={() => useCollab.setState({ joinOpen: true })}>
+                Einer Session beitreten …
+              </MenuItem>
+              <MenuItem icon={<Users />} onSelect={() => useCollab.setState({ teamOpen: true })}>
+                Team anlegen oder beitreten …
+              </MenuItem>
+            </MenuContent>
+          </Menu>
         </div>
-      )}
-
-      <nav className="flex-1 overflow-y-auto px-2 pb-2">
         {projects.length === 0 && (
-          <button
-            onClick={pickProject}
-            className="mt-2 flex w-full flex-col items-center gap-2 rounded-xl border border-dashed border-line-strong px-4 py-6 text-center text-muted hover:border-accent hover:text-fg"
-          >
-            <FolderOpen className="h-5 w-5" />
-            <span className="text-[0.9em]">Ersten Projektordner öffnen</span>
+          <button onClick={pickProject} className="flex h-8 w-full items-center gap-2.5 rounded-lg px-2.5 text-left text-muted hover:bg-hover hover:text-fg">
+            <FolderOpen className="h-4 w-4" /> Ersten Projektordner öffnen
           </button>
         )}
-        {projects.map((project) => {
-          const all = byProject.get(project) ?? [];
-          const list = q ? all.filter((s) => s.title.toLowerCase().includes(q)) : all;
-          if (q && list.length === 0 && !basename(project).toLowerCase().includes(q)) return null;
-          const isCollapsed = collapsed[project] && !q;
-          const shown = expanded[project] || q ? list : list.slice(0, SHOWN_PER_PROJECT);
-          const isActiveProject = project === activeProject && !activeSessionId && view === "chat";
-          return (
-            <div key={project} className="mb-1">
-              <div
-                className={clsx(
-                  "group flex h-8 items-center gap-1 rounded-lg pl-1 pr-1 text-fg-2 hover:bg-hover",
-                  isActiveProject && "bg-active text-fg",
-                )}
-                title={project}
-              >
-                <button
-                  className="flex h-6 w-5 items-center justify-center text-muted"
-                  onClick={() => setCollapsed((c) => ({ ...c, [project]: !c[project] }))}
-                  aria-label={isCollapsed ? "Aufklappen" : "Zuklappen"}
-                >
-                  <ChevronRight className={clsx("h-3.5 w-3.5 transition-transform", !isCollapsed && "rotate-90")} />
-                </button>
-                <button className="flex min-w-0 flex-1 items-center gap-2 text-left" onClick={() => newDraft(project)}>
-                  <Folder className="h-4 w-4 shrink-0 text-muted" />
-                  <span className="truncate font-medium">{basename(project)}</span>
-                </button>
-                <div className="hidden items-center group-hover:flex">
-                  <IconButton label={`Neue Session in ${basename(project)}`} size="sm" onClick={() => newDraft(project)}>
-                    <Plus className="h-3.5 w-3.5" />
-                  </IconButton>
-                  <Menu>
-                    <MenuTrigger asChild>
-                      <button className="flex h-6 w-6 items-center justify-center rounded-md text-muted hover:bg-active hover:text-fg" aria-label="Projektmenü">
-                        <MoreHorizontal className="h-3.5 w-3.5" />
-                      </button>
-                    </MenuTrigger>
-                    <MenuContent>
-                      <MenuItem icon={<Plus />} onSelect={() => newDraft(project)}>
-                        Neue Session
-                      </MenuItem>
-                      <MenuItem icon={<Crown />} onSelect={() => startCurator(project)}>
-                        Neue Kurator-Session
-                      </MenuItem>
-                      <MenuItem icon={<Palette />} onSelect={() => newDesign(undefined, project)}>
-                        Neues Design im Projekt
-                      </MenuItem>
-                      <MenuItem icon={<Box />} onSelect={() => newModel(undefined, project)}>
-                        Neues 3D-Modell im Projekt
-                      </MenuItem>
-                      <MenuSeparator />
-                      <MenuItem icon={<EyeOff />} onSelect={() => removeProject(project)}>
-                        Aus der Liste entfernen
-                      </MenuItem>
-                    </MenuContent>
-                  </Menu>
-                </div>
-              </div>
-              {!isCollapsed && (
-                <div className="ml-[18px] border-l border-line pl-1.5">
-                  {shown.map((s) => (
-                    <div key={s.id}>
-                    <SessionRow
-                      key={s.id}
-                      id={s.id}
-                      title={s.title}
-                      backend={s.backend}
-                      time={relativeTime(s.updatedAt)}
-                      active={s.id === activeSessionId && view === "chat"}
-                      live={sessions[s.id]}
-                      onClick={() => selectSession(s.id)}
-                      onSplit={() => useStore.getState().splitWith(s.id)}
-                      onDelete={async () => {
-                        if (await confirmAction(`Session „${s.title}“ endgültig löschen?`, true)) deleteSession(s.id);
-                      }}
-                    />
-                    <SubRows master={s.id} activeId={view === "chat" ? activeSessionId : null} />
-                    </div>
-                  ))}
-                  {!q && list.length > SHOWN_PER_PROJECT && (
-                    <button
-                      className="h-7 w-full rounded-md px-2 text-left text-[0.84em] text-muted hover:bg-hover hover:text-fg"
-                      onClick={() => setExpanded((e) => ({ ...e, [project]: !e[project] }))}
-                    >
-                      {expanded[project] ? "Weniger anzeigen" : `${list.length - SHOWN_PER_PROJECT} weitere anzeigen`}
-                    </button>
-                  )}
-                  {!q && <ProjectWork project={project} />}
-                </div>
-              )}
+        {shownProjects.map((project) => (
+          <div key={project}>
+            <div className={clsx("group flex h-8 items-center rounded-lg pr-1 text-fg-2 hover:bg-hover", project === activeProject && !activeSessionId && "bg-active text-fg")} title={project}>
+              <button className="flex h-full min-w-0 flex-1 items-center gap-2.5 pl-2.5 text-left" onClick={() => newDraft(project)}>
+                <Folder className="h-4 w-4 shrink-0 text-muted" />
+                <span className="truncate">{basename(project)}</span>
+              </button>
+              <Menu>
+                <MenuTrigger asChild>
+                  <button className="hidden h-6 w-6 items-center justify-center rounded-md text-muted hover:bg-active hover:text-fg group-hover:flex" aria-label="Projektmenü">
+                    <MoreHorizontal className="h-3.5 w-3.5" />
+                  </button>
+                </MenuTrigger>
+                <MenuContent>
+                  <MenuItem icon={<Plus />} onSelect={() => newDraft(project)}>
+                    Neue Session
+                  </MenuItem>
+                  <MenuItem icon={<Crown />} onSelect={() => startCurator(project)}>
+                    Neue Kurator-Session
+                  </MenuItem>
+                  <MenuItem icon={<Palette />} onSelect={() => newDesign(undefined, project)}>
+                    Neues Design im Projekt
+                  </MenuItem>
+                  <MenuItem icon={<Box />} onSelect={() => newModel(undefined, project)}>
+                    Neues 3D-Modell im Projekt
+                  </MenuItem>
+                  <MenuSeparator />
+                  <MenuItem icon={<EyeOff />} onSelect={() => removeProject(project)}>
+                    Aus der Liste entfernen
+                  </MenuItem>
+                </MenuContent>
+              </Menu>
             </div>
-          );
-        })}
+            {project === activeProject && <ProjectWork project={project} />}
+          </div>
+        ))}
+        {projects.length > SHOWN_PROJECTS && (
+          <button className="h-8 w-full rounded-lg px-2.5 text-left text-muted hover:bg-hover hover:text-fg" onClick={() => setMoreProjects(!moreProjects)}>
+            {moreProjects ? "Weniger anzeigen" : "Mehr anzeigen"}
+          </button>
+        )}
+
+        {recent.length > 0 && <div className="mt-3 flex h-8 items-center pl-2.5 text-muted">Letzte</div>}
+        {recent.slice(0, SHOWN_RECENT).map((s) => (
+          <div key={s.id}>
+            <SessionRow
+              id={s.id}
+              title={s.title}
+              backend={s.backend}
+              active={s.id === activeSessionId && view === "chat"}
+              live={sessions[s.id]}
+              onClick={() => selectSession(s.id)}
+              onSplit={() => useStore.getState().splitWith(s.id)}
+              onDelete={async () => {
+                if (await confirmAction(`Session „${s.title}“ endgültig löschen?`, true)) deleteSession(s.id);
+              }}
+            />
+            <SubRows master={s.id} activeId={view === "chat" ? activeSessionId : null} />
+          </div>
+        ))}
       </nav>
       </>}
-
-      <div className="border-t border-line p-2" data-tour="settings">
-        <SideButton
-          icon={<Settings className="h-4 w-4" />}
-          onClick={() => setView(view === "settings" ? "chat" : "settings")}
-          active={view === "settings"}
-          hint={shortcut(",")}
-        >
-          Einstellungen
-        </SideButton>
-        <AccountFooter />
-      </div>
     </aside>
   );
 }
@@ -281,8 +208,8 @@ function agentLabel(id: string, title: string, label?: string | null) {
   return { vibe: "Vibe", claude: "Claude Code", codex: "Codex", gemini: "Gemini" }[id] ?? title;
 }
 
-/** Unten links: Brise-Konto, verbundene Agenten und Anbieter, Menü. */
-function AccountFooter() {
+/** Unten in der Leiste: Brise-Konto, verbundene Agenten und Anbieter, Menü. */
+export function AccountMenu() {
   const profile = useProfile((s) => s.profile);
   const agents = useStore((s) => s.agents);
   const auth = useStore((s) => s.auth);
@@ -296,17 +223,10 @@ function AccountFooter() {
   return (
     <Menu>
       <MenuTrigger asChild>
-        <button className="mt-1 flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left hover:bg-hover" data-testid="account-footer">
+        <button className="mt-1 flex h-9 w-9 items-center justify-center rounded-lg hover:bg-hover" title={`${profile?.name ?? "Konto anlegen"} · ${summary}${keys ? ` · ${keys} Schlüssel` : ""}`} data-testid="account-footer">
           <span className="relative">
-            <Avatar name={profile?.name ?? "?"} color={profile?.color} avatar={profile?.avatar} size={28} className={profile ? "" : "!bg-hover !text-muted"} />
-            <span className={clsx("absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border-2 border-sidebar", connected.length ? "bg-ok" : "bg-muted")} />
-          </span>
-          <span className="min-w-0 flex-1 leading-tight">
-            <span className="block truncate text-[0.9em]">{profile?.name ?? "Konto anlegen"}</span>
-            <span className="block truncate text-[0.78em] text-muted">
-              {summary}
-              {keys ? ` · ${keys} Schlüssel` : ""}
-            </span>
+            <Avatar name={profile?.name ?? "?"} color={profile?.color} avatar={profile?.avatar} size={26} className={profile ? "" : "!bg-hover !text-muted"} />
+            <span className={clsx("absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border-2 border-[var(--shell)]", connected.length ? "bg-ok" : "bg-muted")} />
           </span>
         </button>
       </MenuTrigger>
@@ -376,7 +296,6 @@ function SideButton({
 function SessionRow({
   title,
   backend,
-  time,
   active,
   live,
   onClick,
@@ -386,7 +305,6 @@ function SessionRow({
   id: string;
   title: string;
   backend?: string;
-  time: string;
   active: boolean;
   live?: Session;
   onClick: () => void;
@@ -397,7 +315,7 @@ function SessionRow({
   return (
     <div
       className={clsx(
-        "group flex h-8 items-center gap-2 rounded-lg pl-2 pr-1 text-[0.92em] text-fg-2 hover:bg-hover",
+        "group flex h-8 items-center gap-2 rounded-lg pl-2.5 pr-1 text-fg-2 hover:bg-hover",
         active && "bg-active text-fg",
       )}
     >
@@ -407,7 +325,6 @@ function SessionRow({
         <span className="truncate">{title}</span>
         {backend && <BackendBadge backend={backend} />}
       </button>
-      <span className="text-[0.78em] text-muted group-hover:hidden">{time}</span>
       <Menu>
         <MenuTrigger asChild>
           <button
