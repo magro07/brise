@@ -2,6 +2,7 @@ import { handleShortcut } from "./lib/shortcuts";
 import { Suspense, lazy, useEffect, useState } from "react";
 import { Sparkles } from "lucide-react";
 import { listen } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { api, type PermissionRequest } from "./lib/acp";
 import { useActiveSession, useStore } from "./lib/store";
 import { Button, TooltipProvider, clsx } from "./components/ui";
@@ -65,6 +66,12 @@ function useBackend() {
       if (disposed) fns.forEach((f) => f());
       else unlisten.push(...fns);
     });
+    // Laufende Turns sauber beenden: Ein abgewürgter Turn blockiert später das Laden.
+    const stopClose = getCurrentWindow().onCloseRequested(async () => {
+      const running = Object.values(s().sessions).filter((x) => x.running);
+      await Promise.allSettled(running.map((x) => api.cancel(x.id)));
+      if (running.length) await new Promise((done) => setTimeout(done, 1000));
+    });
     s().connect(true);
     const stopCollab = initCollab();
     const stopSecrets = initSecrets();
@@ -79,6 +86,7 @@ function useBackend() {
     return () => {
       disposed = true;
       unlisten.forEach((f) => f());
+      void stopClose.then((f) => f());
       stopCollab();
       stopSecrets();
       stopPolicy();
@@ -154,7 +162,9 @@ function Workspace() {
     if (project && phase === "ready" && !profileDialog && st.prefs.tourDone && st.tourStep == null) {
       let stale = false;
       void getVersion().then((v) => {
-        if (stale || v === useStore.getState().prefs.seenVersion) return;
+        // Die Tour gehört zur Reihe 0.4; Fehlerbehebungen zeigen sie nicht erneut.
+        const line = (x: string) => x.split(".").slice(0, 2).join(".");
+        if (stale || line(v) === line(useStore.getState().prefs.seenVersion)) return;
         useStore.setState({ tourKind: "new", tourStep: 0 });
       });
       return () => {

@@ -8,7 +8,8 @@ const lastTurn = (sessionId: string) => {
   const items = useStore.getState().sessions[sessionId]?.items ?? [];
   const turn = [...items].reverse().find((i) => i.type === "turn");
   const answer = [...items].reverse().find((i) => i.type === "assistant");
-  return { stop: turn?.type === "turn" ? turn.stopReason : "", text: answer?.type === "assistant" ? answer.text : "" };
+  const prompt = items.map((i) => i.type).lastIndexOf("user");
+  return { stop: turn?.type === "turn" ? turn.stopReason : "", text: answer?.type === "assistant" ? answer.text : "", worked: items.slice(prompt).some((i) => i.type === "tool") };
 };
 
 export async function runGoal(goal: string, send: (text: string, prefix: string, sessionId?: string) => Promise<void>) {
@@ -17,8 +18,9 @@ export async function runGoal(goal: string, send: (text: string, prefix: string,
   const sessionId = useStore.getState().activeSessionId;
   if (!sessionId) return;
   for (let round = 2; round <= MAX_ROUNDS; round++) {
-    const { stop, text } = lastTurn(sessionId);
-    if (stop !== "end_turn" || text.includes(DONE)) return;
+    const { stop, text, worked } = lastTurn(sessionId);
+    // Eine Runde ohne Werkzeuge ist eine Antwort, da gibt es nichts weiterzuarbeiten.
+    if (stop !== "end_turn" || text.includes(DONE) || !worked) return;
     await send(`Weiter am Ziel, Runde ${round} von ${MAX_ROUNDS}: ${goal}`, rule, sessionId);
   }
 }

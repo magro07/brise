@@ -244,7 +244,7 @@ export function Conversation({ session }: { session: Session }) {
               <Info className="h-4 w-4" /> Verlauf eines Subagenten – nur lesbar.
             </div>
           )}
-          {session.replaying && session.items.length === 0 && <div className="py-10 text-center text-muted">Lade Verlauf …</div>}
+          {session.replaying && session.items.length === 0 && <LoadingHistory />}
           <div className="space-y-4">
             {blocks.map((b, n) => {
               const live = session.running && n === lastIndex;
@@ -348,6 +348,21 @@ export function Conversation({ session }: { session: Session }) {
           <ArrowDown className="h-4 w-4" />
         </button>
       )}
+    </div>
+  );
+}
+
+/** Vibe beendet einen unterbrochenen Turn erst, bevor es den Verlauf liefert. */
+function LoadingHistory() {
+  const [slow, setSlow] = useState(false);
+  useEffect(() => {
+    const t = setTimeout(() => setSlow(true), 6000);
+    return () => clearTimeout(t);
+  }, []);
+  return (
+    <div className="py-10 text-center text-muted">
+      Lade Verlauf …
+      {slow && <div className="mt-1 text-[0.9em]">Diese Session wurde vermutlich mitten in der Arbeit beendet. Vibe macht den Turn erst fertig, das kann dauern. Bleibt es dabei, starte eine neue Session.</div>}
     </div>
   );
 }

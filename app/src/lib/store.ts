@@ -1826,6 +1826,14 @@ export const useStore = create<State & Actions>((set, get) => {
   };
 });
 
+// Wechseln ersetzt den aktiven Tab, sonst sammelt jeder Klick einen neuen an.
+// Weitere Tabs entstehen nur über „+“ und das Teilen.
+const nextTabs = (p: Pane, id: string | null) => {
+  if (!id) return p.tabs.length > 1 ? p.tabs : [];
+  if (p.tabs.includes(id)) return p.tabs;
+  return p.active ? p.tabs.map((t) => (t === p.active ? id : t)) : [...p.tabs, id];
+};
+
 // Die aktive Session ist immer der aktive Tab des fokussierten Bereichs.
 useStore.subscribe((st, prev) => {
   if (st.activeSessionId === prev.activeSessionId) return;
@@ -1833,7 +1841,7 @@ useStore.subscribe((st, prev) => {
   const pane = st.panes[st.focusedPane];
   if (!pane || pane.active === id) return;
   useStore.setState({
-    panes: st.panes.map((p, n) => (n === st.focusedPane ? { tabs: id && !p.tabs.includes(id) ? [...p.tabs, id] : p.tabs, active: id } : p)),
+    panes: st.panes.map((p, n) => (n === st.focusedPane ? { tabs: nextTabs(p, id), active: id } : p)),
   });
 });
 
