@@ -564,7 +564,7 @@ export function SettingsView() {
               <Card title="Einfacher Modus">
                 <Row
                   title="Einfacher Modus"
-                  description="Zeigt nur den Chat. Modelle und Profi-Einstellungen wählt Brise selbst."
+                  description="Zeigt nur den Chat. Einziges Modell ist DeepSeek V4.1 Flash, Profi-Einstellungen wählt Brise selbst."
                   control={<Switch checked={!!prefs.simpleMode} onChange={(v) => setPrefs({ simpleMode: v })} />}
                 />
               </Card>

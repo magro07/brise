@@ -198,7 +198,7 @@ pub async fn ensure_default_models() -> CmdResult<bool> {
         .map(|(name, alias, display)| model_entry(name, alias, display, catalog.iter().find(|m| m.aliases.iter().any(|a| a == name))))
         .collect();
     let added = add_entries(entries)?;
-    Ok(fix_thinking_levels()? | fix_images()? | default_compact()? | default_active()? | default_web_search()? || added)
+    Ok(fix_thinking_levels()? | fix_images()? | default_compact()? | flash_limits()? | default_active()? | default_web_search()? || added)
 }
 
 /// Stellt jede Vibe-Installation einmalig auf Brises Standardmodell (DeepSeek V4.1 Flash) um.
@@ -219,6 +219,20 @@ fn default_active() -> CmdResult<bool> {
     })?;
     std::fs::write(&marker, "").map_err(|e| e.to_string())?;
     Ok(changed)
+}
+
+/// Mistrals Katalog nennt für DeepSeek V4.1 Flash 1017 nicht die echten Grenzen: 1M Kontext, 128k Ausgabe.
+fn flash_limits() -> CmdResult<bool> {
+    edit_config(|doc| {
+        let Some(arr) = doc.get_mut("models").and_then(Item::as_array_of_tables_mut) else { return Ok(()) };
+        for t in arr.iter_mut() {
+            if t.get("name").and_then(|v| v.as_str()) == Some(DEFAULT_MODEL) {
+                t.insert("max_context_length", toml_edit::value(1_000_000_i64));
+                t.insert("max_output_tokens", toml_edit::value(128_000_i64));
+            }
+        }
+        Ok(())
+    })
 }
 
 /// DeepSeek V4 komprimiert erst ab 500k; eine eigene Einstellung bleibt.

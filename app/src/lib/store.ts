@@ -545,6 +545,10 @@ async function reloadIfConfigChanged(sid: string, backend?: string) {
   muted.delete(sid);
 }
 
+/** Neueste zuerst. Backends liefern verschiedene Zeitformate, deshalb als Zeitpunkt vergleichen. */
+export const byRecency = (a: { updatedAt?: string | null }, b: { updatedAt?: string | null }) =>
+  (Date.parse(b.updatedAt ?? "") || 0) - (Date.parse(a.updatedAt ?? "") || 0);
+
 /** Vibes MCP-Meldung für Menschen: Inaktive optionale Server fallen weg, Roblox bekommt den Klickweg. */
 function friendlyMcpNotice(u: any) {
   const lines = String(u.content?.text ?? "").split("\n");
@@ -1280,7 +1284,7 @@ export const useStore = create<State & Actions>((set, get) => {
       try {
         const r = await api.listSessions();
         // Sessions des Design- und 3D-Modus gehören zu keinem Projekt.
-        const index = (r.sessions ?? []).filter((s) => !isDesignPath(s.cwd) && !isModelPath(s.cwd) && !isBenchPath(s.cwd)).sort((a, b) => (b.updatedAt ?? "").localeCompare(a.updatedAt ?? "")).map((s) => ({ ...s, title: s.title ? withoutBrief(s.title) : s.title }));
+        const index = (r.sessions ?? []).filter((s) => !isDesignPath(s.cwd) && !isModelPath(s.cwd) && !isBenchPath(s.cwd)).sort(byRecency).map((s) => ({ ...s, title: s.title ? withoutBrief(s.title) : s.title }));
         const { projects, hiddenProjects } = get();
         const known = new Set(projects);
         // Worktrees von Untersessions sind keine eigenen Projekte.
@@ -1532,7 +1536,7 @@ export const useStore = create<State & Actions>((set, get) => {
       const decider = deciderFor(get(), get().sessions[sid]);
       // Auto-Modellwahl nur bei Backends, deren Modelle und Denkstufen Brise kennt.
       const autoCapable = get().agents[current?.backend ?? "vibe"]?.caps.autoModel ?? current?.backend === "vibe";
-      if (prefs.autoModel && autoCapable && !opts?.keepModel && !current?.keepModel && modelOption?.options?.length && !text.startsWith("/")) {
+      if (prefs.autoModel && !prefs.simpleMode && autoCapable && !opts?.keepModel && !current?.keepModel && modelOption?.options?.length && !text.startsWith("/")) {
         const history = current.items
           .filter((i) => i.type === "user")
           .slice(-4, -1)

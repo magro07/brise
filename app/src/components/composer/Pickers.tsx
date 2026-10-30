@@ -2,7 +2,7 @@ import { useState } from "react";
 import * as Popover from "@radix-ui/react-popover";
 import { Brain, ChevronDown, ChevronRight, FilePen, Hand, RotateCcw, ShieldAlert, Sparkles, Wand2, Zap, type LucideIcon } from "lucide-react";
 import type { ConfigOption } from "../../lib/acp";
-import { THINKING_LABEL, nearestThinking, useStore, type Session } from "../../lib/store";
+import { DEFAULT_MODEL, THINKING_LABEL, nearestThinking, useStore, type Session } from "../../lib/store";
 import { tokens } from "../../lib/format";
 import { agentName, useCaps, useSessionBackend } from "../../lib/backends";
 import { Menu, MenuContent, MenuItem, MenuTrigger, Ring, Tip, clsx } from "../ui";
@@ -179,6 +179,7 @@ export function ModelEffortPicker({ session }: { session?: Session }) {
   const effective = usePolicy((s) => s.effective);
   const [open, setOpen] = useState(false);
   const [page, setPage] = useState<"effort" | "models" | "log">("effort");
+  const simple = useStore((s) => s.prefs.simpleMode);
   const [topHover, setTopHover] = useState(false);
   const model = config.find((o) => o.id === "model");
   const thinking = config.find((o) => o.id === "thinking");
@@ -276,12 +277,12 @@ export function ModelEffortPicker({ session }: { session?: Session }) {
           )}
           {page === "models" && (
             <div className="-m-1 max-h-[340px] overflow-y-auto">
-              {autoCapable && (
+              {autoCapable && !simple && (
                 <button className={clsx("flex h-9 w-full items-center gap-2 rounded-lg px-2.5 text-left hover:bg-hover", autoModel && "bg-hover")} onClick={() => { setPrefs({ autoModel: true }); setPage(firstPage); }}>
                   <Wand2 className="h-4 w-4 text-muted" /> Auto
                 </button>
               )}
-              {(model?.options ?? []).filter((o) => o.value === currentModel || modelAllowed(o.value, effective)).map((o) => (
+              {(model?.options ?? []).filter((o) => (simple ? o.value === DEFAULT_MODEL : o.value === currentModel || modelAllowed(o.value, effective))).map((o) => (
                 <button key={o.value} title={o.description} className={clsx("flex h-9 w-full items-center rounded-lg px-2.5 text-left hover:bg-hover", !autoModel && o.value === currentModel && "bg-hover")} onClick={() => pickModel(o.value)}>
                   <span className="truncate">{o.name}</span>
                 </button>

@@ -23,11 +23,14 @@ import {
   Palette,
   Box,
 } from "lucide-react";
-import { basename, useStore, type Session } from "../../lib/store";
+import { basename, byRecency, useStore, type Session } from "../../lib/store";
 import { BackendBadge } from "../agents/BackendPicker";
 import { IconButton, Kbd, Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger, Spinner, clsx } from "../ui";
 import { confirmAction } from "../../lib/dialogs";
 import { useCollab } from "../../lib/collab";
+import { isDesignPath } from "../../lib/design";
+import { isModelPath } from "../../lib/model3d";
+import { isBenchPath } from "../../lib/bench";
 import { TeamPanel } from "../collab/TeamPanel";
 import { DesignList } from "../design/Sidebar";
 import { newDesign } from "../design/DesignView";
@@ -41,6 +44,7 @@ import { Avatar } from "../profile/ProfileDialog";
 
 const SHOWN_PROJECTS = 5;
 const SHOWN_RECENT = 30;
+const SHOWN_IN_PROJECT = 6;
 
 export async function pickProject() {
   const picked = await openDialog({ directory: true, title: "Projektordner wählen" });
@@ -56,6 +60,7 @@ export function Sidebar() {
   const view = useStore((s) => s.view);
   const { newDraft, selectSession, removeProject, deleteSession, set } = useStore.getState();
   const [moreProjects, setMoreProjects] = useState(false);
+  const [allInProject, setAllInProject] = useState(false);
   // Untersessions stehen unter ihrer Master-Session, nicht im Projekt.
   const subs = useOrchestra((s) => s.book.subs);
 
@@ -67,7 +72,9 @@ export function Sidebar() {
       if (s.readOnly || seen.has(s.id)) continue;
       const summary = index.find((x) => x.sessionId === s.id);
       // Vorbereitete, noch leere Sessions nicht anzeigen.
-      if (s.items.length === 0 && !summary?.title) continue;
+      if (!s.items.some((i) => i.type !== "notice") && !summary?.title) continue;
+      // Design, 3D und Benchmarks haben eigene Listen.
+      if (isDesignPath(s.cwd) || isModelPath(s.cwd) || isBenchPath(s.cwd)) continue;
       seen.add(s.id);
       const list = map.get(s.cwd) ?? [];
       list.push({ id: s.id, title: s.title ?? summary?.title ?? "Neue Session", updatedAt: summary?.updatedAt ?? new Date().toISOString(), backend: s.backend });
@@ -80,12 +87,30 @@ export function Sidebar() {
       list.push({ id: s.sessionId, title: s.title ?? "Unbenannte Session", updatedAt: s.updatedAt, backend: s.backend });
       map.set(s.cwd, list);
     }
-    for (const list of map.values()) list.sort((a, b) => (b.updatedAt ?? "").localeCompare(a.updatedAt ?? ""));
+    for (const list of map.values()) list.sort(byRecency);
     return map;
   }, [index, sessions, subs]);
 
-  const recent = useMemo(() => [...byProject.values()].flat().sort((x, y) => (y.updatedAt ?? "").localeCompare(x.updatedAt ?? "")), [byProject]);
-  const shownProjects = moreProjects ? projects : projects.slice(0, SHOWN_PROJECTS);
+  const recent = useMemo(() => [...byProject.values()].flat().sort(byRecency), [byProject]);
+  // Das aktive Projekt bleibt sichtbar, auch wenn es hinter „Mehr anzeigen“ läge.
+  const shownProjects = moreProjects ? projects : [...new Set([...projects.slice(0, SHOWN_PROJECTS), ...(activeProject && projects.includes(activeProject) ? [activeProject] : [])])];
+  const row = (s: { id: string; title: string; backend?: string }) => (
+    <div key={s.id}>
+      <SessionRow
+        id={s.id}
+        title={s.title}
+        backend={s.backend}
+        active={s.id === activeSessionId && view === "chat"}
+        live={sessions[s.id]}
+        onClick={() => selectSession(s.id)}
+        onSplit={() => useStore.getState().splitWith(s.id)}
+        onDelete={async () => {
+          if (await confirmAction(`Session „${s.title}“ endgültig löschen?`, true)) deleteSession(s.id);
+        }}
+      />
+      <SubRows master={s.id} activeId={view === "chat" ? activeSessionId : null} />
+    </div>
+  );
 
   return (
     <aside data-brise="sidebar" className="flex h-full w-[288px] shrink-0 flex-col overflow-hidden rounded-xl bg-bg shadow-soft">
@@ -170,6 +195,16 @@ export function Sidebar() {
               </Menu>
             </div>
             {project === activeProject && <ProjectWork project={project} />}
+            {project === activeProject && (
+              <div className="ml-[17px] border-l border-line pl-1.5" data-brise="project-sessions">
+                {(byProject.get(project) ?? []).slice(0, allInProject ? undefined : SHOWN_IN_PROJECT).map(row)}
+                {(byProject.get(project)?.length ?? 0) > SHOWN_IN_PROJECT && (
+                  <button className="h-8 w-full rounded-lg px-2.5 text-left text-muted hover:bg-hover hover:text-fg" onClick={() => setAllInProject(!allInProject)}>
+                    {allInProject ? "Weniger anzeigen" : `Alle ${byProject.get(project)!.length} anzeigen`}
+                  </button>
+                )}
+              </div>
+            )}
           </div>
         ))}
         {projects.length > SHOWN_PROJECTS && (
@@ -179,23 +214,7 @@ export function Sidebar() {
         )}
 
         {recent.length > 0 && <div className="mt-3 flex h-8 items-center pl-2.5 text-muted">Letzte</div>}
-        {recent.slice(0, SHOWN_RECENT).map((s) => (
-          <div key={s.id}>
-            <SessionRow
-              id={s.id}
-              title={s.title}
-              backend={s.backend}
-              active={s.id === activeSessionId && view === "chat"}
-              live={sessions[s.id]}
-              onClick={() => selectSession(s.id)}
-              onSplit={() => useStore.getState().splitWith(s.id)}
-              onDelete={async () => {
-                if (await confirmAction(`Session „${s.title}“ endgültig löschen?`, true)) deleteSession(s.id);
-              }}
-            />
-            <SubRows master={s.id} activeId={view === "chat" ? activeSessionId : null} />
-          </div>
-        ))}
+        {recent.slice(0, SHOWN_RECENT).map(row)}
       </nav>
       </>}
     </aside>

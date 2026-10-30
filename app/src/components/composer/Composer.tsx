@@ -583,9 +583,7 @@ export function Composer({ session, project, focused = true, onSend, onCancel, o
           )}
           <div className="flex-1" />
           {!simple && <ContextMeter session={session} />}
-          {!simple && (
-            <ModelEffortPicker session={session} />
-          )}
+          <ModelEffortPicker session={session} />
           {(voice || localStt) && <Tip label={recording ? "Aufnahme beenden und übernehmen" : localStt ? "Spracheingabe (lokal)" : "Spracheingabe (Voxtral)"}>
             <button
               onClick={toggleVoice}
