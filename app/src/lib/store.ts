@@ -566,7 +566,7 @@ export const byRecency = (a: { updatedAt?: string | null }, b: { updatedAt?: str
 function friendlyMcpNotice(u: any) {
   const lines = String(u.content?.text ?? "").split("\n");
   if (u.sessionUpdate !== "agent_message_chunk" || lines[0] !== "The following MCP servers failed to connect:") return u;
-  const failed = lines.slice(1).filter((l) => !l.endsWith("not active in this session"));
+  const failed = lines.slice(1).filter((l) => !l.endsWith("not active in this session") && !l.startsWith("- brise-"));
   if (!failed.length) return null;
   const text = failed
     .map((l) => (l.startsWith("- Roblox_Studio") ? "Roblox Studio ist nicht erreichbar. Öffne Studio, schalte unter Assistant → Manage MCP Servers „Enable Studio as MCP server“ ein und starte dann eine neue Session." : `MCP-Server nicht verbunden: ${l.slice(2)}`))
