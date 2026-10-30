@@ -73,7 +73,7 @@ export function PermissionPrompt({ session, pending }: { session: Session; pendi
         <span>{tool?.kind === "execute" ? "Terminal" : verb || "Werkzeug"}</span>
         {session.pending.length > 1 && <span className="ml-auto text-[0.9em]">+{session.pending.length - 1} weitere</span>}
       </div>
-      <div className="mt-2 selectable">{agentName(session.backend)} möchte {verb ? verb.toLowerCase().replace(/^befehl$/, "einen Befehl ausführen") : "etwas ausführen"}.</div>
+      <div className="mt-2 selectable">{agentName(session.backend)} möchte {verb ? verb.toLowerCase().replace(/^befehl$/, "einen Befehl ausführen").replace(/^gelesen$/, "eine Datei lesen") : "etwas ausführen"}.</div>
       <pre className="mt-3 max-h-40 overflow-auto whitespace-pre-wrap break-all font-mono text-[0.86em] text-muted selectable">
         {command ? maskSecrets(command) : target.startsWith(session.cwd) ? target.slice(session.cwd.length + 1) : target}
       </pre>

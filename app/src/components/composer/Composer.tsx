@@ -3,7 +3,7 @@ import { runGoal } from "../../lib/goals";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
-import { ArrowUp, AtSign, Box, FileText, Folder, Image, KeyRound, MessageSquare, Mic, Lightbulb, Palette, Paperclip, Plus, ShieldCheck, Target, Slash, Square, X, type LucideIcon } from "lucide-react";
+import { ArrowUp, AtSign, Box, FileText, Folder, Image, KeyRound, Globe, Lock, MessageSquare, Mic, Lightbulb, Palette, Paperclip, Plus, ShieldCheck, Target, Slash, Square, X, type LucideIcon } from "lucide-react";
 import { basename, isZdr, ultraNext, useStore, type Attachment, type Session, type SlashCommand } from "../../lib/store";
 import { cortecs, type SensitiveVerdict } from "../../lib/cortecs";
 import { SensitiveNotice } from "./SensitiveNotice";
@@ -14,7 +14,9 @@ import { VoiceRecorder } from "./VoiceRecorder";
 import { ContextMeter, ModelEffortPicker, ModePicker } from "./Pickers";
 import { useVoiceAvailable } from "../../lib/backends";
 import { BackendPicker } from "../agents/BackendPicker";
-import { REF_LABEL, resolveReferences, useReferences, type ComposerRef, type RefKind } from "./references";
+import { api, type PackStatus } from "../../lib/acp";
+import { askText, showError } from "../../lib/dialogs";
+import { REF_LABEL, packContext, resolveReferences, useReferences, type ComposerRef, type RefKind } from "./references";
 
 const IMAGE_EXT = /\.(png|jpe?g|gif|webp)$/i;
 const DOC_EXT = /\.(pdf|docx|pptx)$/i;
@@ -24,7 +26,7 @@ type Suggestion =
   | { kind: "command"; value: string; label: string; detail: string }
   | { kind: "ref"; value: string; label: string; detail: string; ref: ComposerRef };
 
-const REF_ICON: Record<RefKind, LucideIcon> = { project: Folder, design: Palette, model: Box, session: MessageSquare, image: Image };
+const REF_ICON: Record<RefKind, LucideIcon> = { pack: Globe, project: Folder, design: Palette, model: Box, session: MessageSquare, image: Image };
 
 /** Treffer unter den Referenzen: Name, sonst Art („@design“ listet alle Designs). */
 function matchRefs(list: ComposerRef[], query: string, limit = 6): ComposerRef[] {
@@ -91,10 +93,10 @@ function PlusLabel({ children }: { children: string }) {
   return <div className="px-2.5 pb-1 pt-1.5 text-[0.9em] text-muted">{children}</div>;
 }
 
-function PlusRow({ icon: Icon, label, hint, onClick }: { icon: LucideIcon; label: string; hint?: string; onClick: () => void }) {
+function PlusRow({ icon: Icon, image, label, hint, onClick }: { icon?: LucideIcon; image?: string; label: string; hint?: string; onClick: () => void }) {
   return (
     <button onClick={onClick} className="flex h-8 w-full items-center gap-2 rounded-lg px-2.5 text-left hover:bg-hover">
-      <Icon className="h-4 w-4 shrink-0 text-fg-2" />
+      {image ? <img src={image} alt="" className="h-4 w-4 shrink-0 rounded-sm" /> : Icon && <Icon className="h-4 w-4 shrink-0 text-fg-2" />}
       <span className="shrink-0">{label}</span>
       {hint && <span className="truncate text-muted">{hint}</span>}
     </button>
@@ -106,7 +108,9 @@ export function Composer({ session, project, focused = true, onSend, onCancel, o
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [files, setFiles] = useState<string[]>([]);
   const [refs, setRefs] = useState<ComposerRef[]>([]);
-  const references = useReferences(project, files, exclude);
+  const [pack, setPack] = useState<PackStatus | null>(null);
+  useEffect(() => void api.packStatus().then(setPack, () => {}), []);
+  const references = useReferences(project, files, exclude, pack);
   const [cursor, setCursor] = useState(0);
   const [selected, setSelected] = useState(0);
   const [dragging, setDragging] = useState(false);
@@ -307,13 +311,27 @@ export function Composer({ session, project, focused = true, onSend, onCancel, o
     // YouTube-Links: Titel und Transkript gehen als Kontext mit, bei jedem Agenten.
     const youtube = /https?:\/\/(?:www\.|m\.)?(?:youtube\.com|youtu\.be)\/\S+/.exec(t)?.[0];
     const video = youtube ? await invoke<string>("youtube_context", { url: youtube }).catch(() => "") : "";
-    const prefix = [resolved?.context, video].filter(Boolean).join("\n\n") || undefined;
+    // Wer Floorballheroes nur erwähnt, soll die Regeln genauso bekommen wie mit @.
+    const site = pack?.unlocked && !picked.some((r) => r.kind === "pack") && /floorball[\s-]*heroes/i.test(`${t} ${project}`) ? packContext(pack.skill ?? "") : undefined;
+    const prefix = [resolved?.context, site, video].filter(Boolean).join("\n\n") || undefined;
     const goal = /^\/goal\s+([\s\S]+)/.exec(t)?.[1];
     // Ultra arbeitet wie ein Ziel weiter, bis der Agent es für erreicht hält.
     const target = goal ?? (ultraNext(session) && !session?.running && !t.startsWith("/") ? t : undefined);
     if (target && !onSend) void runGoal(target, (text, rule, sessionId) => send(text, all, { ...opts, prefix: [prefix, rule].filter(Boolean).join("\n\n"), sessionId }));
     else if (onSend) onSend(t, all, { ...opts, prefix });
     else send(t, all, { ...opts, prefix });
+  };
+
+  const unlockPack = async () => {
+    const password = await askText("Passwort für Floorballheroes", "", true);
+    if (!password) return;
+    try {
+      setPack(await api.packUnlock(password));
+      // Neue Sessions sollen den Skill schon beim Start kennen.
+      useStore.getState().resetPrepared(project);
+    } catch (e) {
+      void showError(String(e));
+    }
   };
 
   /** Platzhalter an der Cursorposition einfügen. */
@@ -432,6 +450,7 @@ export function Composer({ session, project, focused = true, onSend, onCancel, o
             >
               {s.kind === "ref" ? (
                 (() => {
+                  if (s.ref.kind === "pack" && pack?.logo) return <img src={pack.logo} alt="" className="h-3.5 w-3.5 rounded-sm" />;
                   const Icon = REF_ICON[s.ref.kind];
                   return <Icon className="h-3.5 w-3.5 text-muted" />;
                 })()
@@ -459,6 +478,20 @@ export function Composer({ session, project, focused = true, onSend, onCancel, o
                 <PlusRow icon={Target} label="Ziel" hint="Ein Ziel zum Weiterverfolgen festlegen" onClick={() => insertCommand("goal")} />
                 {modes.some((m) => m.id === "plan") && <PlusRow icon={Lightbulb} label="Planmodus" hint="Planmodus einschalten" onClick={() => { setPlusPage(null); setOption("mode", "plan", session?.id).catch(() => {}); }} />}
                 {!simple && <PlusRow icon={KeyRound} label="Secret" hint="Passwort oder Token anlegen, der Agent sieht nur den Platzhalter" onClick={() => { setPlusPage(null); setSecretPanel({}); }} />}
+                {pack?.available && !simple && <PlusLabel>Websites</PlusLabel>}
+                {pack?.available && !simple && (
+                  <PlusRow
+                    icon={Lock}
+                    image={pack.logo ?? undefined}
+                    label="Floorballheroes"
+                    hint={pack.unlocked ? "WordPress-Seite" : "Mit Passwort freischalten"}
+                    onClick={() => {
+                      setPlusPage(null);
+                      if (pack.unlocked) return setRefs((list) => (list.some((r) => r.kind === "pack") ? list : [...list, ...references.filter((r) => r.kind === "pack")])), insertAtCursor("@Floorballheroes ");
+                      void unlockPack();
+                    }}
+                  />
+                )}
                 {commands.length > 0 && <PlusLabel>Skills und Befehle</PlusLabel>}
                 {commands.map((c) => <PlusRow key={c.name} icon={Slash} label={c.name} hint={c.description} onClick={() => insertCommand(c.name)} />)}
               </>

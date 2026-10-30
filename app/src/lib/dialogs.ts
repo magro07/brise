@@ -13,6 +13,6 @@ export async function showError(text: string): Promise<void> {
   await message(text, { title: "Brise", kind: "error" });
 }
 
-export function askText(title: string, placeholder = ""): Promise<string | null> {
-  return new Promise((resolve) => useStore.setState({ textPrompt: { title, placeholder, resolve } }));
+export function askText(title: string, placeholder = "", secret = false): Promise<string | null> {
+  return new Promise((resolve) => useStore.setState({ textPrompt: { title, placeholder, secret, resolve } }));
 }

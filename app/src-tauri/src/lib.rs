@@ -25,6 +25,7 @@ mod thinking;
 mod model3d;
 mod models;
 mod orchestra;
+pub mod pack;
 mod skills;
 mod terminal;
 mod usage;
@@ -206,6 +207,8 @@ pub fn run() {
             models::remove_model,
             models::startup_check,
             skills::list_skills,
+            pack::pack_status,
+            pack::pack_unlock,
             skills::npx_available,
             assist::classify_task,
             assist::project_suggestions,

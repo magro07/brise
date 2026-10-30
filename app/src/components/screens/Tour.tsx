@@ -204,6 +204,7 @@ export function TextPrompt() {
           <input
             autoFocus
             value={value}
+            type={prompt.secret ? "password" : "text"}
             placeholder={prompt.placeholder}
             onChange={(e) => setValue(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && value.trim() && close(value)}

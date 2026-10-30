@@ -371,7 +371,7 @@ interface State {
   /** Bereiche nebeneinander, jeder mit eigenen Tabs. */
   panes: Pane[];
   focusedPane: number;
-  textPrompt: { title: string; placeholder: string; resolve: (v: string | null) => void } | null;
+  textPrompt: { title: string; placeholder: string; secret?: boolean; resolve: (v: string | null) => void } | null;
   prefs: Prefs;
   draft: DraftConfig;
   /** Modi und Optionen der zuletzt gesehenen Session – für Auswahlfelder vor dem ersten Prompt. */
@@ -520,7 +520,7 @@ function appendText(items: Item[], type: "assistant" | "thought" | "user", text:
 /** Der Umgebungshinweis gehört nicht in Titel und geladene Verläufe. */
 /** Name aus den ersten Worten des Prompts. */
 const firstWords = (text: string, max = 48) => {
-  const line = text.trim().split("\n")[0];
+  const line = text.replace(/^(\s*@\S+)+\s*/, "").trim().split("\n")[0] || text.trim();
   return line.length <= max ? line : `${line.slice(0, max).replace(/\s+\S*$/, "")} …`;
 };
 const withoutBrief = (text: string) => text.split(/\[Umgebung|\[Ultra-Modus/)[0].trimEnd();

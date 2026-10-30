@@ -1,6 +1,6 @@
 [package]
 name = "brise"
-version = "0.4.4"
+version = "0.5.0"
 description = "Desktop-Client für KI-Coding-Agenten (Vibe, Claude Code, Codex, Gemini) mit Zusammenarbeit im Team"
 authors = ["Max Grohmann"]
 license = "Apache-2.0"
@@ -43,6 +43,9 @@ regex = "1"
 chacha20poly1305 = "0.11.0"
 ed25519-dalek = "3.0.0"
 getrandom = "0.4.3"
+aes-gcm = "0.10"
+pbkdf2 = { version = "0.12", default-features = false, features = ["hmac"] }
+sha2-pbkdf = { package = "sha2", version = "0.10" }
 futures-util = "0.3.34"
 tokio-tungstenite = { version = "0.30.0", default-features = false, features = ["connect", "rustls-tls-webpki-roots"] }
 brise-relay = { version = "0.1.0", path = "../../relay" }

@@ -5,6 +5,7 @@
 
 import { useEffect, useMemo } from "react";
 import { basename, useStore, type Attachment } from "../../lib/store";
+import type { PackStatus } from "../../lib/acp";
 import { useCollab } from "../../lib/collab";
 import { absPath, designApi, isDesignPath } from "../../lib/design";
 import { isModelPath, modelAbs, modelApi } from "../../lib/model3d";
@@ -12,23 +13,23 @@ import { isBenchPath } from "../../lib/bench";
 import { useDesign } from "../design/designStore";
 import { useModel } from "../model3d/modelStore";
 
-export type RefKind = "project" | "design" | "model" | "session" | "image";
+export type RefKind = "project" | "design" | "model" | "session" | "image" | "pack";
 
 export interface ComposerRef {
   kind: RefKind;
-  /** Projektpfad, Design-/Modell-ID, Session-ID oder absoluter Bildpfad. */
+  /** Projektpfad, Design-/Modell-ID, Session-ID, absoluter Bildpfad oder der Skill-Text eines Pakets. */
   id: string;
   label: string;
   detail: string;
 }
 
-export const REF_LABEL: Record<RefKind, string> = { project: "Projekt", design: "Design", model: "3D-Modell", session: "Session", image: "Bild" };
+export const REF_LABEL: Record<RefKind, string> = { project: "Projekt", design: "Design", model: "3D-Modell", session: "Session", pack: "Website", image: "Bild" };
 
 const IMAGE_EXT = /\.(png|jpe?g|gif|webp)$/i;
 const join = (dir: string, rel: string) => `${dir.replace(/[\\/]+$/, "")}/${rel}`;
 
 /** Alle Ziele außer Dateien; `exclude` blendet das gerade bearbeitete Design/Modell aus. */
-export function useReferences(project: string, files: string[], exclude?: string): ComposerRef[] {
+export function useReferences(project: string, files: string[], exclude?: string, pack?: PackStatus | null): ComposerRef[] {
   const projects = useStore((s) => s.projects);
   const index = useStore((s) => s.index);
   const sessions = useStore((s) => s.sessions);
@@ -40,7 +41,7 @@ export function useReferences(project: string, files: string[], exclude?: string
     useModel.getState().init().catch(() => {});
   }, []);
   return useMemo(() => {
-    const out: ComposerRef[] = [];
+    const out: ComposerRef[] = pack?.unlocked ? [{ kind: "pack", id: pack.skill ?? "", label: "Floorballheroes", detail: "WordPress-Seite floorballheroes.net" }] : [];
     const team = new Map<string, string>();
     for (const t of Object.values(teams)) for (const p of t.projects) team.set(p.name, t.name);
     for (const p of projects) {
@@ -61,8 +62,11 @@ export function useReferences(project: string, files: string[], exclude?: string
     }
     for (const f of files) if (IMAGE_EXT.test(f)) out.push({ kind: "image", id: join(project, f), label: basename(f), detail: f });
     return out;
-  }, [projects, index, sessions, teams, designs, models, files, project, exclude]);
+  }, [projects, index, sessions, teams, designs, models, files, project, exclude, pack]);
 }
+
+/** Der Skill selbst, damit ihn auch laufende Sessions und andere Agenten ohne Dateizugriff haben. */
+export const packContext = (skill: string) => `[Referenz: Floorballheroes] Es geht um die WordPress-Seite floorballheroes.net. Halte dich genau an diese Regeln:\n\n${skill}`;
 
 const clip = (s: string, max: number) => (s.length > max ? `${s.slice(0, max)} …` : s);
 
@@ -80,6 +84,10 @@ export async function resolveReferences(refs: ComposerRef[]): Promise<{ context:
   for (const r of refs) {
     if (r.kind === "image") {
       images.push({ kind: "image", path: r.id, name: r.label });
+      continue;
+    }
+    if (r.kind === "pack") {
+      parts.push(packContext(r.id));
       continue;
     }
     if (r.kind === "project") {

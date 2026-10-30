@@ -1,7 +1,7 @@
 {
   "name": "brise",
   "private": true,
-  "version": "0.4.4",
+  "version": "0.5.0",
   "description": "Desktop-Client für KI-Coding-Agenten (Vibe, Claude Code, Codex, Gemini) mit Zusammenarbeit im Team",
   "type": "module",
   "scripts": {

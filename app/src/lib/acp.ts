@@ -106,6 +106,14 @@ export interface ConfigFile {
   values: Record<string, unknown>;
 }
 
+export interface PackStatus {
+  available: boolean;
+  unlocked: boolean;
+  dir: string;
+  logo: string | null;
+  skill: string | null;
+}
+
 export const api = {
   connect: (reuse: boolean, backend?: string) => invoke<ConnectInfo>("agent_connect", { reuse, backend: backend ?? null }),
   disconnectBackend: (backend: string) => invoke<void>("disconnect_backend", { backend }),
@@ -125,6 +133,8 @@ export const api = {
     invoke<SessionSetup>("load_session", { cwd, sessionId, search, rea, backend: backend ?? null }),
   listSessions: (cwd?: string, backend?: string) => invoke<{ sessions?: SessionSummary[] }>("list_sessions", { cwd: cwd ?? null, backend: backend ?? null }),
   deleteSession: (sessionId: string) => invoke("delete_session", { sessionId }),
+  packStatus: () => invoke<PackStatus>("pack_status"),
+  packUnlock: (password: string) => invoke<PackStatus>("pack_unlock", { password }),
   renameSession: (sessionId: string, title: string) => invoke("rename_session", { sessionId, title }),
   prompt: (sessionId: string, prompt: ContentBlock[]) => invoke<PromptResult>("prompt", { sessionId, prompt }),
   cancel: (sessionId: string) => invoke<void>("cancel", { sessionId }),
