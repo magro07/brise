@@ -3,7 +3,7 @@ import { runGoal } from "../../lib/goals";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
-import { ArrowUp, AtSign, Box, FileText, Folder, Image, KeyRound, MessageSquare, Mic, Palette, Plus, ShieldCheck, Slash, Square, X, type LucideIcon } from "lucide-react";
+import { ArrowUp, AtSign, Box, FileText, Folder, Image, KeyRound, MessageSquare, Mic, Lightbulb, Palette, Paperclip, Plus, ShieldCheck, Target, Slash, Square, X, type LucideIcon } from "lucide-react";
 import { basename, isZdr, useStore, type Attachment, type Session, type SlashCommand } from "../../lib/store";
 import { cortecs, type SensitiveVerdict } from "../../lib/cortecs";
 import { SensitiveNotice } from "./SensitiveNotice";
@@ -87,6 +87,20 @@ function fuzzy(list: string[], query: string, limit = 8): string[] {
   return scored.sort((a, b) => b[0] - a[0]).slice(0, limit).map(([, v]) => v);
 }
 
+function PlusLabel({ children }: { children: string }) {
+  return <div className="px-2.5 pb-1 pt-1.5 text-[0.9em] text-muted">{children}</div>;
+}
+
+function PlusRow({ icon: Icon, label, hint, onClick }: { icon: LucideIcon; label: string; hint?: string; onClick: () => void }) {
+  return (
+    <button onClick={onClick} className="flex h-8 w-full items-center gap-2 rounded-lg px-2.5 text-left hover:bg-hover">
+      <Icon className="h-4 w-4 shrink-0 text-fg-2" />
+      <span className="shrink-0">{label}</span>
+      {hint && <span className="truncate text-muted">{hint}</span>}
+    </button>
+  );
+}
+
 export function Composer({ session, project, focused = true, onSend, onCancel, onPasteImage, placeholder, disabled: blocked, tools, chips, focusKey, exclude }: ComposerProps) {
   const [text, setText] = useState("");
   const [attachments, setAttachments] = useState<Attachment[]>([]);
@@ -112,6 +126,16 @@ export function Composer({ session, project, focused = true, onSend, onCancel, o
   const { startRecording, stopRecording, cancelRecording, set: setStore } = useStore.getState();
   const [voiceBusy, setVoiceBusy] = useState(false);
   const voice = useVoiceAvailable();
+  const [plusPage, setPlusPage] = useState<"main" | "projects" | null>(null);
+  const projects = useStore((s) => s.projects);
+  const setOption = useStore((s) => s.setOption);
+  const template = useStore((s) => s.template);
+  const modes = session?.modes.length ? session.modes : (template?.modes ?? []);
+  const insertCommand = (name: string) => {
+    setPlusPage(null);
+    setText(`/${name} `);
+    ref.current?.focus();
+  };
   // Bei mehreren Bereichen gehören Drop, Einfügen und Sprache nur dem fokussierten.
   const focusedRef = useRef(focused);
   focusedRef.current = focused;
@@ -421,6 +445,30 @@ export function Composer({ session, project, focused = true, onSend, onCancel, o
         </div>
       )}
 
+      {plusPage && (
+        <>
+          <div className="fixed inset-0 z-40" onClick={() => setPlusPage(null)} />
+          <div className="absolute bottom-full left-0 right-0 z-50 mb-2 max-h-[380px] overflow-y-auto rounded-2xl border border-line bg-elev p-1.5 shadow-pop fade-in">
+            {plusPage === "main" ? (
+              <>
+                <PlusLabel>Hinzufügen</PlusLabel>
+                <PlusRow icon={Paperclip} label="Dateien und Ordner" onClick={() => { setPlusPage(null); attach(); }} />
+                {!session && <PlusRow icon={Folder} label="In einem Projekt arbeiten" hint="Projekt für neue Sessions auswählen" onClick={() => setPlusPage("projects")} />}
+                <PlusRow icon={Target} label="Ziel" hint="Ein Ziel zum Weiterverfolgen festlegen" onClick={() => insertCommand("goal")} />
+                {modes.some((m) => m.id === "plan") && <PlusRow icon={Lightbulb} label="Planmodus" hint="Planmodus einschalten" onClick={() => { setPlusPage(null); setOption("mode", "plan", session?.id).catch(() => {}); }} />}
+                {!simple && <PlusRow icon={KeyRound} label="Secret" hint="Passwort oder Token anlegen, der Agent sieht nur den Platzhalter" onClick={() => { setPlusPage(null); setSecretPanel({}); }} />}
+                {commands.length > 0 && <PlusLabel>Skills und Befehle</PlusLabel>}
+                {commands.map((c) => <PlusRow key={c.name} icon={Slash} label={c.name} hint={c.description} onClick={() => insertCommand(c.name)} />)}
+              </>
+            ) : (
+              <>
+                <PlusLabel>Projekt wählen</PlusLabel>
+                {projects.map((p) => <PlusRow key={p} icon={Folder} label={basename(p)} hint={p} onClick={() => { setPlusPage(null); useStore.getState().newDraft(p); }} />)}
+              </>
+            )}
+          </div>
+        </>
+      )}
       {!session && !simple && (
         <div className="mx-3 flex h-9 items-center gap-1.5 rounded-t-2xl bg-hover px-3 text-[0.92em] text-fg-2">
           <Folder className="h-4 w-4 text-muted" />
@@ -515,12 +563,10 @@ export function Composer({ session, project, focused = true, onSend, onCancel, o
           className="block max-h-[280px] w-full resize-none bg-transparent px-4 pb-2 pt-3.5 outline-none placeholder:text-muted focus-visible:outline-none"
         />
         <div className="flex items-center gap-0.5 px-2 pb-2">
-          <IconButton label="Dateien oder Bilder anhängen" onClick={attach} disabled={disabled}>
+          <button hidden aria-label="Dateien oder Bilder anhängen" onClick={attach} />
+          <IconButton label="Hinzufügen" onClick={() => setPlusPage(plusPage ? null : "main")} disabled={disabled}>
             <Plus className="h-[18px] w-[18px]" />
           </IconButton>
-          {!simple && <IconButton label="Secret anlegen (Passwort, API-Key, Token) – der Agent sieht nur den Platzhalter" onClick={() => setSecretPanel(secretPanel ? null : {})} disabled={disabled}>
-            <KeyRound className="h-4 w-4" />
-          </IconButton>}
           {tools}
           {!simple && (
             <>

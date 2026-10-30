@@ -192,7 +192,7 @@ export function ModelEffortPicker({ session }: { session?: Session }) {
   const autoThinking = steering && (session?.autoThinking ?? true);
   const log = session?.thinkingLog ?? [];
   const color = top ? TOP_COLOR : LEVEL_COLOR;
-  const level = levelName(currentLevel, levels[index]?.name);
+  const level = top ? "Ultra" : levelName(currentLevel, levels[index]?.name);
   const setAutoThinking = (on: boolean) => {
     if (session) useStore.setState((s) => ({ sessions: { ...s.sessions, [session.id]: { ...s.sessions[session.id], autoThinking: on } } }));
   };

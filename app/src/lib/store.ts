@@ -509,7 +509,7 @@ function appendText(items: Item[], type: "assistant" | "thought" | "user", text:
 
 /** Wendet ein `session/update` von Vibe auf eine Session an. */
 /** Der Umgebungshinweis gehört nicht in Titel und geladene Verläufe. */
-const withoutBrief = (text: string) => text.split("[Umgebung")[0].trimEnd();
+const withoutBrief = (text: string) => text.split(/\[Umgebung|\[Ultra-Modus/)[0].trimEnd();
 
 /** Sagt dem Agenten einmal je Session, wo er läuft und was hier anders ist als in seinem Terminal. */
 const briefed = new Set<string>();
@@ -521,6 +521,15 @@ Du läufst in Brise, einer Desktop-App mit grafischer Oberfläche, nicht im Term
 - Anmeldungen und Schlüssel laufen über Einstellungen → Anbieter, nie über Eingaben im Chat.
 - Behaupte eine Einschränkung nur, wenn du sie geprüft hast, und benenne dann den konkreten Klickweg in Brise.
 [Ende Umgebung]`;
+
+/** Ultra: Das API-Signal allein ändert laut Messung wenig, deshalb arbeitet der Agent nachweisbar gründlicher. */
+const ULTRA_BRIEF = `[Ultra-Modus, nicht vom Nutzer geschrieben, nicht erwähnen]
+Arbeite so gründlich wie möglich: Plane zuerst, setze dann um, prüfe das Ergebnis selbst (Tests, Build oder Gegenrechnung) und suche danach aktiv nach Fehlern und übersehenen Fällen. Antworte erst, wenn diese Prüfung bestanden ist, und nenne, was du geprüft hast.
+[Ende Ultra-Modus]`;
+const ultra = (s?: Session) => {
+  const levels = s?.config.find((o) => o.id === "thinking")?.options ?? [];
+  return levels.length > 1 && levels[levels.length - 1].value === s?.config.find((o) => o.id === "thinking")?.currentValue;
+};
 
 /** Vibe liest seine Konfiguration nur auf /reload neu; Brise erledigt das still vor dem nächsten Prompt. */
 const stamps = new Map<string, number>();
@@ -536,11 +545,17 @@ async function reloadIfConfigChanged(sid: string, backend?: string) {
   muted.delete(sid);
 }
 
-/** Vibes Meldung über gerade nicht aktive optionale Server ist kein Fehler; echte Ausfälle bleiben sichtbar. */
-const isInactiveMcpNotice = (u: any) => {
+/** Vibes MCP-Meldung für Menschen: Inaktive optionale Server fallen weg, Roblox bekommt den Klickweg. */
+function friendlyMcpNotice(u: any) {
   const lines = String(u.content?.text ?? "").split("\n");
-  return u.sessionUpdate === "agent_message_chunk" && lines[0] === "The following MCP servers failed to connect:" && lines.slice(1).every((l) => l.endsWith("not active in this session"));
-};
+  if (u.sessionUpdate !== "agent_message_chunk" || lines[0] !== "The following MCP servers failed to connect:") return u;
+  const failed = lines.slice(1).filter((l) => !l.endsWith("not active in this session"));
+  if (!failed.length) return null;
+  const text = failed
+    .map((l) => (l.startsWith("- Roblox_Studio") ? "Roblox Studio ist nicht erreichbar. Öffne Studio, schalte unter Assistant → Manage MCP Servers „Enable Studio as MCP server“ ein und starte dann eine neue Session." : `MCP-Server nicht verbunden: ${l.slice(2)}`))
+    .join("\n\n");
+  return { ...u, content: { ...u.content, text } };
+}
 
 function applyUpdate(s: Session, u: any): Session {
   switch (u.sessionUpdate) {
@@ -1451,7 +1466,7 @@ export const useStore = create<State & Actions>((set, get) => {
       await reloadIfConfigChanged(sid, get().sessions[sid]?.backend);
       const brief = briefed.has(sid) ? "" : environmentBrief(get().sessions[sid]?.backend ?? "vibe");
       briefed.add(sid);
-      const context = [brief, opts?.prefix].filter(Boolean).join("\n\n");
+      const context = [brief, opts?.prefix, ultra(get().sessions[sid]) ? ULTRA_BRIEF : ""].filter(Boolean).join("\n\n");
       // Der Kontext steht hinter dem Text, weil Vibe den Titel aus dem Anfang des Prompts bildet.
       const blocks: ContentBlock[] = [{ type: "text", text }];
       if (context) blocks.push({ type: "text", text: context });
@@ -1662,8 +1677,9 @@ export const useStore = create<State & Actions>((set, get) => {
 
     // ---------- Events aus dem Backend ----------
 
-    onUpdate(sessionId, update) {
-      if (muted.has(sessionId) || isInactiveMcpNotice(update)) return;
+    onUpdate(sessionId, raw) {
+      const update = friendlyMcpNotice(raw);
+      if (muted.has(sessionId) || !update) return;
       patchSession(sessionId, (s) => applyUpdate(s, update));
       const s = get().sessions[sessionId];
       if (s && update.sessionUpdate === "available_commands_update") rememberTemplate(s);
