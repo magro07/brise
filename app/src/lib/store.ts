@@ -1242,9 +1242,13 @@ export const useStore = create<State & Actions>((set, get) => {
         }
         get().refreshCortecs();
         useProviders.getState().refresh();
-        // Weitere aktivierte Backends im Hintergrund, damit ihre Sessions in der Sidebar stehen.
-        const others = enabledBackends.filter((b) => b !== defaultBackend && b !== "vibe");
-        Promise.allSettled(others.map((b) => get().connectBackend(b, false))).then(() => get().refreshIndex());
+        // Weitere Backends im Hintergrund, damit ihre Sessions in der Sidebar stehen: aktivierte und
+        // jedes installierte Claude Code oder Codex, auch wenn es hier noch nie gestartet wurde.
+        get().refreshBackends().then(() => {
+          const installed = get().backends.filter((b) => b.installed && (b.id === "claude" || b.id === "codex")).map((b) => b.id);
+          const others = [...new Set([...enabledBackends, ...installed])].filter((b) => b !== defaultBackend && b !== "vibe");
+          return Promise.allSettled(others.map((b) => get().connectBackend(b, false)));
+        }).then(() => get().refreshIndex());
         if (get().phase === "ready") get().refreshIndex();
       } finally {
         connecting = false;
@@ -1332,7 +1336,7 @@ export const useStore = create<State & Actions>((set, get) => {
         rememberTemplate(get().sessions[id]);
       } catch (e) {
         patchSession(id, (s) => ({ ...s, replaying: false }));
-        pushItem(id, { type: "notice", id: uid(), text: `Session konnte nicht geladen werden: ${e}`, tone: "error" });
+        pushItem(id, { type: "notice", id: uid(), text: /thread_active_writer|in use by another Codex client/.test(String(e)) ? "Diese Session ist gerade in Codex geöffnet. Schließe sie dort oder beende die App, dann lässt sie sich hier laden." : `Session konnte nicht geladen werden: ${e}`, tone: "error" });
       }
     },
 
