@@ -524,8 +524,21 @@ Du läufst in Brise, einer Desktop-App mit grafischer Oberfläche, nicht im Term
 
 /** Ultra: Das API-Signal allein ändert laut Messung wenig, deshalb arbeitet der Agent nachweisbar gründlicher. */
 const ULTRA_BRIEF = `[Ultra-Modus, nicht vom Nutzer geschrieben, nicht erwähnen]
-Arbeite so gründlich wie möglich: Plane zuerst, setze dann um, prüfe das Ergebnis selbst (Tests, Build oder Gegenrechnung) und suche danach aktiv nach Fehlern und übersehenen Fällen. Antworte erst, wenn diese Prüfung bestanden ist, und nenne, was du geprüft hast.
+Bei allem, was über eine Ein-Schritt-Antwort hinausgeht, gilt diese Reihenfolge:
+1. Plane zuerst und halte den Plan mit dem Werkzeug todo fest.
+2. Starte gleich danach mindestens zwei Subagents: Rufe in run_typescript erst tools.agents.list_configs auf, dann die Spawn-Funktion aus tools.agents. Gib jedem einen kurzen sprechenden Namen und eine klar abgegrenzte Teilaufgabe. Nimm config_name explore für Code lesen, researcher für Recherche, und lass config_name weg, wenn der Subagent ändern soll. Warte auf ihre Antworten und nutze sie auch zum unabhängigen Gegenprüfen.
+3. Setze um, prüfe das Ergebnis selbst (Tests, Build oder Gegenrechnung) und suche aktiv nach Fehlern und übersehenen Fällen.
+Antworte erst, wenn diese Prüfung bestanden ist, und nenne, was du geprüft hast.
 [Ende Ultra-Modus]`;
+/** Wäre der nächste Prompt Ultra? Ohne Session zählt die Vorauswahl des Entwurfs. */
+export function ultraNext(s?: Session) {
+  if (s) return ultra(s);
+  const { template, draft } = useStore.getState();
+  const thinking = template?.config.find((o) => o.id === "thinking");
+  const levels = thinking?.options ?? [];
+  return levels.length > 1 && levels[levels.length - 1].value === (draft.thinking ?? thinking?.currentValue);
+}
+
 const ultra = (s?: Session) => {
   const levels = s?.config.find((o) => o.id === "thinking")?.options ?? [];
   return levels.length > 1 && levels[levels.length - 1].value === s?.config.find((o) => o.id === "thinking")?.currentValue;
@@ -720,7 +733,7 @@ const initialPrefs: Prefs = {
   embedModel: "codestral-embed",
   agentSearch: true,
   rea: true,
-  autoModel: true,
+  autoModel: false,
   simpleMode: false,
   automations: [],
   shortcuts: {},
@@ -757,6 +770,11 @@ if (!load<boolean>("defaultModelV3", false)) {
   if (!autoAllowed(initialPrefs.autoBaseModel)) initialPrefs.autoBaseModel = DEFAULT_MODEL;
   if (!Object.values(initialPrefs.routing).every(autoAllowed)) initialPrefs.routing = { simple: DEFAULT_MODEL, standard: "zai-glm-5-3-flash", complex: "mistral-large-4" };
   save("defaultModelV3", true);
+}
+// Migration auf 0.4.2: Standard ist ein festes Modell auf Ultra, Auto wählt man selbst.
+if (!load<boolean>("defaultModelV5", false)) {
+  initialPrefs.autoModel = false;
+  save("defaultModelV5", true);
 }
 initialPrefs.council = { ...COUNCIL_DEFAULTS, ...initialPrefs.council };
 initialPrefs.orchestra = { ...ORCHESTRA_DEFAULTS, ...initialPrefs.orchestra };

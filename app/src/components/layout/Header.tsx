@@ -3,6 +3,7 @@ import { shortcut } from "../../lib/platform";
 import { basename, useStore, type Session } from "../../lib/store";
 import { IconButton, Menu, MenuContent, MenuItem, MenuTrigger } from "../ui";
 import { PANEL_TABS, changedFiles, subagents } from "../panels/SidePanel";
+import { subagentLook, workingSubagents } from "../chat/ToolCall";
 import { confirmAction } from "../../lib/dialogs";
 import { AccountBadge } from "./AccountBadge";
 import { useCollab } from "../../lib/collab";
@@ -16,6 +17,7 @@ export function Header({ session }: { session?: Session }) {
   const { set, togglePanel, deleteSession, newDraft } = useStore.getState();
   const changes = changedFiles(session).length;
   const agents = subagents(session).length;
+  const working = workingSubagents(session);
   const badge: Record<string, number> = { changes, agents, tasks: session?.plan.length ?? 0 };
 
   return (
@@ -81,6 +83,18 @@ export function Header({ session }: { session?: Session }) {
               {badge[t.id] > 0 && <span className="tabular-nums text-muted">{badge[t.id]}</span>}
             </button>
           ))}
+          {working.length > 0 && (
+            <>
+              <div className="truncate px-2 pb-1 pt-2 text-[0.9em] text-muted">Subagenten</div>
+              <button onClick={() => togglePanel("agents")} className="flex h-8 w-full items-center gap-1 rounded-lg bg-hover px-2 text-left">
+                {working.slice(0, 3).map((t) => {
+                  const { Icon, color } = subagentLook(t);
+                  return <Icon key={t.id} className={`h-3.5 w-3.5 shrink-0 ${color}`} />;
+                })}
+                <span className="ml-1 truncate">{working.length === 1 ? "1 arbeitet" : `${working.length} arbeiten`}</span>
+              </button>
+            </>
+          )}
         </div>
       )}
     </header>

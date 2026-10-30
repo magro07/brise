@@ -2,6 +2,11 @@ import { useState } from "react";
 import {
   ArrowRightLeft,
   Bot,
+  Flower2,
+  Grip,
+  Hexagon,
+  Sparkle,
+  Sun,
   Brain,
   ChevronRight,
   FilePen,
@@ -18,7 +23,7 @@ import {
   Wrench,
   X,
 } from "lucide-react";
-import type { Item, ToolItem } from "../../lib/store";
+import type { Item, Session, ToolItem } from "../../lib/store";
 import { useStore } from "../../lib/store";
 import { short } from "../../lib/format";
 import { Spinner, clsx } from "../ui";
@@ -31,6 +36,18 @@ import { ComputerShots } from "../computer/Computer";
 
 export function isSubagent(t: ToolItem) {
   return !!(t.meta?.agent || t.meta?.task || t.meta?.child_session_id);
+}
+
+/** Laufende Subagents. Vibe 3 meldet nur den Start; jedes beendete Warten des Agenten steht für eine fertige Antwort. */
+export function workingSubagents(session?: Session): ToolItem[] {
+  if (!session?.running) return [];
+  const working: ToolItem[] = [];
+  for (const i of session.items) {
+    if (i.type !== "tool") continue;
+    if (isSubagent(i) && i.status !== "failed") working.push(i);
+    else if (i.title === "Waiting for input" && i.status === "completed") working.shift();
+  }
+  return working;
 }
 
 /** Eigene Karten statt Zeilen: Subagents und Council. */
@@ -71,6 +88,9 @@ export function toolTitle(t: ToolItem): { verb: string; target: string } {
     return { verb: "Semantische Suche", target: q ? `„${q}“` : "" };
   }
   if (title === "Searching for relevant tools") return { verb: "Werkzeuge gesucht", target: "" };
+  if (title === "Waiting for input") return { verb: "Wartet auf Subagenten", target: "" };
+  if (title === "Listing subagents") return { verb: "Subagenten abgefragt", target: "" };
+  if (title === "Listing subagent configs") return { verb: "Subagent-Arten abgefragt", target: "" };
   if (/^Writing \d+ todos?$/.test(title)) return { verb: "Aufgabenliste aktualisiert", target: "" };
   const m = /^(Reading|Editing|Writing|Creating|Deleting|Searching|Listing|Fetching|Moving)\s+(.*)$/i.exec(title);
   const verbs: Record<string, string> = {
@@ -147,41 +167,38 @@ function formatInput(tool: ToolItem): string {
   return short(input, 20000);
 }
 
+const SUB_ICONS = [Sun, Grip, Flower2, Hexagon, Sparkle];
+const SUB_COLORS = ["text-[#d9a400]", "text-[#a26be0]", "text-[#2f9ec4]", "text-[#d9548f]", "text-[#3fa66b]"];
+
+/** Kurzname und Farbsymbol, abgeleitet aus der Aufgabe, damit sie je Subagent gleich bleiben. */
+export function subagentLook(t: ToolItem) {
+  const task = String(t.meta?.task ?? t.title ?? "Subagent");
+  // Vibe 3: Titel „Starting code-audit“ trägt den Namen, den der Agent vergeben hat.
+  const name = /^Starting (\S+)$/.exec(t.title ?? "")?.[1] ?? String(t.meta?.agent ?? "Subagent");
+  const hash = [...task].reduce((n, c) => (n * 31 + c.charCodeAt(0)) >>> 0, 7);
+  return { name: name.charAt(0).toUpperCase() + name.slice(1), Icon: SUB_ICONS[hash % SUB_ICONS.length], color: SUB_COLORS[(hash >> 3) % SUB_COLORS.length] };
+}
+
 export function SubagentCard({ tool, cwd }: { tool: ToolItem; cwd: string }) {
   const [open, setOpen] = useState(false);
   const openChild = useStore((s) => s.openChildSession);
   const m = tool.meta ?? {};
-  const running = tool.status === "in_progress" || tool.status === "pending";
+  const running = useStore((s) => Object.values(s.sessions).some((x) => x.items.includes(tool) && workingSubagents(x).includes(tool)));
+  const { name, Icon, color } = subagentLook(tool);
+  const state = running ? "hat mit der Arbeit begonnen" : tool.status === "failed" ? "ist fehlgeschlagen" : "ist fertig";
   return (
-    <div className="my-1 overflow-hidden rounded-xl border border-line bg-elev">
-      <button className="flex w-full items-start gap-3 px-3 py-2.5 text-left hover:bg-hover" onClick={() => setOpen(!open)}>
-        <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-accent-soft text-accent">
-          <Bot className="h-4 w-4" />
-        </div>
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <span className="font-medium">Subagent</span>
-            {m.agent && <span className="rounded bg-hover px-1.5 font-mono text-[0.78em] text-fg-2">{String(m.agent)}</span>}
-            {m.turn_count != null && <span className="text-[0.8em] text-muted">{m.turn_count} Schritte</span>}
-          </div>
-          <div className={clsx("mt-0.5 text-[0.9em] text-fg-2", !open && "line-clamp-2")}>{String(m.task ?? tool.title)}</div>
-        </div>
-        <div className="mt-1">
-          <StatusIcon status={tool.status} />
-        </div>
+    <div className="my-0.5">
+      <button className="flex min-h-7 w-full items-center gap-2 text-left text-fg-2 hover:text-fg" title={String(m.task ?? tool.title)} onClick={() => setOpen(!open)}>
+        <Icon className={clsx("h-3.5 w-3.5 shrink-0", color)} />
+        <span className={clsx("min-w-0 truncate", running && "shimmer-text")}>{name} {state}</span>
+        {m.turn_count != null && <span className="shrink-0 text-[0.86em] text-muted">{m.turn_count} Schritte</span>}
       </button>
-      {(open || running) && (
-        <div className="border-t border-line px-3 py-2.5">
-          {m.response ? (
-            <Markdown text={String(m.response)} />
-          ) : (
-            <div className="shimmer-text text-[0.9em]">{running ? "Arbeitet an der Aufgabe …" : "Keine Antwort"}</div>
-          )}
+      {open && (
+        <div className="mb-1 ml-[22px] border-l border-line pl-3 text-[0.94em]">
+          <div className="mb-1 text-muted">{String(m.task ?? tool.title)}</div>
+          {m.response != null && <Markdown text={String(m.response)} />}
           {m.child_session_id && (
-            <button
-              className="mt-2 inline-flex items-center gap-1.5 text-[0.86em] text-accent hover:underline"
-              onClick={() => openChild(String(m.child_session_id), cwd)}
-            >
+            <button className="mt-2 inline-flex items-center gap-1.5 text-[0.86em] text-accent hover:underline" onClick={() => openChild(String(m.child_session_id), cwd)}>
               <History className="h-3.5 w-3.5" /> Verlauf des Subagenten öffnen
             </button>
           )}

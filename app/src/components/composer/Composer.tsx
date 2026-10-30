@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { ArrowUp, AtSign, Box, FileText, Folder, Image, KeyRound, MessageSquare, Mic, Lightbulb, Palette, Paperclip, Plus, ShieldCheck, Target, Slash, Square, X, type LucideIcon } from "lucide-react";
-import { basename, isZdr, useStore, type Attachment, type Session, type SlashCommand } from "../../lib/store";
+import { basename, isZdr, ultraNext, useStore, type Attachment, type Session, type SlashCommand } from "../../lib/store";
 import { cortecs, type SensitiveVerdict } from "../../lib/cortecs";
 import { SensitiveNotice } from "./SensitiveNotice";
 import { SecretCreate } from "../secrets/SecretPrompt";
@@ -309,7 +309,9 @@ export function Composer({ session, project, focused = true, onSend, onCancel, o
     const video = youtube ? await invoke<string>("youtube_context", { url: youtube }).catch(() => "") : "";
     const prefix = [resolved?.context, video].filter(Boolean).join("\n\n") || undefined;
     const goal = /^\/goal\s+([\s\S]+)/.exec(t)?.[1];
-    if (goal && !onSend) void runGoal(goal, (text, rule, sessionId) => send(text, all, { ...opts, prefix: [prefix, rule].filter(Boolean).join("\n\n"), sessionId }));
+    // Ultra arbeitet wie ein Ziel weiter, bis der Agent es für erreicht hält.
+    const target = goal ?? (ultraNext(session) && !session?.running && !t.startsWith("/") ? t : undefined);
+    if (target && !onSend) void runGoal(target, (text, rule, sessionId) => send(text, all, { ...opts, prefix: [prefix, rule].filter(Boolean).join("\n\n"), sessionId }));
     else if (onSend) onSend(t, all, { ...opts, prefix });
     else send(t, all, { ...opts, prefix });
   };

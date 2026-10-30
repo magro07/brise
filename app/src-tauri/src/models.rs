@@ -204,7 +204,7 @@ pub async fn ensure_default_models() -> CmdResult<bool> {
 /// Stellt jede Vibe-Installation einmalig auf Brises Standardmodell (DeepSeek V4.1 Flash) um.
 /// Danach merkt sich Vibe selbst das zuletzt gewählte Modell. Die Marke liegt neben der Config.
 fn default_active() -> CmdResult<bool> {
-    let marker = crate::config::config_path()?.with_file_name(".brise-default-model-v4");
+    let marker = crate::config::config_path()?.with_file_name(".brise-default-model-v5");
     if marker.exists() {
         return edit_config(|doc| {
             if doc.get("active_model").and_then(|v| v.as_str()).is_none() {
@@ -215,6 +215,12 @@ fn default_active() -> CmdResult<bool> {
     }
     let changed = edit_config(|doc| {
         doc.insert("active_model", toml_edit::value(DEFAULT_MODEL));
+        // Oberste Stufe: In Brise heißt sie Ultra.
+        if let Some(arr) = doc.get_mut("models").and_then(Item::as_array_of_tables_mut) {
+            if let Some(t) = arr.iter_mut().find(|t| t.get("name").and_then(|v| v.as_str()) == Some(DEFAULT_MODEL)) {
+                t.insert("thinking", toml_edit::value("max"));
+            }
+        }
         Ok(())
     })?;
     std::fs::write(&marker, "").map_err(|e| e.to_string())?;

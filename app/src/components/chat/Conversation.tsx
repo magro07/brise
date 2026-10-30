@@ -298,7 +298,7 @@ export function Conversation({ session }: { session: Session }) {
                 case "assistant":
                   return (
                     <div key={item.id} data-brise="assistant-message" className="group/msg fade-in">
-                      <Markdown text={item.text} />
+                      <Markdown text={item.text.replace(/\s*ZIEL_ERREICHT\s*/g, " ").trim()} />
                       {!live && <MessageActions sessionId={session.id} itemId={item.id} text={item.text} />}
                     </div>
                   );
