@@ -259,6 +259,7 @@ async fn start_agent(
     let mut env = env.to_vec();
     if backend == DEFAULT_BACKEND {
         crate::mistral_proxy::extend_env(&mut env);
+        crate::mistral_proxy::apply_region(&mut env, &crate::credentials::mistral_region());
     }
     let (conn, events, child) = rpc::spawn_with_env(launch.program.as_os_str(), &launch.args, &env, trace.as_deref()).map_err(|e| e.to_string())?;
 

@@ -15,6 +15,32 @@ pub const API_BASE: &str = "https://api.mistral.ai/v1";
 
 type CmdResult<T> = Result<T, String>;
 
+fn region_file() -> PathBuf {
+    crate::installer::data_dir().join("mistral-region")
+}
+
+/// Regional Inference: leer (Mistral wählt), `eu` oder `us`.
+#[tauri::command]
+pub fn mistral_region() -> String {
+    std::fs::read_to_string(region_file()).unwrap_or_default().trim().to_string()
+}
+
+#[tauri::command]
+pub fn set_mistral_region(region: String) -> CmdResult<()> {
+    if !matches!(region.as_str(), "" | "eu" | "us") {
+        return Err(format!("Unbekannte Region „{region}“"));
+    }
+    std::fs::write(region_file(), region).map_err(|e| e.to_string())
+}
+
+/// Basis für Modellaufrufe: Der Vibe-Key gilt auch auf den regionalen Endpunkten.
+pub fn inference_base(region: &str) -> String {
+    match region {
+        "eu" | "us" => format!("https://api.{region}.mistral.ai/v1"),
+        _ => API_BASE.to_string(),
+    }
+}
+
 fn entry() -> keyring::Result<keyring::Entry> {
     entry_for(ACCOUNT)
 }

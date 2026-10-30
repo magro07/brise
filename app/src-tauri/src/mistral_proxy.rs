@@ -196,6 +196,28 @@ pub fn extend_env(env: &mut Vec<(String, String)>) {
     env.push(("VIBE_MODELS".into(), Value::Array(models).to_string()));
 }
 
+/// Gewählte Mistral-Region für Vibes direkten Mistral-Anbieter. Ohne Region bleibt alles beim Standard.
+pub(crate) fn apply_region(env: &mut Vec<(String, String)>, region: &str) {
+    if region.is_empty() {
+        return;
+    }
+    let given = env.iter().position(|(k, _)| k == "VIBE_PROVIDERS");
+    let mut providers: Vec<Value> = given
+        .and_then(|i| serde_json::from_str(&env[i].1).ok())
+        .or_else(|| std::env::var("VIBE_PROVIDERS").ok().and_then(|v| serde_json::from_str(&v).ok()))
+        .unwrap_or_default();
+    let base = crate::credentials::inference_base(region);
+    match providers.iter_mut().find(|p| p["name"] == "mistral") {
+        Some(p) => p["api_base"] = json!(base),
+        None => providers.push(json!({ "name": "mistral", "api_base": base, "api_key_env_var": "MISTRAL_API_KEY", "backend": "mistral" })),
+    }
+    let providers = Value::Array(providers).to_string();
+    match given {
+        Some(i) => env[i].1 = providers,
+        None => env.push(("VIBE_PROVIDERS".into(), providers)),
+    }
+}
+
 // ---------- Umsetzung ----------
 
 /// Verlauf für Mistral: Gedankengang zurück ins content-Array, nur Felder,
@@ -326,7 +348,8 @@ pub(crate) async fn forward(sock: &mut tokio::net::TcpStream, method: &str, path
         return respond(sock, 400, "Brise: Dieses Modell läuft nicht über den Proxy").await;
     }
     to_mistral(&mut payload);
-    let mut up = client().post(format!("{API_BASE}/chat/completions")).json(&payload);
+    let base = crate::credentials::inference_base(&crate::credentials::mistral_region());
+    let mut up = client().post(format!("{base}/chat/completions")).json(&payload);
     for (k, v) in headers {
         if matches!(k.as_str(), "authorization" | "accept" | "user-agent") || k.starts_with("x-") {
             up = up.header(k, v);
@@ -372,6 +395,19 @@ pub(crate) async fn forward(sock: &mut tokio::net::TcpStream, method: &str, path
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn region_setzt_mistral_basis() {
+        let mut env = vec![("VIBE_PROVIDERS".to_string(), json!([{ "name": "mistral", "api_key_env_var": "ZWEIT" }, { "name": PROVIDER }]).to_string())];
+        apply_region(&mut env, "eu");
+        let p: Vec<Value> = serde_json::from_str(&env[0].1).unwrap();
+        assert_eq!(p[0]["api_base"], "https://api.eu.mistral.ai/v1");
+        assert_eq!(p[0]["api_key_env_var"], "ZWEIT");
+        assert_eq!(p.len(), 2);
+        let mut leer = Vec::new();
+        apply_region(&mut leer, "");
+        assert!(leer.is_empty());
+    }
 
     #[test]
     fn umgeleitet_laut_tabelle() {

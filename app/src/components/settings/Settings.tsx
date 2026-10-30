@@ -639,6 +639,7 @@ export function SettingsView() {
             <>
               {vibe && (
                 <>
+                  <RegionCard />
                   {values.bypass_tool_permissions === true && (
                     <div className="mb-4 flex items-start gap-3 rounded-xl border border-bad/40 bg-bad-soft px-4 py-3 text-[0.92em]">
                       <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-bad" />
@@ -1383,6 +1384,37 @@ const COMPACT_PRESETS = [
   ["150000", "Sparsam (150k)"],
   ["80000", "Sehr sparsam (80k)"],
 ];
+
+const REGIONS = [
+  ["", "Egal"],
+  ["eu", "EU"],
+  ["us", "USA"],
+] as const;
+
+/** Wo Mistral rechnet (Regional Inference). Vibe liest die Region beim Start. */
+function RegionCard() {
+  const [region, setRegion] = useState("");
+  useEffect(() => {
+    invoke<string>("mistral_region").then(setRegion).catch(() => {});
+  }, []);
+  const pick = (next: string) => invoke("set_mistral_region", { region: next }).then(() => setRegion(next)).catch(() => {});
+  return (
+    <Card title="Mistral-Region" description="Legt fest, wo Modelle bei Mistral rechnen. EU und USA kosten 10 % mehr. Die USA bieten nur wenige Modelle, DeepSeek V4.1 Flash fehlt dort. Gilt nach einem Neustart von Brise.">
+      <Row
+        title="Region"
+        control={
+          <div className="flex rounded-lg border border-line bg-panel p-0.5">
+            {REGIONS.map(([id, label]) => (
+              <button key={id} onClick={() => pick(id)} className={clsx("h-7 rounded-md px-3 text-[0.88em]", region === id ? "bg-elev text-fg shadow-soft" : "text-muted hover:text-fg")}>
+                {label}
+              </button>
+            ))}
+          </div>
+        }
+      />
+    </Card>
+  );
+}
 
 /** Fernhilfe: Bericht schicken und die laufende Session teilen; der Agent läuft dabei beim Hilfesuchenden. */
 function RemoteHelpCard() {

@@ -145,6 +145,8 @@ pub fn run() {
             agent::new_session,
             agent::load_session,
             agent::list_sessions,
+            credentials::mistral_region,
+            credentials::set_mistral_region,
             agent::prompt,
             agent::cancel,
             agent::set_mode,
