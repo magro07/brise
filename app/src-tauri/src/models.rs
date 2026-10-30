@@ -201,15 +201,24 @@ pub async fn ensure_default_models() -> CmdResult<bool> {
     Ok(fix_thinking_levels()? | fix_images()? | default_compact()? | default_active()? | default_web_search()? || added)
 }
 
-/// Brises Standardmodell (DeepSeek V4.1 Flash), solange in Vibe noch keins gewählt ist.
-/// Danach merkt sich Vibe selbst das zuletzt gewählte Modell.
+/// Stellt jede Vibe-Installation einmalig auf Brises Standardmodell (DeepSeek V4.1 Flash) um.
+/// Danach merkt sich Vibe selbst das zuletzt gewählte Modell. Die Marke liegt neben der Config.
 fn default_active() -> CmdResult<bool> {
-    edit_config(|doc| {
-        if doc.get("active_model").and_then(|v| v.as_str()).is_none() {
-            doc.insert("active_model", toml_edit::value(DEFAULT_MODEL));
-        }
+    let marker = crate::config::config_path()?.with_file_name(".brise-default-model-v4");
+    if marker.exists() {
+        return edit_config(|doc| {
+            if doc.get("active_model").and_then(|v| v.as_str()).is_none() {
+                doc.insert("active_model", toml_edit::value(DEFAULT_MODEL));
+            }
+            Ok(())
+        });
+    }
+    let changed = edit_config(|doc| {
+        doc.insert("active_model", toml_edit::value(DEFAULT_MODEL));
         Ok(())
-    })
+    })?;
+    std::fs::write(&marker, "").map_err(|e| e.to_string())?;
+    Ok(changed)
 }
 
 /// DeepSeek V4 komprimiert erst ab 500k; eine eigene Einstellung bleibt.
