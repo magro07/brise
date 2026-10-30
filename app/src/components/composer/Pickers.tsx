@@ -1,25 +1,26 @@
 import { useState } from "react";
 import * as Popover from "@radix-ui/react-popover";
-import { Brain, ChevronDown, ChevronRight, FilePen, Hand, RotateCcw, Sparkles, Wand2, Zap, type LucideIcon } from "lucide-react";
+import { Brain, ChevronDown, ChevronRight, FilePen, Hand, RotateCcw, ShieldAlert, Sparkles, Wand2, Zap, type LucideIcon } from "lucide-react";
 import type { ConfigOption } from "../../lib/acp";
 import { THINKING_LABEL, nearestThinking, useStore, type Session } from "../../lib/store";
 import { tokens } from "../../lib/format";
-import { useCaps, useSessionBackend } from "../../lib/backends";
-import { Menu, MenuContent, MenuItem, MenuLabel, MenuTrigger, Ring, Tip, clsx } from "../ui";
+import { agentName, useCaps, useSessionBackend } from "../../lib/backends";
+import { Menu, MenuContent, MenuItem, MenuTrigger, Ring, Tip, clsx } from "../ui";
 import { modeAllowed, modelAllowed, usePolicy } from "../../lib/policy";
 
 export const MODE_INFO: Record<string, { label: string; description: string; icon: LucideIcon }> = {
   ask: { label: "Alles fragen", description: "Jede Aktion braucht deine Freigabe", icon: Hand },
   "accept-edits": { label: "Edits automatisch", description: "Dateiänderungen ohne Rückfrage, Befehle mit", icon: FilePen },
   "smart-approve": { label: "Smart", description: "Vibe stuft jede Aktion nach Risiko ein", icon: Sparkles },
-  "auto-approve": { label: "Alles automatisch", description: "Keine Rückfragen – mit Vorsicht nutzen", icon: Zap },
+  "auto-approve": { label: "Alles automatisch", description: "Keine Rückfragen, voller Zugriff auf deine Dateien und Befehle", icon: ShieldAlert },
   // Claude Code
   default: { label: "Alles fragen", description: "Vor jeder Änderung nachfragen", icon: Hand },
   acceptEdits: { label: "Edits automatisch", description: "Dateiänderungen ohne Rückfrage", icon: FilePen },
   plan: { label: "Planen", description: "Erst einen Plan erstellen, nichts ändern", icon: Brain },
   auto: { label: "Claude entscheidet", description: "Claude stuft Freigaben selbst ein", icon: Sparkles },
-  bypassPermissions: { label: "Alles automatisch", description: "Keine Rückfragen – mit Vorsicht nutzen", icon: Zap },
+  bypassPermissions: { label: "Alles automatisch", description: "Keine Rückfragen, voller Zugriff auf deine Dateien und Befehle", icon: ShieldAlert },
 };
+const FULL_ACCESS = new Set(["auto-approve", "bypassPermissions"]);
 
 
 function PickerButton({ icon: Icon, label, warn }: { icon: LucideIcon; label: string; warn?: boolean }) {
@@ -27,7 +28,7 @@ function PickerButton({ icon: Icon, label, warn }: { icon: LucideIcon; label: st
     <span
       title={label}
       className={clsx(
-        "inline-flex h-7 items-center gap-1.5 rounded-lg px-2 text-[0.86em] text-fg-2 hover:bg-hover hover:text-fg",
+        "inline-flex h-7 items-center gap-1.5 rounded-lg px-2 text-[0.86em] text-fg-2 hover:bg-hover hover:text-fg group-data-[state=open]:bg-hover",
         warn && "text-warn",
       )}
     >
@@ -57,6 +58,7 @@ function useOptions(session?: Session) {
 export function ModePicker({ session }: { session?: Session }) {
   const { modes, value } = useOptions(session);
   const setOption = useStore((s) => s.setOption);
+  const backend = useSessionBackend(session);
   const current = value("mode") ?? "accept-edits";
   const info = MODE_INFO[current];
   const effective = usePolicy((s) => s.effective);
@@ -67,12 +69,12 @@ export function ModePicker({ session }: { session?: Session }) {
   return (
     <Menu>
       <MenuTrigger asChild>
-        <button aria-label="Freigabe-Modus" data-tour="mode">
-          <PickerButton icon={info?.icon ?? Hand} label={info?.label ?? current} warn={current === "auto-approve"} />
+        <button aria-label="Freigabe-Modus" data-tour="mode" className="group">
+          <PickerButton icon={info?.icon ?? Hand} label={info?.label ?? current} warn={FULL_ACCESS.has(current)} />
         </button>
       </MenuTrigger>
-      <MenuContent side="top" className="w-72">
-        <MenuLabel>Freigabe-Modus</MenuLabel>
+      <MenuContent side="top" className="w-[460px] max-w-[90vw] rounded-2xl p-1.5">
+        <div className="px-2.5 py-1.5 text-[0.9em] text-muted">Wie sollen Aktionen von {agentName(backend)} genehmigt werden?</div>
         {list.map((m) => {
           const i = MODE_INFO[m.id];
           const Icon = i?.icon ?? Hand;
@@ -81,6 +83,7 @@ export function ModePicker({ session }: { session?: Session }) {
               key={m.id}
               icon={<Icon />}
               checked={m.id === current}
+              danger={FULL_ACCESS.has(m.id)}
               description={i?.description ?? m.description}
               onSelect={() => setOption("mode", m.id, session?.id).catch(() => {})}
             >

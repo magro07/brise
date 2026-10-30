@@ -320,10 +320,11 @@ function SessionRow({
       )}
     >
       <button className="flex min-w-0 flex-1 items-center gap-2 text-left" onClick={onClick}>
-        {live?.running && !waiting && <Spinner className="text-accent" />}
-        {waiting && <span className="h-2 w-2 shrink-0 rounded-full bg-warn pulse-dot" title="Wartet auf Freigabe" />}
         <span className="truncate">{title}</span>
         {backend && <BackendBadge backend={backend} />}
+        <span className="flex-1" />
+        {live?.running && !waiting && <Spinner className="shrink-0 text-muted" />}
+        {waiting && <span className="h-2 w-2 shrink-0 rounded-full bg-warn pulse-dot" title="Wartet auf Freigabe" />}
       </button>
       <Menu>
         <MenuTrigger asChild>

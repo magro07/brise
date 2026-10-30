@@ -554,11 +554,15 @@ function friendlyMcpNotice(u: any) {
   const text = failed
     .map((l) => (l.startsWith("- Roblox_Studio") ? "Roblox Studio ist nicht erreichbar. Öffne Studio, schalte unter Assistant → Manage MCP Servers „Enable Studio as MCP server“ ein und starte dann eine neue Session." : `MCP-Server nicht verbunden: ${l.slice(2)}`))
     .join("\n\n");
-  return { ...u, content: { ...u.content, text } };
+  return { sessionUpdate: "brise_notice", text };
 }
 
 function applyUpdate(s: Session, u: any): Session {
   switch (u.sessionUpdate) {
+    case "brise_notice":
+      // Vibe wiederholt die Meldung bei jedem Laden; sie gehört nicht in die Antwort des Agenten.
+      if (s.items.some((i) => i.type === "notice" && i.text === u.text)) return s;
+      return { ...s, items: [...s.items, { type: "notice", id: uid(), text: u.text, tone: "info" }] };
     case "agent_message_chunk":
       return { ...s, items: appendText(s.items, "assistant", contentText(u.content)) };
     case "agent_thought_chunk":
@@ -719,7 +723,7 @@ const initialPrefs: Prefs = {
   sttEngine: "vibe",
   sttEndpoint: "http://localhost:8080/v1",
   sttLocalModel: "parakeet-tdt-0.6-v3",
-  routing: { simple: "zai-glm-5-3-flash", standard: "mistral-medium-3.5", complex: "mistral-large-4" },
+  routing: { simple: DEFAULT_MODEL, standard: "zai-glm-5-3-flash", complex: "mistral-large-4" },
   accent: null,
   assistModel: "mistral-small-latest",
   autoStrategy: "reasoning",
@@ -746,12 +750,19 @@ if (!load<Partial<Prefs>>("prefs", {}).taskModels) {
 // Migration auf 0.3: Wer noch den alten Standard GLM-5.3 hatte, bekommt einmalig den neuen.
 if (!load<boolean>("defaultModelV3", false)) {
   if (initialPrefs.autoBaseModel === "glm-5-3") initialPrefs.autoBaseModel = DEFAULT_MODEL;
+  if (!autoAllowed(initialPrefs.autoBaseModel)) initialPrefs.autoBaseModel = DEFAULT_MODEL;
+  if (!Object.values(initialPrefs.routing).every(autoAllowed)) initialPrefs.routing = { simple: DEFAULT_MODEL, standard: "zai-glm-5-3-flash", complex: "mistral-large-4" };
   save("defaultModelV3", true);
 }
 initialPrefs.council = { ...COUNCIL_DEFAULTS, ...initialPrefs.council };
 initialPrefs.orchestra = { ...ORCHESTRA_DEFAULTS, ...initialPrefs.orchestra };
 
 /** Grobe Einstufung ohne Netz, falls die KI-Einstufung nicht antwortet. */
+/** Nur diese Modelle wählt Auto; manuell bleiben alle wählbar. */
+function autoAllowed(model: string) {
+  return /^(mistral-large-4|(zai-)?glm-5-3(-flash)?|deepseek-v4-1-flash-1017)$/.test(model);
+}
+
 function heuristicLevel(text: string): Routed["level"] {
   const t = text.toLowerCase();
   if (/(architektur|refactor|umbau|migr|sicherheit|security|performance|plan|design|warum.*fehler|debug|race|deadlock)/.test(t) || text.length > 1200) return "complex";
@@ -1526,7 +1537,8 @@ export const useStore = create<State & Actions>((set, get) => {
         const fallback = { level: heuristicLevel(text), reason: "Schätzung ohne KI", probabilities: undefined };
         const verdict = decider ? await api.classifyTask(text, history, decider.model, decider.provider).catch(() => fallback) : fallback;
         const zdrModels = get().cortecs.models;
-        const available = modelOption.options.map((o) => o.value).filter((m) => !zdr || zdrModels.includes(m));
+        const offered = modelOption.options.map((o) => o.value).filter((m) => !zdr || zdrModels.includes(m));
+        const available = zdr || !offered.some(autoAllowed) ? offered : offered.filter(autoAllowed);
         const needsVision = attachments.some((a) => a.kind === "image");
         const base = zdr ? prefs.zdrModel : prefs.autoBaseModel;
         const budget = await budgetModel(

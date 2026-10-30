@@ -3,7 +3,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { Check, Copy } from "lucide-react";
+import { Check, Copy, CodeXml } from "lucide-react";
 
 function textOf(node: ReactNode): string {
   if (typeof node === "string" || typeof node === "number") return String(node);
@@ -12,15 +12,18 @@ function textOf(node: ReactNode): string {
   return "";
 }
 
+const LANG_NAME: Record<string, string> = { js: "JavaScript", javascript: "JavaScript", ts: "TypeScript", typescript: "TypeScript", tsx: "TSX", jsx: "JSX", py: "Python", python: "Python", rs: "Rust", rust: "Rust", sh: "Shell", bash: "Shell", json: "JSON", html: "HTML", css: "CSS", lua: "Lua", luau: "Luau", toml: "TOML", yaml: "YAML", md: "Markdown" };
+
 function CodeBlock({ children, className }: { children?: ReactNode; className?: string }) {
   const [copied, setCopied] = useState(false);
   const lang = /language-(\w+)/.exec(className ?? "")?.[1];
   return (
-    <div className="group/code relative my-3">
-      <div className="absolute right-2 top-2 flex items-center gap-1 opacity-0 transition-opacity group-hover/code:opacity-100">
-        {lang && <span className="rounded bg-elev px-1.5 text-[11px] text-muted">{lang}</span>}
+    <div className="my-3 overflow-hidden rounded-2xl bg-code">
+      <div className="flex h-9 items-center gap-2 px-4 text-[0.88em] text-fg-2">
+        <CodeXml className="h-4 w-4" />
+        <span className="flex-1">{LANG_NAME[lang ?? ""] ?? lang ?? "Code"}</span>
         <button
-          className="flex h-6 w-6 items-center justify-center rounded-md border border-line bg-elev text-muted hover:text-fg"
+          className="flex h-6 w-6 items-center justify-center rounded-md text-muted hover:bg-hover hover:text-fg"
           onClick={() => {
             navigator.clipboard.writeText(textOf(children));
             setCopied(true);

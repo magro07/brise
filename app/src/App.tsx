@@ -183,7 +183,7 @@ function PaneView({ index, project, last }: { index: number; project: string; la
   const focused = useStore((s) => s.focusedPane === index);
   const pending = session?.pending[0];
   const secretRequest = useSecretRequest(session?.id, session?.cwd);
-  const showTabs = multiple || (pane?.tabs.length ?? 0) > 0;
+  const showTabs = multiple || (pane?.tabs.length ?? 0) > 1;
   return (
     <div className={clsx("flex min-w-0 flex-1 flex-col", !last && "border-r border-line")} onMouseDownCapture={() => focusPane(index)} onFocusCapture={() => focusPane(index)}>
       {showTabs && <TabBar index={index} />}

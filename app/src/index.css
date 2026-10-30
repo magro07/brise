@@ -5,6 +5,11 @@
 /* Farbwerte als Variablen, damit Hell/Dunkel über data-theme umschaltet. */
 :root {
   --shell: #f3f3f3;
+  --link: #2f62b0;
+  --code-kw: #b5336b;
+  --code-fn: #6f42c1;
+  --code-str: #2f8a3e;
+  --code-num: #c0492b;
   --bg: #ffffff;
   --sidebar: #f9f9f9;
   --panel: #fcfcfc;
@@ -34,6 +39,11 @@
 
 :root[data-theme="dark"] {
   --shell: #101010;
+  --link: #7fb0ff;
+  --code-kw: #f0729f;
+  --code-fn: #c39bff;
+  --code-str: #7fd18f;
+  --code-num: #f09a6b;
   --bg: #181818;
   --sidebar: #131313;
   --panel: #1c1c1c;
@@ -209,7 +219,7 @@ button {
 }
 
 .prose-chat a {
-  color: var(--accent);
+  color: var(--link);
   text-decoration: underline;
   text-underline-offset: 2px;
 }
@@ -231,10 +241,8 @@ button {
   font-family: var(--font-mono);
   font-size: 0.85em;
   line-height: 1.55;
-  background: var(--code);
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  padding: 12px 14px;
+  background: transparent;
+  padding: 2px 16px 14px;
   overflow-x: auto;
 }
 
@@ -279,14 +287,12 @@ button {
 .hljs-comment,
 .hljs-quote {
   color: var(--muted);
-  font-style: italic;
 }
 
 .hljs-keyword,
 .hljs-selector-tag,
-.hljs-built_in,
 .hljs-type {
-  color: #a626a4;
+  color: var(--code-kw);
 }
 
 .hljs-string,
@@ -294,50 +300,24 @@ button {
 .hljs-symbol,
 .hljs-bullet,
 .hljs-addition {
-  color: #2f8a3e;
+  color: var(--code-str);
 }
 
 .hljs-number,
 .hljs-literal,
 .hljs-variable,
 .hljs-template-variable {
-  color: #b35c00;
+  color: var(--code-num);
 }
 
 .hljs-title,
 .hljs-section,
-.hljs-function .hljs-title {
-  color: #3d6ef0;
+.hljs-built_in {
+  color: var(--code-fn);
 }
 
 .hljs-deletion {
   color: var(--bad);
-}
-
-:root[data-theme="dark"] .hljs-keyword,
-:root[data-theme="dark"] .hljs-selector-tag,
-:root[data-theme="dark"] .hljs-built_in,
-:root[data-theme="dark"] .hljs-type {
-  color: #d18cf2;
-}
-
-:root[data-theme="dark"] .hljs-string,
-:root[data-theme="dark"] .hljs-attr,
-:root[data-theme="dark"] .hljs-symbol,
-:root[data-theme="dark"] .hljs-bullet,
-:root[data-theme="dark"] .hljs-addition {
-  color: #8fd18f;
-}
-
-:root[data-theme="dark"] .hljs-number,
-:root[data-theme="dark"] .hljs-literal,
-:root[data-theme="dark"] .hljs-variable {
-  color: #f0a75a;
-}
-
-:root[data-theme="dark"] .hljs-title,
-:root[data-theme="dark"] .hljs-section {
-  color: #82a8ff;
 }
 
 /* ---------- Animationen ---------- */

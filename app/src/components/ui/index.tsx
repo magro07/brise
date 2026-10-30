@@ -117,7 +117,7 @@ export function MenuItem({
       {icon && <span className="mt-[3px] text-muted [&>svg]:h-4 [&>svg]:w-4">{icon}</span>}
       <span className="flex-1">
         <span className="block">{children}</span>
-        {description && <span className="block text-[0.86em] text-muted">{description}</span>}
+        {description && <span className={clsx("block text-[0.86em]", danger ? "text-bad" : "text-muted")}>{description}</span>}
       </span>
       {hint && <span className="mt-[2px] text-[0.82em] text-muted">{hint}</span>}
       {checked !== undefined && <Check className={clsx("mt-[3px] h-4 w-4", checked ? "text-accent" : "invisible")} />}
@@ -154,8 +154,8 @@ export function Kbd({ children }: { children: ReactNode }) {
 export function Spinner({ className }: { className?: string }) {
   return (
     <svg className={clsx("h-3.5 w-3.5 animate-spin", className)} viewBox="0 0 24 24" fill="none">
-      <circle cx="12" cy="12" r="9" stroke="currentColor" strokeOpacity="0.2" strokeWidth="3" />
-      <path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
+      <circle cx="12" cy="12" r="9" stroke="currentColor" strokeOpacity="0.2" strokeWidth="2" />
+      <path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
     </svg>
   );
 }

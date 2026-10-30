@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
-import { AlertTriangle, ArrowDown, Brain, Check, Wand2, CheckCircle2, ChevronRight, CircleSlash, Copy, FileText, Image, Info, Network, Scale, Square, Volume2 } from "lucide-react";
+import { AlertTriangle, ArrowDown, Check, Wand2, ChevronRight, CircleSlash, Copy, FileText, Image, Info, Network, Scale, Square, Volume2 } from "lucide-react";
 import { useStore } from "../../lib/store";
-import { agentName, useVoiceAvailable } from "../../lib/backends";
+import { useVoiceAvailable } from "../../lib/backends";
 import type { Item, Session } from "../../lib/store";
 import { duration, latency, tokens } from "../../lib/format";
 import { Spinner, Tip, clsx } from "../ui";
@@ -38,15 +38,14 @@ function Thought({ text, live }: { text: string; live: boolean }) {
   return (
     <div>
       <button
-        className="flex h-7 items-center gap-2 rounded-md px-1.5 text-[0.9em] text-muted hover:bg-hover hover:text-fg"
+        className="flex h-7 items-center gap-1 rounded-md text-muted hover:text-fg"
         onClick={() => {
           // Wer aufklappt, will lesen: nicht mehr ans Ende mitscrollen.
           if (!open) onUserLayout();
           setOpen(!open);
         }}
       >
-        <Brain className="h-3.5 w-3.5" />
-        {live ? <span className="shimmer-text">Denkt nach …</span> : <span>Gedankengang</span>}
+        {live ? <span className="shimmer-text">Denke nach</span> : <span>Gedankengang</span>}
         <ChevronRight className={clsx("h-3.5 w-3.5 transition-transform", open && "rotate-90")} />
       </button>
       {open && (
@@ -56,21 +55,15 @@ function Thought({ text, live }: { text: string; live: boolean }) {
   );
 }
 
-function Working({ since, backend }: { since?: number; backend?: string }) {
+function Working({ since }: { since?: number }) {
   const [, tick] = useState(0);
   useEffect(() => {
     const t = setInterval(() => tick((n) => n + 1), 1000);
     return () => clearInterval(t);
   }, []);
   return (
-    <div className="flex items-center gap-2.5 py-1 text-[0.9em]">
-      <span className="flex gap-1">
-        {[0, 1, 2].map((i) => (
-          <span key={i} className="h-1.5 w-1.5 rounded-full bg-accent pulse-dot" style={{ animationDelay: `${i * 0.2}s` }} />
-        ))}
-      </span>
-      <span className="shimmer-text">{agentName(backend)} arbeitet</span>
-      {since && <span className="text-muted">{duration(Date.now() - since)}</span>}
+    <div className="py-1 text-muted">
+      <span className="shimmer-text">{since ? `In Bearbeitung seit ${duration(Date.now() - since)}` : "Denke nach"}</span>
     </div>
   );
 }
@@ -89,9 +82,9 @@ function TurnFooter({ item }: { item: Extract<Item, { type: "turn" }> }) {
             : "Fertig";
   return (
     <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 pt-1 text-[0.8em] text-muted [&>span]:whitespace-nowrap">
-      {ok ? <CheckCircle2 className="h-3.5 w-3.5 text-ok" /> : <CircleSlash className="h-3.5 w-3.5 text-warn" />}
-      <span>{label}</span>
-      <span>·</span>
+      {!ok && <CircleSlash className="h-3.5 w-3.5 text-warn" />}
+      {!ok && <span>{label}</span>}
+      {!ok && <span>·</span>}
       <span>{duration(item.ms)}</span>
       {item.tokens != null && (
         <>
@@ -271,7 +264,7 @@ export function Conversation({ session }: { session: Session }) {
                   return (
                     <div key={item.id} data-brise="user-message" className="flex flex-col items-end gap-1.5 fade-in">
                       {item.author && <span className="text-[0.76em] text-muted">{item.author}</span>}
-                      <div className="max-w-[85%] whitespace-pre-wrap rounded-3xl bg-user px-4 py-2.5 selectable">{item.text}</div>
+                      <div className="max-w-[85%] whitespace-pre-wrap rounded-2xl bg-fg px-4 py-2.5 text-bg selectable">{item.text}</div>
                       {(item.routed || item.zdr) && (
                         <span className="inline-flex items-center gap-1 text-[0.76em] text-muted" title={item.routed?.reason}>
                           {item.routed && (
@@ -337,7 +330,7 @@ export function Conversation({ session }: { session: Session }) {
               }
             })}
             <OpenCards session={session} />
-            {session.running && session.pending.length === 0 && <Working since={session.turnStarted} backend={session.backend} />}
+            {session.running && session.pending.length === 0 && <Working since={session.turnStarted} />}
           </div>
         </div>
         </UserLayoutContext.Provider>

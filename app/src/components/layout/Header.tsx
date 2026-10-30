@@ -1,17 +1,15 @@
-import { ChevronRight, MoreHorizontal, PanelLeftOpen, PanelRight, Share2, SquareTerminal, Trash2 } from "lucide-react";
+import { ChevronRight, MoreHorizontal, PanelLeftOpen, PanelRight, Share2, SquarePlus, SquareTerminal, Trash2 } from "lucide-react";
 import { shortcut } from "../../lib/platform";
 import { basename, useStore, type Session } from "../../lib/store";
-import { IconButton, Menu, MenuContent, MenuItem, MenuTrigger, Tip, clsx } from "../ui";
+import { IconButton, Menu, MenuContent, MenuItem, MenuTrigger } from "../ui";
 import { PANEL_TABS, changedFiles, subagents } from "../panels/SidePanel";
 import { confirmAction } from "../../lib/dialogs";
-import { HeaderMeter } from "../usage/HeaderMeter";
 import { AccountBadge } from "./AccountBadge";
 import { useCollab } from "../../lib/collab";
 import { CollabBadge } from "../collab/CollabBadge";
 
 export function Header({ session }: { session?: Session }) {
   const project = useStore((s) => s.activeProject);
-  const simple = useStore((s) => s.prefs.simpleMode);
   const sidebarOpen = useStore((s) => s.sidebarOpen);
   const terminalOpen = useStore((s) => s.terminalOpen);
   const panel = useStore((s) => s.panel);
@@ -21,7 +19,7 @@ export function Header({ session }: { session?: Session }) {
   const badge: Record<string, number> = { changes, agents, tasks: session?.plan.length ?? 0 };
 
   return (
-    <header data-brise="header" className="flex h-[46px] shrink-0 items-center gap-2 px-3" data-tauri-drag-region>
+    <header data-brise="header" className="relative flex h-[46px] shrink-0 items-center gap-2 px-3" data-tauri-drag-region>
       {!sidebarOpen && (
         <IconButton label={`Seitenleiste einblenden (${shortcut("B")})`} onClick={() => set({ sidebarOpen: true })}>
           <PanelLeftOpen className="h-4 w-4" />
@@ -42,28 +40,6 @@ export function Header({ session }: { session?: Session }) {
 
       <div className="flex items-center gap-0.5">
         {!session?.guest && <CollabBadge session={session} />}
-        {!simple && <HeaderMeter />}
-        {!panel && PANEL_TABS.filter((t) => badge[t.id] > 0).map((t) => (
-          <Tip key={t.id} label={t.label}>
-            <button
-              onClick={() => togglePanel(t.id)}
-              className={clsx(
-                "relative flex h-8 items-center gap-1.5 rounded-md px-2 text-[0.85em]",
-                panel === t.id ? "bg-active text-fg" : "text-muted hover:bg-hover hover:text-fg",
-              )}
-              aria-label={t.label}
-            >
-              <t.icon className="h-4 w-4" />
-              {badge[t.id] > 0 && <span className="tabular-nums">{badge[t.id]}</span>}
-            </button>
-          </Tip>
-        ))}
-        <IconButton label={`Terminal (${shortcut("ö")})`} active={terminalOpen} onClick={() => set({ terminalOpen: !terminalOpen })}>
-          <SquareTerminal className="h-4 w-4" />
-        </IconButton>
-        <IconButton label={`Detailpanel (${shortcut("J")})`} active={!!panel} onClick={() => togglePanel()}>
-          <PanelRight className="h-4 w-4" />
-        </IconButton>
         {session && !session.readOnly && (
           <Menu>
             <MenuTrigger asChild>
@@ -72,6 +48,9 @@ export function Header({ session }: { session?: Session }) {
               </button>
             </MenuTrigger>
             <MenuContent align="end">
+              <MenuItem icon={<SquareTerminal />} onSelect={() => set({ terminalOpen: !terminalOpen })}>
+                Terminal
+              </MenuItem>
               <MenuItem icon={<Share2 />} onSelect={() => useCollab.setState({ shareFor: session.id })}>
                 Session teilen …
               </MenuItem>
@@ -85,7 +64,25 @@ export function Header({ session }: { session?: Session }) {
             </MenuContent>
           </Menu>
         )}
+        <IconButton label={`Detailpanel (${shortcut("J")})`} active={!!panel} onClick={() => togglePanel()}>
+          <PanelRight className="h-4 w-4" />
+        </IconButton>
+        <IconButton label={`Neue Session (${shortcut("N")})`} onClick={() => newDraft(project ?? undefined)}>
+          <SquarePlus className="h-4 w-4" />
+        </IconButton>
       </div>
+      {session && !panel && (
+        <div className="absolute right-3 top-full z-20 hidden w-[220px] min-[1400px]:block rounded-2xl border border-line bg-elev p-2 shadow-soft fade-in">
+          <div className="truncate px-2 pb-1 text-[0.9em] text-muted">{basename(session.cwd)}</div>
+          {PANEL_TABS.filter((t) => t.id === "changes" || badge[t.id] > 0).map((t) => (
+            <button key={t.id} onClick={() => togglePanel(t.id)} className="flex h-8 w-full items-center gap-2 rounded-lg px-2 text-left hover:bg-hover">
+              <t.icon className="h-4 w-4 text-fg-2" />
+              <span className="flex-1 truncate">{t.label}</span>
+              {badge[t.id] > 0 && <span className="tabular-nums text-muted">{badge[t.id]}</span>}
+            </button>
+          ))}
+        </div>
+      )}
     </header>
   );
 }

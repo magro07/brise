@@ -3,7 +3,6 @@ import {
   ArrowRightLeft,
   Bot,
   Brain,
-  Check,
   ChevronRight,
   FilePen,
   FileText,
@@ -92,9 +91,9 @@ export function toolTitle(t: ToolItem): { verb: string; target: string } {
 }
 
 function StatusIcon({ status }: { status: string }) {
-  if (status === "in_progress" || status === "pending") return <Spinner className="text-accent" />;
+  if (status === "in_progress" || status === "pending") return <Spinner className="text-muted" />;
   if (status === "failed") return <X className="h-3.5 w-3.5 text-bad" />;
-  return <Check className="h-3.5 w-3.5 text-ok" />;
+  return null;
 }
 
 export function ToolRow({ tool, cwd }: { tool: ToolItem; cwd: string }) {
@@ -110,8 +109,8 @@ export function ToolRow({ tool, cwd }: { tool: ToolItem; cwd: string }) {
         onClick={() => hasDetails && setOpen(!open)}
       >
         <Icon className="h-3.5 w-3.5 shrink-0 text-muted" />
-        {verb && <span className="shrink-0 text-fg-2">{verb}</span>}
-        <span className={clsx("min-w-0 flex-1 truncate", tool.kind === "execute" || verb ? "font-mono text-[0.86em] text-fg-2" : "text-fg-2")}>
+        {verb && <span className="shrink-0 text-muted">{verb}</span>}
+        <span className={clsx("min-w-0 flex-1 truncate", tool.kind === "execute" ? "font-mono text-[0.86em] text-muted" : "text-muted")}>
           {shortTarget}
         </span>
         <StatusIcon status={tool.status} />
