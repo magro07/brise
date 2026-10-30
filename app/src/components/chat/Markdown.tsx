@@ -4,6 +4,7 @@ import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { Check, Copy, CodeXml } from "lucide-react";
+import { useStore } from "../../lib/store";
 
 function textOf(node: ReactNode): string {
   if (typeof node === "string" || typeof node === "number") return String(node);
@@ -58,7 +59,10 @@ export const Markdown = memo(function Markdown({ text }: { text: string }) {
               href={href}
               onClick={(e) => {
                 e.preventDefault();
-                if (href) openUrl(href);
+                if (!href) return;
+                // Lokale Seiten öffnen sich in der Vorschau rechts.
+                if (/^https?:\/\/(localhost|127\.0\.0\.1)([:/]|$)/.test(href)) useStore.setState({ previewUrl: href, panel: "preview" });
+                else openUrl(href);
               }}
             >
               {children}

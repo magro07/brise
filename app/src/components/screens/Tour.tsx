@@ -1,14 +1,50 @@
 import { useEffect, useLayoutEffect, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
+import { getVersion } from "@tauri-apps/api/app";
 import { useStore } from "../../lib/store";
 import { shortcut } from "../../lib/platform";
-import { Button, Logo } from "../ui";
+import { Button } from "../ui";
 
 interface Step {
   target?: string;
   title: string;
   text: string;
+  /** Wird beim Betreten ausgeführt, z. B. um das Panel zu öffnen. */
+  open?: () => void;
 }
+
+/** Neuerungen, gezeigt nach dem ersten Start einer neuen Version. */
+const WHATS_NEW: Step[] = [
+  { title: "Neu in Brise 0.4", text: "Vieles ist neu. Diese kurze Tour zeigt dir, wo du es findest, direkt in der App." },
+  {
+    target: '[data-tour="model"]',
+    title: "Ultra ist jetzt Standard",
+    text: "DeepSeek V4.1 Flash läuft auf der höchsten Stufe: Der Agent plant, startet Subagents, arbeitet bis zum Ziel und prüft sein Ergebnis. Über diese Pille wählst du Modell und Denkstufe mit dem Regler.",
+  },
+  {
+    target: '[data-tour="mode"]',
+    title: "Zugriffsstufen",
+    text: "Hier legst du fest, was der Agent ohne Rückfrage darf. Freigaben beantwortest du mit Enter oder Esc, weitere Möglichkeiten liegen im Pfeilmenü.",
+  },
+  {
+    target: '[data-brise="sidebar"]',
+    title: "Alle Sessions an einem Ort",
+    text: "Ein Klick auf ein Projekt zeigt seine Sessions. „Letzte“ ist chronologisch und enthält auch deine Sessions aus Claude Code und Codex.",
+  },
+  {
+    target: '[data-brise="side-panel"]',
+    title: "Vorschau rechts",
+    text: "Im neuen Tab Vorschau siehst du deine App live: lokale Server, HTML-Dateien und Websites, die das Einbetten erlauben. Links auf localhost im Chat öffnen sich direkt hier.",
+    open: () => useStore.setState({ panel: "preview" }),
+  },
+  {
+    target: '[data-tour="settings"]',
+    title: "Mehr in den Einstellungen",
+    text: "Neu sind Mistral-Region, Fernhilfe und frei belegbare Tastenkürzel, auch ohne Strg. Der einfache Modus zeigt nur noch das Nötigste.",
+    open: () => useStore.setState({ panel: null }),
+  },
+  { title: "Das war’s", text: "Viel Spaß mit der neuen Version!" },
+];
 
 const STEPS: Step[] = [
   {
@@ -55,26 +91,35 @@ export function Tour() {
   const step = useStore((s) => s.tourStep);
   const set = useStore((s) => s.set);
   const setPrefs = useStore((s) => s.setPrefs);
+  const kind = useStore((s) => s.tourKind);
   const [rect, setRect] = useState<DOMRect | null>(null);
-  const current = step != null ? STEPS[step] : null;
+  const steps = kind === "new" ? WHATS_NEW : STEPS;
+  const current = step != null ? steps[step] : null;
 
   useLayoutEffect(() => {
+    current?.open?.();
     if (!current?.target) return setRect(null);
     const update = () => setRect(document.querySelector(current.target!)?.getBoundingClientRect() ?? null);
+    // Ein Panel, das der Schritt gerade öffnet, steht erst im nächsten Bild.
+    const frame = requestAnimationFrame(update);
     update();
     window.addEventListener("resize", update);
-    return () => window.removeEventListener("resize", update);
-  }, [step]);
+    return () => {
+      cancelAnimationFrame(frame);
+      window.removeEventListener("resize", update);
+    };
+  }, [step, kind]);
 
   if (step == null || !current) return null;
   const finish = () => {
-    set({ tourStep: null });
+    set({ tourStep: null, tourKind: "intro", ...(kind === "new" ? { panel: null } : {}) });
     setPrefs({ tourDone: true });
+    void getVersion().then((seenVersion) => setPrefs({ seenVersion }));
   };
-  const last = step === STEPS.length - 1;
+  const last = step === steps.length - 1;
 
   // Karte neben dem hervorgehobenen Bereich platzieren.
-  const card: React.CSSProperties = { width: 340 };
+  const card: React.CSSProperties = { width: 320 };
   if (rect) {
     const spaceRight = window.innerWidth - rect.right;
     const spaceBelow = window.innerHeight - rect.bottom;
@@ -90,49 +135,47 @@ export function Tour() {
       <Dialog.Portal>
         {rect ? (
           <div
-            className="pointer-events-none fixed z-40 rounded-xl transition-all duration-300"
+            className="pointer-events-none fixed z-40 rounded-xl transition-all duration-200"
             style={{
-              left: rect.left - 6,
-              top: rect.top - 6,
-              width: rect.width + 12,
-              height: rect.height + 12,
-              boxShadow: "0 0 0 2px var(--accent), 0 0 0 9999px rgb(0 0 0 / 0.45)",
+              left: rect.left - 4,
+              top: rect.top - 4,
+              width: rect.width + 8,
+              height: rect.height + 8,
+              boxShadow: "0 0 0 1px var(--line-strong), 0 0 0 9999px rgb(0 0 0 / 0.5)",
             }}
           />
         ) : (
-          <div className="fixed inset-0 z-40 bg-black/45" />
+          <div className="fixed inset-0 z-40 bg-black/50" />
         )}
         <Dialog.Content
-          className="fixed z-50 rounded-2xl border border-line bg-elev p-5 shadow-pop fade-in"
+          className="fixed z-50 rounded-xl border border-line bg-elev p-4 shadow-pop fade-in"
           style={card}
           key={step}
           onInteractOutside={(e) => e.preventDefault()}
+          onOpenAutoFocus={(e) => {
+            // Enter führt weiter, statt die Tour zu überspringen.
+            e.preventDefault();
+            (e.currentTarget as HTMLElement).querySelector<HTMLElement>("[data-tour-next]")?.focus();
+          }}
         >
-          {!rect && (
-            <div className="mb-3">
-              <Logo size={36} />
-            </div>
-          )}
-          <Dialog.Title className="font-semibold">{current.title}</Dialog.Title>
-          <Dialog.Description className="mt-1.5 text-[0.92em] text-fg-2">{current.text}</Dialog.Description>
-          <div className="mt-4 flex items-center gap-2">
-            <div className="flex gap-1">
-              {STEPS.map((_, i) => (
-                <span key={i} className={`h-1.5 rounded-full transition-all ${i === step ? "w-4 bg-accent" : "w-1.5 bg-line-strong"}`} />
-              ))}
-            </div>
-            <div className="flex-1" />
+          <div className="mb-1 text-[0.82em] text-muted">
+            {kind === "new" ? "Neu" : "Tour"} · {step + 1} von {steps.length}
+          </div>
+          <Dialog.Title className="font-medium">{current.title}</Dialog.Title>
+          <Dialog.Description className="mt-1 text-[0.92em] leading-relaxed text-fg-2">{current.text}</Dialog.Description>
+          <div className="mt-3.5 flex items-center gap-2">
             {!last && (
-              <Button variant="ghost" size="sm" onClick={finish}>
+              <button className="text-[0.88em] text-muted hover:text-fg" onClick={finish}>
                 Überspringen
-              </Button>
+              </button>
             )}
+            <div className="flex-1" />
             {step > 0 && (
-              <Button size="sm" onClick={() => set({ tourStep: step - 1 })}>
+              <Button variant="ghost" size="sm" onClick={() => set({ tourStep: step - 1 })}>
                 Zurück
               </Button>
             )}
-            <Button variant="primary" size="sm" onClick={() => (last ? finish() : set({ tourStep: step + 1 }))}>
+            <Button data-tour-next variant="primary" size="sm" onClick={() => (last ? finish() : set({ tourStep: step + 1 }))}>
               {last ? "Fertig" : "Weiter"}
             </Button>
           </div>

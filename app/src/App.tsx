@@ -18,6 +18,7 @@ import { SettingsView } from "./components/settings/Settings";
 import { Rail } from "./components/layout/Rail";
 import { DraftHero, NoProject, StartScreen } from "./components/screens/Screens";
 import { NewProjectDialog } from "./components/screens/NewProject";
+import { getVersion } from "@tauri-apps/api/app";
 import { TextPrompt, Tour } from "./components/screens/Tour";
 import { ProfileDialog } from "./components/profile/ProfileDialog";
 import { useProfile } from "./lib/profile";
@@ -148,6 +149,17 @@ function Workspace() {
     if (project && phase === "ready" && !profileDialog && !st.prefs.tourDone && st.tourStep == null) {
       const t = setTimeout(() => useStore.setState({ tourStep: 0 }), 900);
       return () => clearTimeout(t);
+    }
+    // Nach einem Update zeigt Brise einmal, was neu ist.
+    if (project && phase === "ready" && !profileDialog && st.prefs.tourDone && st.tourStep == null) {
+      let stale = false;
+      void getVersion().then((v) => {
+        if (stale || v === useStore.getState().prefs.seenVersion) return;
+        useStore.setState({ tourKind: "new", tourStep: 0 });
+      });
+      return () => {
+        stale = true;
+      };
     }
   }, [project, phase, profileDialog]);
 

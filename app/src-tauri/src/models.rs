@@ -198,7 +198,7 @@ pub async fn ensure_default_models() -> CmdResult<bool> {
         .map(|(name, alias, display)| model_entry(name, alias, display, catalog.iter().find(|m| m.aliases.iter().any(|a| a == name))))
         .collect();
     let added = add_entries(entries)?;
-    Ok(fix_thinking_levels()? | fix_images()? | default_compact()? | flash_limits()? | default_active()? | default_web_search()? || added)
+    Ok(fix_thinking_levels()? | fix_images()? | default_compact()? | flash_limits()? | default_active()? | default_web_search()? | latest_voice()? || added)
 }
 
 /// Stellt jede Vibe-Installation einmalig auf Brises Standardmodell (DeepSeek V4.1 Flash) um.
@@ -237,6 +237,25 @@ fn flash_limits() -> CmdResult<bool> {
                 t.insert("max_output_tokens", toml_edit::value(128_000_i64));
             }
         }
+        Ok(())
+    })
+}
+
+/// Vibe liefert Voxtral Realtime fest auf Stand 2602 aus; Brise nimmt die aktuelle Fassung.
+/// Eine eigene Liste in config.toml bleibt, nur der alte Stand wird ersetzt.
+fn latest_voice() -> CmdResult<bool> {
+    const OLD: &str = "voxtral-mini-transcribe-realtime-2602";
+    const LATEST: &str = "voxtral-mini-transcribe-realtime-3";
+    edit_config(|doc| {
+        if let Some(arr) = doc.get_mut("transcribe_models").and_then(Item::as_array_of_tables_mut) {
+            for t in arr.iter_mut().filter(|t| t.get("name").and_then(|v| v.as_str()) == Some(OLD)) {
+                t.insert("name", toml_edit::value(LATEST));
+            }
+            return Ok(());
+        }
+        let mut arr = toml_edit::ArrayOfTables::new();
+        arr.push(json_to_table(&json!({ "name": LATEST, "provider": "mistral", "alias": "voxtral-realtime", "encoding": "pcm_s16le" }))?);
+        doc.insert("transcribe_models", Item::ArrayOfTables(arr));
         Ok(())
     })
 }

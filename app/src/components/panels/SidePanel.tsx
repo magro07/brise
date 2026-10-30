@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { shortcut } from "../../lib/platform";
-import { AtSign, Bot, DatabaseZap, FolderTree, Gauge, GitBranch, GitCompareArrows, History, ListChecks, Minimize2, RefreshCw, Search, X } from "lucide-react";
+import { AtSign, Bot, DatabaseZap, ExternalLink, FolderTree, Gauge, GitBranch, Globe, GitCompareArrows, History, ListChecks, Minimize2, RefreshCw, Search, X } from "lucide-react";
 import { GitPanel } from "./GitPanel";
 import { FilesPanel } from "./FilesPanel";
 import { api, type IndexStatus, type SearchHit } from "../../lib/acp";
@@ -21,6 +22,7 @@ export const PANEL_TABS: { id: PanelTab; label: string; icon: typeof Gauge }[] =
   { id: "search", label: "Suche", icon: Search },
   { id: "git", label: "Git", icon: GitBranch },
   { id: "files", label: "Dateien", icon: FolderTree },
+  { id: "preview", label: "Vorschau", icon: Globe },
 ];
 
 export function changedFiles(session?: Session) {
@@ -48,8 +50,8 @@ export function SidePanel({ session }: { session?: Session }) {
   const set = useStore((s) => s.set);
   const project = useStore((s) => s.activeProject);
   if (!panel) return null;
-  const wide = panel === "files";
-  const tools = panel === "git" || panel === "files";
+  const wide = panel === "files" || panel === "preview";
+  const tools = panel === "git" || panel === "files" || panel === "preview";
   return (
     <aside data-brise="side-panel" className={clsx("flex h-full shrink-0 flex-col border-l border-line bg-panel", wide ? "w-[min(900px,62vw)]" : "w-[min(420px,40vw)]")}>
       <div className="flex h-12 items-center gap-1 border-b border-line px-2">
@@ -73,7 +75,9 @@ export function SidePanel({ session }: { session?: Session }) {
         </IconButton>
       </div>
       <div className={clsx("min-h-0 flex-1", tools ? "overflow-hidden" : "overflow-y-auto p-4")}>
-        {panel === "git" && project ? (
+        {panel === "preview" ? (
+          <PreviewPanel cwd={session?.cwd ?? project ?? ""} />
+        ) : panel === "git" && project ? (
           <GitPanel cwd={session?.cwd ?? project} />
         ) : panel === "files" && project ? (
           <FilesPanel cwd={session?.cwd ?? project} />
@@ -92,6 +96,59 @@ export function SidePanel({ session }: { session?: Session }) {
         )}
       </div>
     </aside>
+  );
+}
+
+/** Lokale Server, Websites und HTML-Dateien des Projekts in einem Rahmen. */
+function PreviewPanel({ cwd }: { cwd: string }) {
+  const target = useStore((s) => s.previewUrl);
+  const [draft, setDraft] = useState(target);
+  const [html, setHtml] = useState<string | null>(null);
+  const [error, setError] = useState("");
+  const [reload, setReload] = useState(0);
+  const isFile = !!target && !/^[a-z]+:\/\//i.test(target) && /\.html?$/i.test(target);
+  const url = !target || isFile ? "" : /^[a-z]+:\/\//i.test(target) ? target : `${/^(localhost|127\.|\d+$)/.test(target) ? "http" : "https"}://${/^\d+$/.test(target) ? `localhost:${target}` : target}`;
+
+  useEffect(() => setDraft(target), [target]);
+  useEffect(() => {
+    setHtml(null);
+    setError("");
+    if (isFile) api.readFile(cwd, target).then(setHtml, (e) => setError(String(e)));
+  }, [target, cwd, reload]);
+
+  return (
+    <div className="flex h-full flex-col">
+      <form
+        className="flex items-center gap-1 border-b border-line p-2"
+        onSubmit={(e) => {
+          e.preventDefault();
+          useStore.setState({ previewUrl: draft.trim() });
+          setReload(reload + 1);
+        }}
+      >
+        <input value={draft} onChange={(e) => setDraft(e.target.value)} placeholder="localhost:3000, example.com oder index.html" className="h-8 min-w-0 flex-1 rounded-lg border border-line bg-elev px-2 outline-none focus:border-accent" />
+        <IconButton label="Neu laden" onClick={() => setReload(reload + 1)}>
+          <RefreshCw className="h-4 w-4" />
+        </IconButton>
+        {url && (
+          <IconButton label="Im Browser öffnen" onClick={() => void openUrl(url)}>
+            <ExternalLink className="h-4 w-4" />
+          </IconButton>
+        )}
+      </form>
+      {error ? (
+        <Empty text={error} />
+      ) : url ? (
+        <>
+          <iframe key={`${url}${reload}`} title="Vorschau" src={url} sandbox="allow-scripts allow-same-origin allow-forms allow-popups" className="min-h-0 flex-1 border-0 bg-white" />
+          <div className="border-t border-line px-3 py-1.5 text-[0.82em] text-muted">Bleibt die Seite leer, verbietet sie das Einbetten. Dann hilft „Im Browser öffnen“.</div>
+        </>
+      ) : html != null ? (
+        <iframe key={reload} title="Vorschau" srcDoc={html} sandbox="allow-scripts allow-forms allow-popups" className="min-h-0 flex-1 border-0 bg-white" />
+      ) : (
+        <Empty text="Gib oben eine Adresse oder eine HTML-Datei aus dem Projekt ein." />
+      )}
+    </div>
   );
 }
 

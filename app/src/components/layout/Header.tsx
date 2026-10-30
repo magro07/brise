@@ -76,7 +76,7 @@ export function Header({ session }: { session?: Session }) {
       {session && !panel && (
         <div className="absolute right-3 top-full z-20 hidden w-[220px] min-[1400px]:block rounded-2xl border border-line bg-elev p-2 shadow-soft fade-in">
           <div className="truncate px-2 pb-1 text-[0.9em] text-muted">{basename(session.cwd)}</div>
-          {PANEL_TABS.filter((t) => t.id === "changes" || (badge[t.id] > 0 && (t.id !== "agents" || !working.length))).map((t) => (
+          {PANEL_TABS.filter((t) => t.id === "changes" || t.id === "preview" || (badge[t.id] > 0 && (t.id !== "agents" || !working.length))).map((t) => (
             <button key={t.id} onClick={() => togglePanel(t.id)} className="flex h-8 w-full items-center gap-2 rounded-lg px-2 text-left hover:bg-hover">
               <t.icon className="h-4 w-4 text-fg-2" />
               <span className="flex-1 truncate">{t.label}</span>

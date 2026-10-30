@@ -1,6 +1,6 @@
 [package]
 name = "brise"
-version = "0.4.1"
+version = "0.4.2"
 description = "Desktop-Client für KI-Coding-Agenten (Vibe, Claude Code, Codex, Gemini) mit Zusammenarbeit im Team"
 authors = ["Max Grohmann"]
 license = "Apache-2.0"

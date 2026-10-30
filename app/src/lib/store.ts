@@ -169,7 +169,7 @@ export interface ThinkingEvent {
 }
 
 export type Phase = "connecting" | "no-vibe" | "error" | "login" | "ready";
-export type PanelTab = "changes" | "context" | "agents" | "tasks" | "search" | "git" | "files";
+export type PanelTab = "changes" | "context" | "agents" | "tasks" | "search" | "git" | "files" | "preview";
 export type Theme = "system" | "light" | "dark";
 
 export interface Prefs {
@@ -211,6 +211,8 @@ export interface Prefs {
   fim: boolean;
   /** Einführung schon gesehen. */
   tourDone: boolean;
+  /** Version, deren Neuerungen zuletzt gezeigt wurden. */
+  seenVersion: string;
   /** Model Council (liest auch der MCP-Server brise-council, siehe council.rs). */
   council: CouncilPrefs;
   /** Alt (bis 0.2): Entscheidungen über Mistral oder Cortecs – nur noch für die Migration. */
@@ -360,6 +362,10 @@ interface State {
   paletteOpen: boolean;
   newProjectOpen: boolean;
   tourStep: number | null;
+  /** Welche Tour läuft: Einführung oder Neuerungen. */
+  tourKind: "intro" | "new";
+  /** Adresse oder Datei in der Vorschau rechts. */
+  previewUrl: string;
   /** Bereiche nebeneinander, jeder mit eigenen Tabs. */
   panes: Pane[];
   focusedPane: number;
@@ -747,6 +753,7 @@ const initialPrefs: Prefs = {
   autoBaseModel: DEFAULT_MODEL,
   fim: true,
   tourDone: false,
+  seenVersion: "",
   council: COUNCIL_DEFAULTS,
   decisionProvider: "mistral",
   sensitivityCheck: true,
@@ -928,6 +935,8 @@ export const useStore = create<State & Actions>((set, get) => {
     paletteOpen: false,
     newProjectOpen: false,
     tourStep: null,
+    tourKind: "intro",
+    previewUrl: "",
     panes: [{ tabs: [], active: null }],
     focusedPane: 0,
     textPrompt: null,

@@ -14,10 +14,12 @@ const press = (selector: string) => document.querySelector<HTMLElement>(selector
 const pressText = (text: string) => [...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === text)?.click();
 const stepThinking = (dir: number) => {
   const s = st().activeSessionId ? st().sessions[st().activeSessionId!] : undefined;
-  const opt = s?.config.find((o) => o.id === "thinking");
+  // Ohne Session gilt die Vorauswahl für den ersten Prompt.
+  const opt = (s?.config.length ? s.config : st().template?.config)?.find((o) => o.id === "thinking");
   const levels = (opt?.options ?? []).map((o) => o.value);
-  const next = levels[levels.indexOf(String(opt?.currentValue)) + dir];
-  if (s && next) void st().setOption("thinking", next, s.id).catch(() => {});
+  const current = s ? opt?.currentValue : (st().draft.thinking ?? opt?.currentValue);
+  const next = levels[levels.indexOf(String(current)) + dir];
+  if (next) void st().setOption("thinking", next, s?.id).catch(() => {});
 };
 const openTabAt = (n: number) => {
   const pane = st().panes[st().focusedPane];
@@ -81,7 +83,7 @@ export function comboOf(e: KeyboardEvent): string | null {
   return [e.ctrlKey || e.metaKey ? "mod" : "", e.shiftKey ? "shift" : "", e.altKey ? "alt" : "", key].filter(Boolean).join("+");
 }
 
-const WORD: Record<string, string> = { mod: IS_MAC ? "⌘" : "Strg", shift: IS_MAC ? "⇧" : "Umschalt", alt: IS_MAC ? "⌥" : "Alt", tab: "Tab" };
+const WORD: Record<string, string> = { mod: IS_MAC ? "⌘" : "Strg", shift: IS_MAC ? "⇧" : "Umschalt", alt: IS_MAC ? "⌥" : "Alt", tab: "Tab", arrowup: "↑", arrowdown: "↓", arrowleft: "←", arrowright: "→", enter: "Enter", escape: "Esc", " ": "Leertaste" };
 export const showCombo = (combo: string) =>
   combo.split(" ").map((p) => p.split("+").map((k) => WORD[k] ?? k.toUpperCase()).join(IS_MAC ? "" : "+")).join(" dann ");
 
@@ -99,7 +101,10 @@ export function handleShortcut(e: KeyboardEvent) {
   const combo = comboOf(e);
   if (!combo) return;
   const chord = pending && Date.now() - pendingAt < 1500;
-  if (!chord && !combo.startsWith("mod")) return;
+  // Ohne Strg und Alt gehört die Taste beim Tippen dem Eingabefeld; Funktionstasten nicht.
+  const el = e.target as HTMLElement | null;
+  const typing = !!el?.closest?.("input, textarea, select, [contenteditable], .xterm");
+  if (!chord && typing && !/(^|\+)(mod|alt)\+/.test(combo) && !/(^|\+)f\d+$/.test(combo)) return;
   const full = chord ? `${pending} ${combo}` : combo;
   const custom = st().prefs.shortcuts ?? {};
   const hit = ACTIONS.find((a) => keysOf(a, custom).includes(full));
