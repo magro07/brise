@@ -493,7 +493,7 @@ dependencies = [
 
 [[package]]
 name = "brise"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "aes-gcm",
  "anyhow",
