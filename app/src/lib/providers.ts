@@ -161,7 +161,7 @@ export const CORTECS_DECISION = ["clef-flash", "clef", "laya"];
 /** Bekannte Modelle je fester Anbieter, solange keine Liste geladen ist. */
 export const SUGGESTED: Record<string, string[]> = {
   mistral: ["mistral-small-latest", "ministral-8b-latest", "ministral-3b-latest", "mistral-medium-latest", "mistral-large-4", "zai-glm-5-3", "codestral-latest", "magistral-medium-latest"],
-  anthropic: ["claude-haiku-4-5", "claude-sonnet-4-5", "claude-opus-4-5"],
+  anthropic: ["claude-sonnet-5-5", "claude-opus-5-5", "claude-haiku-5-5", "claude-fable-5-1"],
   openai: ["gpt-4.1-nano", "gpt-4.1-mini", "gpt-4.1", "gpt-5-mini", "gpt-5"],
   gemini: ["gemini-2.5-flash-lite", "gemini-2.5-flash", "gemini-2.5-pro"],
   cortecs: ["clef-flash", "clef", "glm-5.3", "mistral-small-2603", "qwen3.8-27b"],

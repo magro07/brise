@@ -30,7 +30,7 @@ pub struct CatalogModel {
 
 /// Modelle, die Brise immer anbietet – Name bei Mistral, Alias in Vibe, Anzeigename.
 /// Brises Standardmodell (Vibe-Alias), passend zu DEFAULT_MODEL im Frontend.
-const DEFAULT_MODEL: &str = "deepseek-v4-1-flash-1017";
+pub const DEFAULT_MODEL: &str = "deepseek-v4-1-flash-1017";
 
 const DEFAULTS: &[(&str, &str, &str)] = &[
     ("mistral-large-4", "mistral-large-4", "Mistral Large 4"),
@@ -214,7 +214,10 @@ fn default_active() -> CmdResult<bool> {
         });
     }
     let changed = edit_config(|doc| {
-        doc.insert("active_model", toml_edit::value(DEFAULT_MODEL));
+        // Ein schon eingerichtetes Claude bleibt der Standard (providers::claude_setup).
+        if !doc.get("active_model").and_then(|v| v.as_str()).is_some_and(|m| m.starts_with("anthropic-claude-")) {
+            doc.insert("active_model", toml_edit::value(DEFAULT_MODEL));
+        }
         // Oberste Stufe: In Brise heißt sie Ultra.
         if let Some(arr) = doc.get_mut("models").and_then(Item::as_array_of_tables_mut) {
             if let Some(t) = arr.iter_mut().find(|t| t.get("name").and_then(|v| v.as_str()) == Some(DEFAULT_MODEL)) {

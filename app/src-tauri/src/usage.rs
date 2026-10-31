@@ -1028,6 +1028,9 @@ mod tests {
         assert_eq!(for_provider("gpt-4.1-mini", Some("openai")), "openai-gpt-4.1-mini");
         assert_eq!(for_provider("gpt-4.1-mini", None), "");
         assert_eq!(for_provider("claude-haiku-4-5", Some("anthropic")), "anthropic-haiku-4.5");
+        assert_eq!(for_provider("claude-haiku-5-5", Some("anthropic")), "anthropic-haiku-5.5");
+        assert_eq!(for_provider("claude-sonnet-5-5", Some("anthropic")), "anthropic-sonnet-5.5");
+        assert_eq!(for_provider("claude-opus-5-5", Some("anthropic")), "anthropic-opus-5.5");
         assert_eq!(for_provider("mistral-small-latest", Some("openrouter")), "mistral-small-4");
         let mut r = Record::new("chat", "Chat", "mistral-medium-3.5");
         r.input = 1_000_000;

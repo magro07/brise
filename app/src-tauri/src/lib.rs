@@ -125,6 +125,9 @@ pub fn run() {
                         if let Err(e) = providers::sync_vibe().await {
                             eprintln!("Anbieter in Vibe eintragen: {e}");
                         }
+                        if let Err(e) = providers::claude_setup().await {
+                            eprintln!("Claude in Vibe einrichten: {e}");
+                        }
                     });
                 }
                 Err(e) => eprintln!("Cortecs-Proxy: {e}"),

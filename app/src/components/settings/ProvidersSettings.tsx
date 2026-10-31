@@ -16,7 +16,7 @@ const ONLY_HERE: Record<string, string[]> = {
 
 const KEY_HELP: Record<string, string> = {
   mistral: "Vibe-Key (Studio → Code → Vibe CLI) oder API-Key. Geteilt mit Vibe-CLI und VS-Code-Erweiterung.",
-  anthropic: "API-Key aus console.anthropic.com (nicht das Claude-Abo – das nutzt Claude Code selbst).",
+  anthropic: "API-Key aus console.anthropic.com (nicht das Claude-Abo – das nutzt Claude Code selbst). Danach arbeitet Vibe mit Claude, Sonnet 5.5 ist dann Standard. Abgerechnet wird über dein Anthropic-Konto.",
   openai: "API-Key aus platform.openai.com.",
   gemini: "API-Key aus Google AI Studio.",
   cortecs: "API-Key aus der Cortecs-Konsole.",
@@ -202,6 +202,12 @@ function ProviderRow({ p, onChanged, onEdit }: { p: ProviderView; onChanged: () 
                         setKeyOpen(false);
                         onChanged();
                         if (p.id === "cortecs") refreshCortecs();
+                        if (p.id === "anthropic" && !p.hasKey) {
+                          // Auto würde das neue Standardmodell gleich wieder wechseln.
+                          const st = useStore.getState();
+                          st.setPrefs({ autoModel: false });
+                          if (!Object.values(st.sessions).some((x) => x.running)) void st.connect();
+                        }
                       }
                     })
                   }

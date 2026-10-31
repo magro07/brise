@@ -118,7 +118,7 @@ impl Provider {
 /// Feste Anbieter: ID, Name, Basis-URL, Modell für die Prüfung.
 const BUILTINS: &[(&str, &str, &str, &str)] = &[
     (MISTRAL, "Mistral", "https://api.mistral.ai/v1", "mistral-small-latest"),
-    (ANTHROPIC, "Anthropic", "https://api.anthropic.com/v1", "claude-haiku-4-5"),
+    (ANTHROPIC, "Anthropic", "https://api.anthropic.com/v1", "claude-haiku-5-5"),
     (OPENAI, "OpenAI", "https://api.openai.com/v1", "gpt-4.1-nano"),
     (GEMINI, "Google Gemini", "https://generativelanguage.googleapis.com/v1beta/openai", "gemini-2.5-flash-lite"),
     (CORTECS, "Cortecs (ZDR)", "https://api.cortecs.ai/v1", "clef-flash"),
@@ -291,7 +291,7 @@ fn default_model(p: &Provider, purpose: &str) -> Option<String> {
         (CORTECS, _) => crate::cortecs::settings().chat_model,
         (MISTRAL, "council") => "mistral-large-4".into(),
         (MISTRAL, _) => "mistral-small-latest".into(),
-        (ANTHROPIC, _) => "claude-haiku-4-5".into(),
+        (ANTHROPIC, _) => "claude-haiku-5-5".into(),
         (OPENAI, _) => "gpt-4.1-mini".into(),
         (GEMINI, _) => "gemini-2.5-flash".into(),
         _ if !p.test_model.trim().is_empty() => p.test_model.clone(),
@@ -576,7 +576,15 @@ async fn ask_anthropic(p: &Provider, key: Option<&str>, model: &str, a: &Ask<'_>
         "max_tokens": a.max_tokens.unwrap_or(4096),
         "messages": [{ "role": "user", "content": a.user }]
     });
-    if let Some(t) = a.temperature {
+    if claude_adaptive(model) {
+        // Kleine Entscheidungen brauchen kein Denken, es würde `max_tokens` aufbrauchen.
+        // Abschalten geht nur bei Haiku, die anderen lehnen `disabled` ab.
+        if model.starts_with("claude-haiku") {
+            body["thinking"] = json!({ "type": "disabled" });
+        } else {
+            body["output_config"] = json!({ "effort": "low" });
+        }
+    } else if let Some(t) = a.temperature {
         body["temperature"] = json!(t);
     }
     let started = Instant::now();
@@ -954,6 +962,11 @@ pub async fn provider_set_key(id: String, key: String) -> CmdResult<KeyCheck> {
         if p.vibe_export {
             let _ = sync_vibe().await;
         }
+        if p.kind == ANTHROPIC {
+            if let Err(e) = claude_setup().await {
+                eprintln!("Claude in Vibe einrichten: {e}");
+            }
+        }
     }
     Ok(result)
 }
@@ -969,6 +982,9 @@ pub async fn provider_delete_key(id: String) -> CmdResult<()> {
                 return Err(format!("Der Schlüssel kommt aus der Umgebungsvariable {} – dort entfernen.", env_var(&id).unwrap_or_default()));
             }
             delete_key(&id)?;
+            if id == ANTHROPIC {
+                let _ = std::fs::remove_file(claude_marker()?);
+            }
             if vibe_has(&id) {
                 let _ = sync_vibe().await;
             }
@@ -1035,6 +1051,76 @@ pub fn proxy_token() -> &'static str {
     })
 }
 
+/// Claude-Modelle, die Brise mit dem ersten Schlüssel in Vibe einträgt: Name,
+/// Anzeigename, USD je 1M Tokens (Eingabe, Ausgabe).
+const CLAUDE_MODELS: &[(&str, &str, f64, f64)] = &[
+    (CLAUDE_DEFAULT, "Claude Sonnet 5.5", 2.0, 10.0),
+    ("claude-opus-5-5", "Claude Opus 5.5", 4.0, 20.0),
+    ("claude-haiku-5-5", "Claude Haiku 5.5", 0.1, 0.5),
+    ("claude-fable-5-1", "Claude Fable 5.1", 10.0, 50.0),
+];
+const CLAUDE_DEFAULT: &str = "claude-sonnet-5-5";
+/// Ohne Angabe denken diese Modelle trotzdem, eine ehrliche Stufe „aus“ gibt es
+/// über Vibe also nicht. Vibe schickt die Stufe als `output_config.effort`.
+const CLAUDE_LEVELS: [&str; 4] = ["low", "medium", "high", "max"];
+const CLAUDE_MAX_CONTEXT: i64 = 1_000_000;
+const CLAUDE_MAX_OUTPUT: i64 = 128_000;
+/// Jedes Token im Kontext kostet bei jedem Aufruf: früher verdichten als bei Flash.
+const CLAUDE_COMPACT: i64 = 200_000;
+
+/// Claude-Generation mit adaptivem Denken. Ältere Modelle kennen `effort` nicht.
+fn claude_adaptive(model: &str) -> bool {
+    ["claude-fable-", "claude-opus-5", "claude-sonnet-5", "claude-haiku-5"].iter().any(|p| model.starts_with(p))
+}
+
+/// Was Vibe zu einem aktuellen Claude-Modell wissen muss.
+fn claude_fields(model: &str) -> Value {
+    let mut e = json!({
+        "thinking_levels": CLAUDE_LEVELS,
+        "max_context_length": CLAUDE_MAX_CONTEXT,
+        "max_output_tokens": CLAUDE_MAX_OUTPUT,
+        "supports_images": true,
+    });
+    if let Some((_, display, input, output)) = CLAUDE_MODELS.iter().find(|(m, ..)| *m == model) {
+        e["display_name"] = json!(display);
+        e["input_price"] = json!(input);
+        e["output_price"] = json!(output);
+    }
+    e
+}
+
+fn claude_marker() -> CmdResult<std::path::PathBuf> {
+    Ok(crate::config::config_path()?.with_file_name(".brise-claude-default"))
+}
+
+/// Macht einen Anthropic-Schlüssel sofort nutzbar: Claude-Modelle in Vibe
+/// freigeben und Sonnet 5.5 zum Standard machen. Läuft je Schlüssel nur einmal,
+/// danach merkt sich Vibe selbst das zuletzt gewählte Modell.
+pub async fn claude_setup() -> CmdResult<bool> {
+    let marker = claude_marker()?;
+    if marker.exists() {
+        return Ok(false);
+    }
+    let Some(mut p) = get(ANTHROPIC).filter(usable) else { return Ok(false) };
+    p.vibe_export = true;
+    for (m, ..) in CLAUDE_MODELS {
+        if !p.vibe_models.iter().any(|x| x == m) {
+            p.vibe_models.push(m.to_string());
+        }
+    }
+    let mut stored = load_stored();
+    stored.providers.retain(|s| s.id != ANTHROPIC);
+    stored.providers.push(p);
+    save_stored(&stored)?;
+    sync_vibe().await?;
+    crate::config::edit_config(|doc| {
+        doc.insert("active_model", toml_edit::value(vibe_alias(ANTHROPIC, CLAUDE_DEFAULT)));
+        Ok(())
+    })?;
+    std::fs::write(&marker, "").map_err(|e| e.to_string())?;
+    Ok(true)
+}
+
 fn vibe_name(id: &str) -> String {
     format!("{VIBE_PREFIX}{id}")
 }
@@ -1054,6 +1140,12 @@ fn vibe_has(id: &str) -> bool {
         Ok(())
     });
     found
+}
+
+fn json_merge(into: &mut Value, from: Value) {
+    if let (Some(a), Value::Object(b)) = (into.as_object_mut(), from) {
+        a.extend(b);
+    }
 }
 
 /// Trägt freigegebene Anbieter samt Modellen in Vibes config.toml ein und
@@ -1097,6 +1189,8 @@ pub async fn sync_vibe() -> CmdResult<bool> {
                 None => providers.push(crate::config::json_to_table(&entry)?),
             }
         }
+        let active = doc.get("active_model").and_then(|v| v.as_str()).unwrap_or_default().to_string();
+        let mut active_gone = false;
         let models = doc["models"].as_array_of_tables_mut().expect("geprüft");
         models.retain(|t| {
             let Some(prov) = t.get("provider").and_then(|v| v.as_str()) else { return true };
@@ -1104,12 +1198,24 @@ pub async fn sync_vibe() -> CmdResult<bool> {
                 return true;
             }
             let name = t.get("name").and_then(|v| v.as_str()).unwrap_or_default();
-            wanted.iter().any(|p| vibe_name(&p.id) == prov && p.vibe_models.iter().any(|m| m == name))
+            let keep = wanted.iter().any(|p| vibe_name(&p.id) == prov && p.vibe_models.iter().any(|m| m == name));
+            active_gone |= !keep && t.get("alias").and_then(|v| v.as_str()) == Some(active.as_str());
+            keep
         });
         for p in &wanted {
             for m in &p.vibe_models {
                 let prov = vibe_name(&p.id);
-                if models.iter().any(|t| t.get("provider").and_then(|v| v.as_str()) == Some(prov.as_str()) && t.get("name").and_then(|v| v.as_str()) == Some(m.as_str())) {
+                let claude = p.kind == ANTHROPIC && claude_adaptive(m);
+                if let Some(t) = models.iter_mut().find(|t| t.get("provider").and_then(|v| v.as_str()) == Some(prov.as_str()) && t.get("name").and_then(|v| v.as_str()) == Some(m.as_str())) {
+                    // Frühere Einträge kannten weder Stufen noch Grenzen.
+                    if claude {
+                        for (k, v) in claude_fields(m).as_object().expect("Objekt") {
+                            t.insert(k, Item::Value(crate::config::json_to_toml(v)?));
+                        }
+                        if !t.contains_key("auto_compact_threshold") {
+                            t.insert("auto_compact_threshold", toml_edit::value(CLAUDE_COMPACT));
+                        }
+                    }
                     continue;
                 }
                 let mut e = json!({ "provider": prov, "name": m, "alias": vibe_alias(&p.id, m), "display_name": format!("{m} · {}", p.name) });
@@ -1120,8 +1226,17 @@ pub async fn sync_vibe() -> CmdResult<bool> {
                     e["input_price"] = json!(0.0);
                     e["output_price"] = json!(0.0);
                 }
+                if claude {
+                    json_merge(&mut e, claude_fields(m));
+                    e["thinking"] = json!("high");
+                    e["auto_compact_threshold"] = json!(CLAUDE_COMPACT);
+                }
                 models.push(crate::config::json_to_table(&e)?);
             }
+        }
+        // Ein weggefallenes aktives Modell würde Vibes Start scheitern lassen.
+        if active_gone {
+            doc.insert("active_model", toml_edit::value(crate::models::DEFAULT_MODEL));
         }
         Ok(())
     })

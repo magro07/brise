@@ -282,7 +282,7 @@ export function ModelEffortPicker({ session }: { session?: Session }) {
                   <Wand2 className="h-4 w-4 text-muted" /> Auto
                 </button>
               )}
-              {(model?.options ?? []).filter((o) => (simple ? o.value === DEFAULT_MODEL : o.value === currentModel || modelAllowed(o.value, effective))).map((o) => (
+              {(model?.options ?? []).filter((o) => (simple ? o.value === DEFAULT_MODEL || o.value.startsWith("anthropic-claude-") : o.value === currentModel || modelAllowed(o.value, effective))).map((o) => (
                 <button key={o.value} title={o.description} className={clsx("flex h-9 w-full items-center rounded-lg px-2.5 text-left hover:bg-hover", !autoModel && o.value === currentModel && "bg-hover")} onClick={() => pickModel(o.value)}>
                   <span className="truncate">{o.name}</span>
                 </button>
