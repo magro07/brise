@@ -1066,13 +1066,7 @@ const CLAUDE_LEVELS: [&str; 4] = ["low", "medium", "high", "max"];
 const CLAUDE_MAX_CONTEXT: i64 = 1_000_000;
 const CLAUDE_MAX_OUTPUT: i64 = 128_000;
 /// Jedes Token im Kontext kostet bei jedem Aufruf: früher verdichten als bei Flash.
-const CLAUDE_COMPACT: i64 = 200_000;
-/// Opus arbeitet an den längsten Aufgaben und darf mehr Kontext halten.
-pub const OPUS_COMPACT: i64 = 400_000;
-
-fn claude_compact(model: &str) -> i64 {
-    if model.starts_with("claude-opus-5-5") { OPUS_COMPACT } else { CLAUDE_COMPACT }
-}
+pub const CLAUDE_COMPACT: i64 = 400_000;
 
 /// Claude-Generation mit adaptivem Denken. Ältere Modelle kennen `effort` nicht.
 fn claude_adaptive(model: &str) -> bool {
@@ -1219,7 +1213,7 @@ pub async fn sync_vibe() -> CmdResult<bool> {
                             t.insert(k, Item::Value(crate::config::json_to_toml(v)?));
                         }
                         if !t.contains_key("auto_compact_threshold") {
-                            t.insert("auto_compact_threshold", toml_edit::value(claude_compact(m)));
+                            t.insert("auto_compact_threshold", toml_edit::value(CLAUDE_COMPACT));
                         }
                     }
                     continue;
@@ -1235,7 +1229,7 @@ pub async fn sync_vibe() -> CmdResult<bool> {
                 if claude {
                     json_merge(&mut e, claude_fields(m));
                     e["thinking"] = json!("high");
-                    e["auto_compact_threshold"] = json!(claude_compact(m));
+                    e["auto_compact_threshold"] = json!(CLAUDE_COMPACT);
                 }
                 models.push(crate::config::json_to_table(&e)?);
             }
@@ -1312,12 +1306,6 @@ pub(crate) async fn forward(sock: &mut tokio::net::TcpStream, req: crate::cortec
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn claude_compact_opus_later() {
-        assert_eq!(claude_compact("claude-opus-5-5"), 400_000);
-        assert_eq!(claude_compact("claude-sonnet-5-5"), 200_000);
-    }
 
     fn custom(base: &str) -> Provider {
         Provider { id: "x".into(), kind: COMPATIBLE.into(), name: "X".into(), base_url: base.into(), ..Default::default() }

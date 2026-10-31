@@ -198,7 +198,7 @@ pub async fn ensure_default_models() -> CmdResult<bool> {
         .map(|(name, alias, display)| model_entry(name, alias, display, catalog.iter().find(|m| m.aliases.iter().any(|a| a == name))))
         .collect();
     let added = add_entries(entries)?;
-    Ok(fix_thinking_levels()? | fix_images()? | default_compact()? | opus_compact()? | flash_limits()? | default_active()? | default_web_search()? | latest_voice()? || added)
+    Ok(fix_thinking_levels()? | fix_images()? | default_compact()? | claude_compact()? | flash_limits()? | default_active()? | default_web_search()? | latest_voice()? || added)
 }
 
 /// Stellt jede Vibe-Installation einmalig auf Brises Standardmodell (DeepSeek V4.1 Flash) um.
@@ -277,19 +277,19 @@ fn default_compact() -> CmdResult<bool> {
     })
 }
 
-/// Hebt Opus 5.5 einmalig von den ersten 200k an, die 0.5.1 eingetragen hat.
+/// Hebt Anthropic-Modelle einmalig von den ersten 200k an, die 0.5.1 eingetragen hat.
 /// Danach gilt, was jemand selbst einstellt.
-fn opus_compact() -> CmdResult<bool> {
-    let marker = crate::config::config_path()?.with_file_name(".brise-opus-compact-v1");
+fn claude_compact() -> CmdResult<bool> {
+    let marker = crate::config::config_path()?.with_file_name(".brise-claude-compact-v1");
     if marker.exists() {
         return Ok(false);
     }
     let changed = edit_config(|doc| {
         let Some(arr) = doc.get_mut("models").and_then(Item::as_array_of_tables_mut) else { return Ok(()) };
         for t in arr.iter_mut() {
-            let opus = t.get("name").and_then(|v| v.as_str()) == Some("claude-opus-5-5");
-            if opus && t.get("auto_compact_threshold").and_then(|v| v.as_integer()) == Some(200_000) {
-                t.insert("auto_compact_threshold", toml_edit::value(crate::providers::OPUS_COMPACT));
+            let claude = t.get("provider").and_then(|v| v.as_str()) == Some("brise-anthropic");
+            if claude && t.get("auto_compact_threshold").and_then(|v| v.as_integer()) == Some(200_000) {
+                t.insert("auto_compact_threshold", toml_edit::value(crate::providers::CLAUDE_COMPACT));
             }
         }
         Ok(())
